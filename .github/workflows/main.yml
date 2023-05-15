@@ -1,0 +1,84 @@
+on:
+  push:
+    paths-ignore:
+      - "**.md"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+name: main
+
+env:
+  AS: nasm
+  AR: llvm-ar
+  CC: clang
+  RUST_TOOLCHAIN: nightly-2022-11-15
+  TOOLCHAIN_PROFILE: minimal
+
+jobs:
+  system_compile:
+    name: Linting and build code
+    runs-on: [self-hosted, host]
+    # timeout-minutes: 30
+    
+    steps:
+      # Install first since it's needed to build NASM
+      # - name: Install LLVM and Clang
+      #   uses: KyleMayes/install-llvm-action@v1
+      #   with:
+      #     version: "10.0"
+      #     directory: ${{ runner.temp }}/llvm
+
+      # - name: install NASM
+      #   uses: ilammy/setup-nasm@v1
+
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with: 
+          token: ${{ secrets.MIGTD }}
+          submodules: recursive
+      
+      # - name: Install rustup-init
+      #   run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup-init.sh
+
+      # - name: Install toolchain
+      #   run: chmod +x rustup-init.sh;./rustup-init.sh -y --profile ${{ env.TOOLCHAIN_PROFILE }} --default-toolchain ${{ env.RUST_TOOLCHAIN }}
+
+      # - name: Run cargo install cargo-xbuild
+      #   run: cargo install cargo-xbuild
+      
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+
+      - name: Set environment variable
+        run: export CC=clang && export AR=llvm-ar
+
+      - name: Run cargo check
+        run: cargo check
+      
+      - name: Run cargo install cargo-deny
+        run: cargo install cargo-deny
+      
+      - run: cargo deny check sources bans advisories
+
+      - name: Run cargo fmt
+        run: cargo fmt -- --check
+
+      - name: Run cargo clippy
+        run: cargo clippy -- -A clippy::redundant_field_names
+      
+      - name: Build library crates
+        run: cargo xtask lib-build
+      
+      - name: Test library crates
+        run: cargo xtask lib-test
+
+      - name: Unset environment variable
+        run: unset CC && unset AR
+
+      - name: Build Migtd Final Binary
+        run: bash sh_script/build_final.sh -t migtd -c -a on
+
+      - name: Build Migtd Final Binary Using Vmcall-Vsock
+        run: bash sh_script/build_final.sh -t migtd -v vmcall -c

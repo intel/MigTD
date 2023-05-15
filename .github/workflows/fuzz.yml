@@ -1,0 +1,62 @@
+on:
+  push:
+    paths-ignore:
+      - "**.md"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+name: Fuzzing Test
+
+env:
+  AS: nasm
+  AR_x86_64_unknown_uefi: llvm-ar
+  CC_x86_64_unknown_uefi: clang
+  RUST_TOOLCHAIN: nightly-2022-11-15
+  TOOLCHAIN_PROFILE: minimal
+
+jobs:
+  system_compile:
+    name: Run fuzzing test
+    runs-on: [self-hosted, host]
+    # timeout-minutes: 30
+    
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with: 
+          token: ${{ secrets.MIGTD }}
+          submodules: recursive
+      
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+      
+      # - name: Install rustup-init
+      #   run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup-init.sh
+
+      # - name: Install toolchain
+      #   run: chmod +x rustup-init.sh;./rustup-init.sh -y --profile ${{ env.TOOLCHAIN_PROFILE }} --default-toolchain ${{ env.RUST_TOOLCHAIN }}
+
+      # - name: Run cargo install cargo-xbuild
+      #   run: cargo install cargo-xbuild
+    
+      # - name: Install AFL (Linux)
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: install
+      #     args: afl
+      #   if: runner.os == 'Linux'
+      
+      # - name: Install Cargo-Fuzz (Linux)
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: install
+      #     args: cargo-fuzz
+      #   if: runner.os == 'Linux'
+
+      - name: Run all afl fuzzing test cases
+        run: bash sh_script/fuzzing.sh -n afl_all -t 10
+
+      - name: Run all libfuzzer fuzzing test cases
+        run: bash sh_script/fuzzing.sh -n libfuzzer_all -t 60

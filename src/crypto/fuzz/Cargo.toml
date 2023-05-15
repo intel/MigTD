@@ -1,0 +1,41 @@
+[package]
+name = "crypto-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2018"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", optional = true }
+afl = { version = "*", optional = true }
+arbitrary = "=1.1.3"
+der = { version = "0.5.1", features = ["oid", "alloc"] }
+
+[dependencies.crypto]
+path = ".."
+
+[patch.crates-io]
+ring = { path = "../../../deps/td-shim/library/ring" }
+
+[features]
+default = ["libfuzzer-sys"]
+fuzz = ["afl"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "x509"
+path = "fuzz_targets/x509.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "afl_x509"
+path = "fuzz_targets/afl_x509.rs"
+test = false
+doc = false
