@@ -1,0 +1,9 @@
+[submodule "deps/linux-sgx"]
+	path = deps/linux-sgx
+	url = https://github.com/intel/linux-sgx.git
+[submodule "deps/td-shim"]
+	path = deps/td-shim
+	url = https://github.com/confidential-containers/td-shim
+[submodule "deps/rustls"]
+	path = deps/rustls
+	url = https://github.com/rustls/rustls.git

@@ -1,0 +1,18 @@
+[package]
+name = "rust_std_stub"
+version = "0.1.0"
+authors = ["Xiaoyu Lu <xiaoyux.lu@intel.com>"]
+edition = "2018"
+license = "MIT"
+
+description = "for rustls no_std use, export rustls used functions, traits and structs in std"
+readme = "readme.md"
+
+[dependencies]
+sys_time = {path = "../sys_time"}
+
+[dependencies.hashbrown]
+version = "0.11.2"
+
+[dependencies.spin]
+version = "0.5.2"

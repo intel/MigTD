@@ -1,0 +1,162 @@
+diff --git a/rustls-mio/Cargo.toml b/rustls-mio/Cargo.toml
+index 739a4c5..e5e65bd 100644
+--- a/rustls-mio/Cargo.toml
++++ b/rustls-mio/Cargo.toml
+@@ -28,7 +28,7 @@ regex = "1.0"
+ serde = "1.0"
+ serde_derive = "1.0"
+ webpki-roots = "0.22"
+-ring = "0.16.20"
++ring = { version = "0.16.20", default-features = false, features = ["alloc"] }
+ 
+ [[example]]
+ name = "tlsclient"
+diff --git a/rustls/Cargo.toml b/rustls/Cargo.toml
+index a960625..af358ca 100644
+--- a/rustls/Cargo.toml
++++ b/rustls/Cargo.toml
+@@ -13,15 +13,20 @@ autobenches = false
+ 
+ [dependencies]
+ log = { version = "0.4.4", optional = true }
+-ring = "0.16.20"
++ring = { version = "0.16.20", default-features = false }
+ sct = "0.7.0"
+-webpki = { version = "0.22.0", features = ["alloc", "std"] }
++webpki = "0.22.0"
++rust_std_stub = { path = "../../../src/std-support/rust-std-stub", optional = true }
+ 
+ [features]
+-default = ["logging"]
++default = ["logging", "std"]
+ logging = ["log"]
+ dangerous_configuration = []
+ quic = []
++alloc = ["ring/alloc", "webpki/alloc"]
++std = ["alloc", "ring/std", "webpki/std"]
++
++no_std = ["rust_std_stub", "alloc"]
+ 
+ [dev-dependencies]
+ env_logger = "0.8.2"
+diff --git a/rustls/src/keylog.rs b/rustls/src/keylog.rs
+index af4911b..79d06c4 100644
+--- a/rustls/src/keylog.rs
++++ b/rustls/src/keylog.rs
+@@ -1,8 +1,14 @@
++#[cfg(feature = "std")]
+ use std::env;
++#[cfg(feature = "std")]
+ use std::fs::{File, OpenOptions};
++#[cfg(feature = "std")]
+ use std::io;
++#[cfg(feature = "std")]
+ use std::io::Write;
++#[cfg(feature = "std")]
+ use std::path::Path;
++#[cfg(feature = "std")]
+ use std::sync::Mutex;
+ 
+ #[cfg(feature = "logging")]
+@@ -64,12 +70,17 @@ impl KeyLog for NoKeyLog {
+     }
+ }
+ 
++#[cfg(not(feature = "std"))]
++pub use NoKeyLog as KeyLogFile;
++
+ // Internal mutable state for KeyLogFile
++#[cfg(feature = "std")]
+ struct KeyLogFileInner {
+     file: Option<File>,
+     buf: Vec<u8>,
+ }
+ 
++#[cfg(feature = "std")]
+ impl KeyLogFileInner {
+     fn new(var: Result<String, env::VarError>) -> Self {
+         let path = match var {
+@@ -132,8 +143,10 @@ impl KeyLogFileInner {
+ ///
+ /// If such a file cannot be opened, or cannot be written then
+ /// this does nothing but logs errors at warning-level.
++#[cfg(feature = "std")]
+ pub struct KeyLogFile(Mutex<KeyLogFileInner>);
+ 
++#[cfg(feature = "std")]
+ impl KeyLogFile {
+     /// Makes a new `KeyLogFile`.  The environment variable is
+     /// inspected and the named file is opened during this call.
+@@ -143,6 +156,7 @@ impl KeyLogFile {
+     }
+ }
+ 
++#[cfg(feature = "std")]
+ impl KeyLog for KeyLogFile {
+     fn log(&self, label: &str, client_random: &[u8], secret: &[u8]) {
+         #[cfg_attr(not(feature = "logging"), allow(unused_variables))]
+diff --git a/rustls/src/lib.rs b/rustls/src/lib.rs
+index d6526d2..3c7392d 100644
+--- a/rustls/src/lib.rs
++++ b/rustls/src/lib.rs
+@@ -206,7 +206,9 @@
+ //!
+ 
+ // Require docs for public APIs, deny unsafe code, etc.
+-#![forbid(unsafe_code, unused_must_use, unstable_features)]
++#![forbid(unsafe_code, unused_must_use)]
++// If std feature enabled, forbit unstable_features
++#![cfg_attr(feature = "std", forbid(unstable_features))]
+ #![deny(
+     clippy::clone_on_ref_ptr,
+     clippy::use_self,
+@@ -238,6 +240,22 @@
+ // Enable documentation for all features on docs.rs
+ #![cfg_attr(docsrs, feature(doc_cfg))]
+ 
++// Enable no_std support, and no_std support need prelude_import feature.
++#![cfg_attr(not(feature = "std"), no_std)]
++#![cfg_attr(not(feature = "std"), feature(prelude_import))]
++
++#[cfg(not(feature = "std"))]
++#[macro_use]
++extern crate rust_std_stub as std;
++
++// prelude internal_std for calling Vec, String, Mutex, HashMap, etc.
++#[cfg(not(feature = "std"))]
++#[prelude_import]
++#[allow(unused_imports)]
++#[allow(unused_attributes)]
++#[macro_use]
++use std::prelude::*;
++
+ // log for logging (optional).
+ #[cfg(feature = "logging")]
+ use log;
+diff --git a/rustls/src/verify.rs b/rustls/src/verify.rs
+index be43f55..f8f4664 100644
+--- a/rustls/src/verify.rs
++++ b/rustls/src/verify.rs
+@@ -305,8 +305,10 @@ impl ServerCertVerifier for WebPkiVerifier {
+         now: SystemTime,
+     ) -> Result<ServerCertVerified, Error> {
+         let (cert, chain, trustroots) = prepare(end_entity, intermediates, &self.roots)?;
++        #[cfg(feature = "std")]
+         let webpki_now = webpki::Time::try_from(now).map_err(|_| Error::FailedToGetCurrentTime)?;
+-
++        #[cfg(not(feature = "std"))]
++        let webpki_now = webpki::Time::from_seconds_since_unix_epoch(now.as_secs());
+         let ServerName::DnsName(dns_name) = server_name;
+ 
+         let cert = cert
+@@ -433,7 +435,10 @@ impl ClientCertVerifier for AllowAnyAuthenticatedClient {
+         now: SystemTime,
+     ) -> Result<ClientCertVerified, Error> {
+         let (cert, chain, trustroots) = prepare(end_entity, intermediates, &self.roots)?;
++        #[cfg(feature = "std")]
+         let now = webpki::Time::try_from(now).map_err(|_| Error::FailedToGetCurrentTime)?;
++        #[cfg(not(feature = "std"))]
++        let now = webpki::Time::from_seconds_since_unix_epoch(now.as_secs());
+         cert.verify_is_valid_tls_client_cert(
+             SUPPORTED_SIG_ALGS,
+             &webpki::TlsClientTrustAnchors(&trustroots),

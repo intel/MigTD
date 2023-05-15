@@ -1,0 +1,27 @@
+*~
+
+# Cargo Junk
+target/
+*.bin
+*.o
+*.obj
+
+# Cargo lock file
+**/fuzz/Cargo.lock
+
+# afl fuzz and libfuzzer
+*.profraw
+corpus
+artifacts
+coverage
+
+# migtd-core
+clear-*-kvm.img*
+fat*.img
+test_data
+*.o
+*.obj
+
+# vscode
+.vscode
+

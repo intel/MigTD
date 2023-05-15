@@ -1,0 +1,53 @@
+[package]
+name = "migtd"
+version = "0.2.2"
+license = "BSD-2-Clause-Patent"
+edition = "2021"
+
+[[bin]]
+name = "migtd"
+required-features = ["main"]
+
+[dependencies]
+anyhow = { version = "1.0.68", default-features = false }
+attestation = { path = "../attestation", default-features = false }
+cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
+crypto = { path = "../crypto" }
+lazy_static = { version = "1.0", features = ["spin_no_std"] }
+log = { version = "0.4.13", features = ["release_max_level_off"] }
+pci = { path="../devices/pci" }
+policy = {path = "../policy"}
+rust_std_stub = { path = "../std-support/rust-std-stub" }
+r-efi = "3.2.0"
+scroll = { version = "0.10", default-features = false, features = ["derive"]}
+spin = "0.9.2"
+td-uefi-pi = { path = "../../deps/td-shim/td-uefi-pi"}
+tdx-tdcall = { path = "../../deps/td-shim/tdx-tdcall"}
+td-logger = { path = "../../deps/td-shim/td-logger"}
+td-layout = { path = "../../deps/td-shim/td-layout"}
+td-loader = { path = "../../deps/td-shim/td-loader"}
+td-paging = { path = "../../deps/td-shim/td-paging"}
+td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
+td-shim = { path = "../../deps/td-shim/td-shim"}
+virtio = { path="../devices/virtio" }
+vsock = { path="../devices/vsock" }
+x86 = "0.47.0"
+x86_64 = "0.14.9"
+zerocopy = "0.6.1"
+
+minicov = { version = "0.2", default-features = false, optional = true }
+td-benchmark = { path = "../../deps/td-shim/devtools/td-benchmark", default-features = false,  optional = true }
+
+[features]
+default = ["tdx"]
+cet-shstk = ["td-payload/cet-shstk"]
+coverage = ["minicov"]
+main = []
+remote-attestation = ["attestation/remote-attestation"]
+stack-guard = ["td-payload/stack-guard"]
+virtio-vsock = ["vsock/virtio-vsock"]
+vmcall-interrupt = []
+vmcall-vsock = ["vsock/vmcall-vsock"]
+tdx = ["td-logger/tdx"]
+test_heap_size = ["td-benchmark", "td-payload/test_heap_size"]
+test_stack_size = ["td-benchmark"]
