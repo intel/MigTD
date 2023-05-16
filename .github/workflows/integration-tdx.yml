@@ -28,19 +28,16 @@ jobs:
       #     version: "10.0"
       #     directory: ${{ runner.temp }}/llvm
 
+      # - name: Install NASM
+      #   uses: ilammy/setup-nasm@v1
+
+      # - name: Install tools for sgx lib
+      #   run:  sudo dnf group install 'Development Tools' | sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgcon
+
       - name: Checkout sources
         uses: actions/checkout@v2
         with: 
-          token: ${{ secrets.MIGTD }}
           submodules: recursive
-
-      - name: Build Attestation Libray
-        run: |
-          pushd deps/linux-sgx
-          make clean
-          make td_migration_preparation
-          make td_migration
-          popd
 
       - name: Build Migration TD binary
         run: bash sh_script/build_final.sh -t migtd -c -a on

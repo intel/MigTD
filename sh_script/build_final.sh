@@ -36,7 +36,7 @@ function proccess_args() {
 
     if [[ ${type} == "test" ]]
     then
-        [ -e ${TestBinaries} ] | rm -rf ${TestBinaries}
+        rm -rf ${TestBinaries}
         mkdir ${TestBinaries}
     fi
 
