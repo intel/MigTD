@@ -340,9 +340,6 @@ check_test_result() {
 }
 
 main() {
-    if [[ ! $PWD =~ firmware.security.tdx.migtd.td$ ]]; then
-        pushd ..
-    fi
     test_check
    
 	if [ "$check_build" == "YES" ]; then

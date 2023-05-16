@@ -1,0 +1,84 @@
+on: [push, pull_request]
+
+name: Format and Clippy
+
+env:
+  AS: nasm
+  AR: llvm-ar
+  CC: clang
+
+jobs:
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      # Install first since it's needed to build NASM
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "10.0"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install toolchain with clippy available
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly-2022-11-15
+          override: true
+          components: clippy
+
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+
+      - name: Run cargo clippy
+        run: cargo clippy -- -A clippy::redundant_field_names
+
+  rustfmt:
+    name: Format
+    runs-on: ubuntu-20.04
+    steps:
+
+      # Install first since it's needed to build NASM
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "10.0"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Install toolchain with rustfmt available
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly-2022-11-15
+          override: true
+          components: rustfmt
+
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+
+      - name: Run cargo check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+
+      - name: Run cargo fmt
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: -- --check
