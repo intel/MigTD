@@ -110,7 +110,7 @@ impl BuildArgs {
             .args([
                 "-o",
                 SHIM_FOLDER
-                    .join("td-layout/src/runtime.rs")
+                    .join("td-layout/src/runtime/exec.rs")
                     .to_str()
                     .unwrap(),
             ])
@@ -179,9 +179,6 @@ impl BuildArgs {
             "-f",
             "0BE92DC3-6221-4C98-87C1-8EEFFD70DE5A",
             self.policy()?.to_str().unwrap(),
-        ])
-        .args(&[
-            "-f",
             "CA437832-4C51-4322-B13D-A21BD0C8FFF6",
             self.root_ca()?.to_str().unwrap(),
         ])
