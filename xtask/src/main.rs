@@ -29,8 +29,7 @@ fn main() {
             println!("Successfully generate MigTD binary: {}", bin.display());
         }
         Commands::Hash(args) => {
-            let bin = args.generate().expect("Fail to calculate tdinfo hash");
-            println!("Successfully generate SERVTD_INFO_HASH: {}", bin.display());
+            args.generate().expect("Fail to calculate tdinfo hash");
         }
         Commands::LibTest(args) => args.test().expect("Library crates test failed"),
         Commands::LibBuild(args) => args.build().expect("Library crates build failed"),

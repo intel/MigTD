@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use anyhow::{Ok, Result};
+use anyhow::{anyhow, Ok, Result};
 use clap::Args;
 use lazy_static::lazy_static;
 use std::{
@@ -30,19 +30,26 @@ pub(crate) struct ServtdInfoHashArgs {
 }
 
 impl ServtdInfoHashArgs {
-    pub fn generate(&self) -> Result<PathBuf> {
+    pub fn generate(&self) -> Result<()> {
         let sh = Shell::new()?;
         sh.change_dir(SHIM_FOLDER.as_path());
-        cmd!(
+        let cmd = cmd!(
             sh,
             "cargo run -p td-shim-tools --bin td-shim-tee-info-hash --features tee -- "
         )
+        .args(&["-l", "off"])
         .args(&["--image", self.image()?.to_str().unwrap()])
-        .args(&["--manifest", self.servtd_info()?.to_str().unwrap()])
-        .args(&["--out_bin", self.output()?.to_str().unwrap()])
-        .run()?;
+        .args(&["--manifest", self.servtd_info()?.to_str().unwrap()]);
 
-        self.output()
+        let cmd = if self.output.is_some() {
+            cmd.args(&["--out_bin", self.output()?.to_str().unwrap()])
+        } else {
+            cmd
+        };
+
+        cmd.run()?;
+
+        Ok(())
     }
 
     fn servtd_info(&self) -> Result<PathBuf> {
@@ -56,7 +63,10 @@ impl ServtdInfoHashArgs {
     }
 
     fn output(&self) -> Result<PathBuf> {
-        let path = self.output.as_ref().unwrap_or(&DEFAULT_OUTPUT);
+        let path = self
+            .output
+            .as_ref()
+            .ok_or(anyhow!("output binary is not specified"))?;
 
         // Get the absolute path of the target file
         let absolute = if path.is_absolute() {
