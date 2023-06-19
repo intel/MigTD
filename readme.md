@@ -16,14 +16,26 @@ This package is only the sample code to show the concept. It does not have a ful
 ## How to build
 
 ### Prerequisites
+1. Rust toolchain
 
-1. [clang](https://releases.llvm.org/download.html#13.0.1)
+* Install [Rust](https://www.rust-lang.org/tools/install):
+```
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+* Install toolchain and components required by MigTD:
+```
+rustup toolchain install nightly-2022-11-15
+rustup component add --toolchain nightly-2022-11-15 rust-src
+cargo install cargo-xbuild
+```
 
-2. [NASM](https://www.nasm.us/)
+2. [clang](https://releases.llvm.org/download.html#13.0.1)
+
+3. [NASM](https://www.nasm.us/)
 
 * Please make sure `clang`, `llvm-ar` and `nasm` are installed and can be found in your PATH
 
-3. [Attestation Library Prerequisites](https://github.com/intel/SGXDataCenterAttestationPrimitives/tree/tdx_1.5_dcap_mvp_23q1/QuoteGeneration/quote_wrapper/td_migration#prerequisites)
+4. [Attestation Library Prerequisites](https://github.com/intel/SGXDataCenterAttestationPrimitives/tree/tdx_1.5_dcap_mvp_23q1/QuoteGeneration/quote_wrapper/td_migration#prerequisites)
 
 * Ensure that you have the following required operation systems: 
   * Red Hat Enterprise Linux Server release 8.5 64bits
