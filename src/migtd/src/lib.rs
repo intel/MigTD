@@ -72,7 +72,7 @@ fn init(payload: u64) {
     let elf = unsafe {
         core::slice::from_raw_parts(
             payload as *const u8,
-            td_layout::runtime::PAYLOAD_SIZE as usize,
+            td_layout::runtime::exec::PAYLOAD_SIZE as usize,
         )
     };
 
