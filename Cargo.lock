@@ -661,6 +661,7 @@ name = "ring"
 version = "0.16.20"
 dependencies = [
  "cc",
+ "getrandom",
  "libc",
  "once_cell",
  "spin 0.5.2",
