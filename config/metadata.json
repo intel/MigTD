@@ -38,7 +38,7 @@
             "MemoryAddress": "0x0",
             "MemoryDataSize": "0x2000000",
             "Type": "PermMem",
-            "Attributes": "0x0"
+            "Attributes": "0x2"
         },
         {
             "DataOffset": "0x0",
