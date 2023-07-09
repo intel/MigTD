@@ -97,8 +97,9 @@ pub trait VirtioTransport {
     fn set_avail_ring(&self, address: u64) -> Result<()>;
     fn set_used_ring(&self, address: u64) -> Result<()>;
     fn set_queue_enable(&self) -> Result<()>;
-    fn set_config_notify(&mut self, vector: u8) -> Result<()>;
-    fn set_queue_notify(&mut self, vector: u8) -> Result<()>;
+    fn set_interrupt_vector(&mut self, vector: u8) -> Result<u16>;
+    fn set_config_notify(&mut self, index: u16) -> Result<()>;
+    fn set_queue_notify(&mut self, index: u16) -> Result<()>;
     fn notify_queue(&self, queue: u16) -> Result<()>;
     fn read_device_config(&self, offset: u64) -> Result<u32>;
 }

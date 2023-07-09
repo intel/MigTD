@@ -330,10 +330,10 @@ impl VirtioTransport for VirtioPciTransport {
                     return Err(VirtioError::InvalidParameter);
                 }
 
-                self.msix_table_free = table_size;
+                self.msix_table_free = table_size + 1;
                 self.msix_table = mem::MemoryRegion::new(
                     self.device.bars[bir as usize].address + u64::from(table_offset),
-                    u64::from(table_size) * 16,
+                    u64::from(table_size + 1) * 16,
                 )
                 .ok_or(VirtioError::InvalidParameter)?;
 
@@ -483,26 +483,28 @@ impl VirtioTransport for VirtioPciTransport {
         Ok(())
     }
 
-    fn set_config_notify(&mut self, vector: u8) -> Result<()> {
-        let msix_index = self.set_msix_entry(vector)?;
+    fn set_interrupt_vector(&mut self, vector: u8) -> Result<u16> {
+        self.set_msix_entry(vector)
+    }
+
+    fn set_config_notify(&mut self, index: u16) -> Result<()> {
         self.region
-            .mmio_write_u16(VIRTIO_MSIX_CONFIG_OFFSET, msix_index)?;
+            .mmio_write_u16(VIRTIO_MSIX_CONFIG_OFFSET, index)?;
 
         let result = self.region.mmio_read_u16(VIRTIO_MSIX_CONFIG_OFFSET)?;
-        if result != msix_index {
+        if result != index {
             return Err(VirtioError::SetDeviceNotification);
         }
 
         Ok(())
     }
 
-    fn set_queue_notify(&mut self, vector: u8) -> Result<()> {
-        let msix_index = self.set_msix_entry(vector)?;
+    fn set_queue_notify(&mut self, index: u16) -> Result<()> {
         self.region
-            .mmio_write_u16(VIRTIO_QUEUE_MSIX_VECTOR_OFFSET, msix_index)?;
+            .mmio_write_u16(VIRTIO_QUEUE_MSIX_VECTOR_OFFSET, index)?;
 
         let result = self.region.mmio_read_u16(VIRTIO_QUEUE_MSIX_VECTOR_OFFSET)?;
-        if result != msix_index {
+        if result != index {
             return Err(VirtioError::SetDeviceNotification);
         }
 
