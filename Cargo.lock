@@ -530,6 +530,7 @@ version = "0.2.3"
 dependencies = [
  "anyhow",
  "attestation",
+ "bitfield",
  "cc-measurement",
  "crypto",
  "lazy_static",
@@ -551,6 +552,7 @@ dependencies = [
  "td-uefi-pi",
  "tdx-tdcall",
  "virtio",
+ "virtio_serial",
  "vsock",
  "x86",
  "x86_64",
@@ -1095,6 +1097,18 @@ dependencies = [
  "spin 0.9.8",
  "tdx-tdcall",
  "volatile 0.2.7",
+]
+
+[[package]]
+name = "virtio_serial"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "log",
+ "rust_std_stub",
+ "spin 0.9.8",
+ "td-payload",
+ "virtio",
 ]
 
 [[package]]

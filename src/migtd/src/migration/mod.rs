@@ -17,6 +17,8 @@ use rust_std_stub::io;
 use scroll::{Pread, Pwrite};
 use tdx_tdcall::TdCallError;
 use tdx_tdcall::TdVmcallError;
+#[cfg(feature = "virtio-serial")]
+use virtio_serial::VirtioSerialError;
 use vsock::VsockError;
 
 pub const VMCALL_SERVICE_COMMON_GUID: Guid = Guid::from_fields(
@@ -140,6 +142,13 @@ pub enum MigrationResult {
 
 impl From<VsockError> for MigrationResult {
     fn from(_: VsockError) -> Self {
+        MigrationResult::NetworkError
+    }
+}
+
+#[cfg(feature = "virtio-serial")]
+impl From<VirtioSerialError> for MigrationResult {
+    fn from(_: VirtioSerialError) -> Self {
         MigrationResult::NetworkError
     }
 }

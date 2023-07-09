@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 pub const VIRTIO_SUBSYSTEM_BLOCK: u32 = 2;
+pub const VIRTIO_SUBSYSTEM_CONSOLE: u32 = 3;
 pub const VIRTIO_SUBSYSTEM_VSOCK: u32 = 19;
 
 pub const VIRTIO_F_VERSION_1: u64 = 1 << 32;
