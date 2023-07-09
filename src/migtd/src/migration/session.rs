@@ -8,8 +8,6 @@ use scroll::Pread;
 use td_payload::mm::dma::DmaMemory;
 use td_uefi_pi::hob as hob_lib;
 use tdx_tdcall::tdx;
-use vsock::stream::VsockStream;
-use vsock::VsockAddr;
 use zerocopy::AsBytes;
 
 type Result<T> = core::result::Result<T, MigrationResult>;
@@ -272,12 +270,6 @@ impl MigrationSession {
     }
 
     fn migrate(info: &MigrationInformation) -> Result<()> {
-        // Establish the vsock connection with host
-        let mut vsock = VsockStream::new()?;
-        vsock.connect(&VsockAddr::new(
-            info.mig_socket_info.mig_td_cid as u32,
-            info.mig_socket_info.mig_channel_port,
-        ))?;
         let mut msk = MigrationSessionKey::new();
         let mut msk_peer = MigrationSessionKey::new();
 
@@ -290,11 +282,35 @@ impl MigrationSession {
             msk.fields[idx] = ret.content;
         }
 
+        let transport;
+        #[cfg(feature = "virtio-serial")]
+        {
+            use virtio_serial::VirtioSerialPort;
+            const VIRTIO_SERIAL_PORT_ID: u32 = 1;
+
+            let port = VirtioSerialPort::new(VIRTIO_SERIAL_PORT_ID);
+            port.open()?;
+            transport = port;
+        };
+
+        #[cfg(not(feature = "virtio-serial"))]
+        {
+            use vsock::{stream::VsockStream, VsockAddr};
+            // Establish the vsock connection with host
+            let mut vsock = VsockStream::new()?;
+            vsock.connect(&VsockAddr::new(
+                info.mig_socket_info.mig_td_cid as u32,
+                info.mig_socket_info.mig_channel_port,
+            ))?;
+
+            transport = vsock;
+        };
+
         // Establish TLS layer connection and negotiate the MSK
         if info.mig_info.migration_source == 1 {
             // TLS client
             let mut ratls_client =
-                ratls::client(vsock).map_err(|_| MigrationResult::SecureSessionError)?;
+                ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
             // MigTD-S send Migration Session Forward key to peer
             ratls_client.write(msk.as_bytes())?;
@@ -305,7 +321,7 @@ impl MigrationSession {
         } else {
             // TLS server
             let mut ratls_server =
-                ratls::server(vsock).map_err(|_| MigrationResult::SecureSessionError)?;
+                ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
             ratls_server.write(msk.as_bytes())?;
             let size = ratls_server.read(msk_peer.as_bytes_mut())?;

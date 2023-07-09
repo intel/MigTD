@@ -9,6 +9,7 @@ name = "migtd"
 required-features = ["main"]
 
 [dependencies]
+bitfield = "0.13.2"
 anyhow = { version = "1.0.68", default-features = false }
 attestation = { path = "../attestation", default-features = false }
 cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
@@ -31,6 +32,7 @@ td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
 td-shim = { path = "../../deps/td-shim/td-shim"}
 virtio = { path="../devices/virtio" }
 vsock = { path="../devices/vsock" }
+virtio_serial = { path="../devices/virtio_serial", optional = true }
 x86 = "0.47.0"
 x86_64 = "0.14.9"
 zerocopy = "0.6.1"
@@ -46,6 +48,7 @@ main = []
 remote-attestation = ["attestation/remote-attestation"]
 stack-guard = ["td-payload/stack-guard"]
 virtio-vsock = ["vsock/virtio-vsock"]
+virtio-serial = ["virtio_serial"]
 vmcall-interrupt = []
 vmcall-vsock = ["vsock/vmcall-vsock"]
 tdx = ["td-logger/tdx"]
