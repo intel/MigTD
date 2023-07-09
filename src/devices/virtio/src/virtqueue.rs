@@ -225,7 +225,7 @@ impl VirtQueue {
         &mut self,
         g2h: &mut Vec<VirtqueueBuf>,
         h2g: &mut Vec<VirtqueueBuf>,
-    ) -> Result<u16> {
+    ) -> Result<u32> {
         if !self.can_pop() {
             return Err(VirtioError::NotReady);
         }
@@ -239,12 +239,12 @@ impl VirtQueue {
             .get(last_used_idx as usize)
             .ok_or(VirtioError::InvalidRingIndex)?;
         let index = last_used_slot.id.read() as u16;
-        let _len = last_used_slot.len.read();
+        let len = last_used_slot.len.read();
 
         self.recycle_descriptors(index, g2h, h2g)?;
         self.last_used_idx = self.last_used_idx.wrapping_add(1);
 
-        Ok(index)
+        Ok(len)
     }
 }
 
