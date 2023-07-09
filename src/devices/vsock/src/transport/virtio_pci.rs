@@ -124,8 +124,10 @@ impl VirtioVsock {
         let queue_event =
             Self::create_queue(transport, QUEUE_EVENT, queue_event_dma, QUEUE_SIZE as u16)?;
 
-        Self::set_queue_notify(transport, QUEUE_RX, RX_VECTOR)?;
-        Self::set_queue_notify(transport, QUEUE_TX, TX_VECTOR)?;
+        let irq_index_rx = transport.set_interrupt_vector(RX_VECTOR)?;
+        Self::set_queue_notify(transport, QUEUE_RX, irq_index_rx)?;
+        let irq_index_tx = transport.set_interrupt_vector(TX_VECTOR)?;
+        Self::set_queue_notify(transport, QUEUE_TX, irq_index_tx)?;
 
         register_callback(RX_VECTOR, rx_callback);
         register_callback(TX_VECTOR, tx_callback);
@@ -157,9 +159,9 @@ impl VirtioVsock {
         Ok(queue)
     }
 
-    fn set_queue_notify(transport: &mut dyn VirtioTransport, queue: u16, vector: u8) -> Result<()> {
+    fn set_queue_notify(transport: &mut dyn VirtioTransport, queue: u16, index: u16) -> Result<()> {
         transport.set_queue(queue)?;
-        transport.set_queue_notify(vector)?;
+        transport.set_queue_notify(index)?;
         transport.set_queue_enable()?;
 
         Ok(())
