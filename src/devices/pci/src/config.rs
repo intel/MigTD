@@ -464,7 +464,7 @@ impl PciDevice {
         // Enable the bits 0 (IO Space) and 1 (Memory Space) to activate the bar configuration
         self.write_u16(
             0x4,
-            (PciCommand::IO_SPACE | PciCommand::MEMORY_SPACE).bits(),
+            (PciCommand::IO_SPACE | PciCommand::MEMORY_SPACE | PciCommand::BUS_MASTER).bits(),
         );
         for bar in &self.bars {
             log::info!("Bar: type={:?} address={:x}\n", bar.bar_type, bar.address);
