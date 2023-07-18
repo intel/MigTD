@@ -15,7 +15,7 @@ env:
   TOOLCHAIN_PROFILE: minimal
 
 jobs:
-  system_compile:
+  build_migtd:
     name: Build final migtd
     runs-on: ubuntu-20.04
     timeout-minutes: 30
@@ -60,4 +60,54 @@ jobs:
         run: bash sh_script/build_final.sh -t migtd -c -a on
 
       - name: Build Migtd Final Binary Using Vmcall-Vsock
-        run: bash sh_script/build_final.sh -t migtd -v vmcall -c
+        run: bash sh_script/build_final.sh -t migtd -d vmcall -c
+
+      - name: Build Migtd Final Binary Using virtio-serial
+        run: bash sh_script/build_final.sh -t migtd -d serial -c
+
+  build_migtd_features:
+    name: Build final migtd (vmcall-vsock/virtio-serial)
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+
+    steps:
+      # Install first since it's needed to build NASM
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "10.0"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install tools for sgx lib
+        run:  sudo apt-get install build-essential ocaml ocamlbuild automake autoconf libtool wget python-is-python3 libssl-dev git cmake perl
+
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: ${{ env.TOOLCHAIN_PROFILE }}
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          override: true
+          components: rust-src
+
+      - name: Run cargo install cargo-xbuild
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: cargo-xbuild
+        
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+
+      - name: Build Migtd Final Binary Using Vmcall-Vsock
+        run: bash sh_script/build_final.sh -t migtd -d vmcall -c
+
+      - name: Build Migtd Final Binary Using virtio-serial
+        run: bash sh_script/build_final.sh -t migtd -d serial -c

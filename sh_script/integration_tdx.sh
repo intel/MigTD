@@ -28,8 +28,22 @@ cycle=0
 # Test Configuration Info
 cpus=1
 memory=32M
+device=vsock
 
 # trap cleanup exit
+
+# MigTD start command
+migtd_qemu_cmd="${qemu_tdx_path} \
+    -accel kvm \
+    -M q35 \
+    -cpu host,host-phys-bits,-kvm-steal-time,pmu=off \
+    -smp ${cpus},threads=1,sockets=${cpus} \
+    -m ${memory} \
+    -object tdx-guest,id=tdx0,quote-generation-service=vsock:1:4050,sept-ve-disable=off,debug=off \
+    -object memory-backend-memfd-private,id=ram1,size=${memory} \
+    -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
+    -no-hpet \
+    -nographic -vga none -nic none"
 
 usage() {
     cat << EOM
@@ -42,13 +56,14 @@ Usage: $(basename "$0") [OPTION]...
   -c <CPU number> by default is 1.
   -m <Memory size> by defalt is 2G.
   -n Cycle test number.
+  -d Device(transport) used for host-guest communication, by default is `vsock`.
   -h Show help info
 EOM
     exit 0
 }
 
 proccess_args() {
-    while getopts ":i:p:k:f:t:c:m:n:h" option; do
+    while getopts ":i:p:k:f:t:c:m:n:d:h" option; do
         case "${option}" in
             i) guest_image=${OPTARG};;
             p) qemu_tdx_path=${OPTARG};;
@@ -58,6 +73,7 @@ proccess_args() {
             c) cpus=${OPTARG};;
             m) memory=${OPTARG};;
             n) cycle=${OPTARG};; 
+            d) device=${OPTARG};;
             h) usage;;
         esac
     done
@@ -83,6 +99,7 @@ proccess_args() {
     echo "Type              : ${type}"
     echo "CPUs              : ${cpus}"
     echo "Memmory Size      : ${memory}"
+    echo "Device type       : ${device}"
     echo "========================================="
 }
 
@@ -157,60 +174,65 @@ setup_agent() {
 }
 
 launch_src_migtd() {
-    nohup ${qemu_tdx_path} \
-        -accel kvm \
-        -M q35 \
-        -cpu host,host-phys-bits,-kvm-steal-time,pmu=off \
-        -smp ${cpus},threads=1,sockets=${cpus} \
-        -m ${memory} \
-        -object tdx-guest,id=tdx0,quote-generation-service=vsock:1:4050,sept-ve-disable=off,debug=off \
-        -object memory-backend-memfd-private,id=ram1,size=${memory} \
-        -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
-        -bios $1 \
-        -device vhost-vsock-pci,id=vhost-vsock-pci1,guest-cid=18,disable-legacy=on \
-        -name migtd-src,process=migtd-src,debug-threads=on \
-        -no-hpet \
-        -nographic -vga none -nic none \
-        -serial mon:stdio > ${mig_src_log} &
+    local cmd="${migtd_qemu_cmd} \
+                -bios $1 \
+                -name migtd-src,process=migtd-src,debug-threads=on \
+                -serial mon:stdio"
+
+    if [[ ${device} == serial ]]
+    then
+        cmd="${cmd} \
+            -device virtio-serial-pci,id=virtio-serial0 \
+            -chardev socket,host=127.0.0.1,port=1234,server=off,id=foo \
+            -device virtserialport,chardev=foo,bus=virtio-serial0.0"
+    elif [[ ${device} == vsock ]]
+    then
+        cmd="${cmd} \
+            -device vhost-vsock-pci,id=vhost-vsock-pci1,guest-cid=18,disable-legacy=on"
+    fi
+
+    nohup ${cmd} > ${mig_src_log} &
 
     sleep 10
 }
 
 launch_dst_migtd() {
-    nohup ${qemu_tdx_path} \
-        -accel kvm \
-        -M q35 \
-        -cpu host,host-phys-bits,-kvm-steal-time,pmu=off \
-        -smp ${cpus},threads=1,sockets=${cpus} \
-        -m ${memory} \
-        -object tdx-guest,id=tdx0,quote-generation-service=vsock:1:4050,sept-ve-disable=off,debug=off \
-        -object memory-backend-memfd-private,id=ram1,size=${memory} \
-        -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
-        -bios $1 \
-        -device vhost-vsock-pci,id=vhost-vsock-pci1,guest-cid=36,disable-legacy=on \
-        -name migtd-dst,process=migtd-dst,debug-threads=on \
-        -no-hpet \
-        -nographic -vga none -nic none \
-        -serial mon:stdio > ${mig_dst_log} &
+    local cmd="${migtd_qemu_cmd} \
+                -bios $1 \
+                -name migtd-dst,process=migtd-dst,debug-threads=on \
+                -serial mon:stdio"
+
+    if [[ ${device} == serial ]]
+    then
+        cmd="${cmd} \
+            -device virtio-serial-pci,id=virtio-serial0 \
+            -chardev socket,host=127.0.0.1,port=1234,server=on,id=foo \
+            -device virtserialport,chardev=foo,bus=virtio-serial0.0"
+    elif [[ ${device} == vsock ]]
+    then
+        cmd="${cmd} \
+            -device vhost-vsock-pci,id=vhost-vsock-pci1,guest-cid=36,disable-legacy=on"
+    fi
+
+    nohup ${cmd} > ${mig_dst_log} &
 
     sleep 10
 }
 
-launch_dst_migtd_without_vsock() {
-    nohup ${qemu_tdx_path} \
-        -accel kvm \
-        -M q35 \
-        -cpu host,host-phys-bits,-kvm-steal-time,pmu=off \
-        -smp ${cpus},threads=1,sockets=${cpus} \
-        -m ${memory} \
-        -object tdx-guest,id=tdx0,quote-generation-service=vsock:1:4050,sept-ve-disable=off,debug=off \
-        -object memory-backend-memfd-private,id=ram1,size=${memory} \
-        -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
-        -bios $1 \
-        -name migtd-dst,process=migtd-dst,debug-threads=on \
-        -no-hpet \
-        -nographic -vga none -nic none \
-        -serial mon:stdio > ${mig_dst_log} &
+launch_src_migtd_without_device() {
+    local cmd="${migtd_qemu_cmd} \
+                -bios $1 \
+                -name migtd-src,process=migtd-src,debug-threads=on \
+                -serial mon:stdio"
+
+    # Connect to dst MigTD to make it run
+    if [[ ${device} == serial ]]
+    then
+        cmd="${cmd} \
+            -chardev socket,host=127.0.0.1,port=1234,server=off,id=foo"
+    fi
+
+    nohup ${cmd} > ${mig_src_log} &
 
     sleep 10
 }
@@ -274,25 +296,29 @@ test_migtd() {
     echo "-- start test migration td"
     local time_out=30
 
-    echo "-- setup agent"
-    setup_agent
+    if [[ ${device} == vsock ]]
+    then 
+        echo "-- setup agent"
+        setup_agent
+    fi
+
+    echo "-- launch dst migtd"
+    launch_dst_migtd ${firmware}
+
     echo "-- launch src migtd"
     if [[ ${firmware} == *004* ]] || [[ ${firmware} == *005* ]] || [[ ${firmware} == *006* ]] || [[ ${firmware} == *migtd.bin* ]]
     then
         launch_src_migtd ${firmware}
-    elif [[ ${firmware} == *007* ]] || [[ ${firmware} == *008* ]] || [[ ${firmware} == *009* ]]
+    elif [[ ${firmware} == *007* ]] || [[ ${firmware} == *008* ]]
     then 
         launch_src_migtd "`dirname ${firmware}`/migtd_no.bin"
+    elif [[ ${firmware} == *009* ]]
+    then
+        launch_src_migtd_without_device "`dirname ${firmware}`/migtd_no.bin"
     else
         launch_src_migtd "`dirname ${firmware}`/migtd_001.bin"
     fi
-    echo "-- launch dst migtd"
-    if [[ ${firmware} == *009* ]]
-    then
-        launch_dst_migtd_without_vsock ${firmware}
-    else
-        launch_dst_migtd ${firmware}
-    fi
+
     echo "-- launch src td"
     launch_src_td
     echo "-- launch dst td"
@@ -324,13 +350,15 @@ cycle_test_migtd() {
     echo "-- start test migration td"
     local time_out=30
 
-    echo "-- setup agent"
-    setup_agent
-    echo "-- launch src migtd"
-    launch_src_migtd ${firmware}
-
+    if [[ ${device} == vsock ]]
+    then 
+        echo "-- setup agent"
+        setup_agent
+    fi
     echo "-- launch dst migtd"
     launch_dst_migtd ${firmware}
+    echo "-- launch src migtd"
+    launch_src_migtd ${firmware}
     
     for ((i=1;i<${cycle};i++))
     do
