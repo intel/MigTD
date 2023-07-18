@@ -90,6 +90,11 @@ To specify the policy file to be enrolled, you can use the `--policy` argument:
 cargo image --policy /path/to/policy
 ```
 
+To use virtio-serial instead of virtio-vsock for the guest-host communication:
+```
+cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial
+```
+
 ### Generate SERVTD_INFO_HASH
 
 To generate the SERVTD_HASH_INFO of a MigTD binary with a default TD configuration at `config/servtd_info.json`:
@@ -116,6 +121,8 @@ cargo hash --image /path/to/migtd.bin --servtd-info /path/to/servtd_info.json
 * MigTD depends on `sgx-dcap-pccs` and `tdx-qgs` to do remote attestation. Please refer to [linux-sgx](https://github.com/intel/linux-sgx/tree/tdx_1.5_mvp_23q1) for details or follow the [tdx-tools wiki](https://github.com/intel/tdx-tools/wiki/5.-TDX-End-to-End-Attestation) to setup the environment.
 
 ### Steps to run pre-migration
+
+#### Virtio-vsock approach
 
 1. Start two vsock server agent on host:
 
@@ -178,3 +185,67 @@ echo "qom-set /objects/tdx0/ vsockport 1234" | nc -U /tmp/qmp-sock-src
 echo "qom-set /objects/tdx0/ vsockport 1235" | nc -U /tmp/qmp-sock-dst
 ```
 Note: user TDs need to be bound to MigTDs before pre-migration.
+
+#### Virtio-serial approach [experimental feature]
+
+1. Launch destination Migration TD:
+
+```
+QEMU=/path/to/qemu-system-x86_64
+MIGTD=/path/to/migtd.bin
+
+$QEMU -accel kvm \
+-M q35 \
+-cpu host,host-phys-bits,-kvm-steal-time,pmu=off \
+-smp 1,threads=1,sockets=1 \
+-m 32M \
+-object tdx-guest,id=tdx0,sept-ve-disable=off,debug=off,quote-generation-service=vsock:1:4050 \
+-object memory-backend-memfd-private,id=ram1,size=32M \
+-machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
+-bios ${MIGTD} \
+-device virtio-serial-pci,id=virtio-serial0 \
+-chardev socket,host=127.0.0.1,port=1234,server=on,id=foo \
+-device virtserialport,chardev=foo,bus=virtio-serial0.0 \
+-name migtd-dst,process=migtd-dst,debug-threads=on \
+-no-hpet \
+-nographic -vga none -nic none \
+-serial mon:stdio
+```
+
+2. Launch source Migration TD:
+
+```
+QEMU=/path/to/qemu-system-x86_64
+MIGTD=/path/to/migtd.bin
+
+$QEMU -accel kvm \
+-M q35 \
+-cpu host,host-phys-bits,-kvm-steal-time,pmu=off \
+-smp 1,threads=1,sockets=1 \
+-m 32M \
+-object tdx-guest,id=tdx0,sept-ve-disable=off,debug=off,quote-generation-service=vsock:1:4050 \
+-object memory-backend-memfd-private,id=ram1,size=32M \
+-machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
+-bios ${MIGTD} \
+-device virtio-serial-pci,id=virtio-serial0 \
+-chardev socket,host=127.0.0.1,port=1234,server=off,id=foo \
+-device virtserialport,chardev=foo,bus=virtio-serial0.0 \
+-name migtd-src,process=migtd-src,debug-threads=on \
+-no-hpet \
+-nographic -vga none -nic none \
+-serial mon:stdio
+```
+
+Replace the IP specified by `host=127.0.0.1` with the target IP address, if cross host migration is required.
+
+3. Do pre-migration:
+
+Here we still set the `vsockport` as a workaround to trigger the pre-migration:
+
+```
+# Asking migtd-src to start pre-migration
+echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
+
+# Asking migtd-dst to start pre-migration
+echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-dst
+```
