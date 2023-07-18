@@ -18,11 +18,11 @@ function cleanup() {
 }
 
 function proccess_args() {
-    while getopts ":t:a:v:c" option; do
+    while getopts ":t:a:v:d:c" option; do
         case "${option}" in
             t) type=${OPTARG};;
             a) attestation=${OPTARG};;
-            v) vsock=${OPTARG};;
+            d) device=${OPTARG};;
             c) cleanup;;
         esac
     done
@@ -45,13 +45,12 @@ function proccess_args() {
     then
         MIGTD_FEATURE+=",remote-attestation"
     fi
-    
-    if [[ ${vsock} == "vmcall" ]];
-    then
-        MIGTD_FEATURE+=",vmcall-vsock"
-    else
-        MIGTD_FEATURE+=",virtio-vsock"
-    fi
+
+    case "${device}" in
+        vmcall) MIGTD_FEATURE+=",vmcall-vsock";;
+        serial) MIGTD_FEATURE+=",virtio-serial";;
+        *) MIGTD_FEATURE+=",virtio-vsock";;
+    esac
 }
 
 function check_file_exist() {
