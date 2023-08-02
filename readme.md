@@ -52,6 +52,11 @@ cargo install cargo-xbuild
     sudo dnf group install 'Development Tools'
     sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgconf
   ```
+  *  On CentOS Stream 9
+  ```
+    sudo dnf group install 'Development Tools'
+    sudo dnf install ocaml ocaml-ocamlbuild wget rpm-build pkgconf perl-FindBin
+  ```
   * On Ubuntu 22.04
   ```
     sudo apt-get install build-essential ocaml ocamlbuild wget pkgconf
