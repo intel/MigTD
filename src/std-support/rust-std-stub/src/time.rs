@@ -1,16 +1,7 @@
+use core::time::Duration;
+
 #[derive(Clone, Debug)]
 pub struct SystemTimeError;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct Duration {
-    secs: u64,
-}
-
-impl Duration {
-    pub fn as_secs(&self) -> u64 {
-        self.secs
-    }
-}
 
 #[derive(Debug, Copy, Clone)]
 pub struct SystemTime(u64);
@@ -20,9 +11,7 @@ pub const UNIX_EPOCH: SystemTime = SystemTime(0);
 impl SystemTime {
     pub fn duration_since(&self, time: SystemTime) -> Result<Duration, SystemTimeError> {
         if self.0 - time.0 > 0 {
-            Ok(Duration {
-                secs: self.0 - time.0,
-            })
+            Ok(Duration::new(self.0 - time.0, 0))
         } else {
             Err(SystemTimeError)
         }
