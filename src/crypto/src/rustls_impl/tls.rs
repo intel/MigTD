@@ -8,12 +8,16 @@ use rust_std_stub::io::{self, Read, Write};
 use rust_std_stub::sync::Arc;
 use rust_std_stub::time::SystemTime;
 use rustls::cipher_suite::TLS13_AES_256_GCM_SHA384;
+use rustls::client::{
+    ResolvesClientCert, ServerCertVerified, ServerCertVerifier, WebPkiServerVerifier,
+};
+use rustls::crypto::ring::Ring;
 use rustls::kx_group::SECP384R1;
+use rustls::server::{ClientCertVerified, ClientCertVerifier, ClientHello, ResolvesServerCert};
 use rustls::sign::{any_ecdsa_type, CertifiedKey, SigningKey};
 use rustls::{
-    Certificate, ClientCertVerified, ClientCertVerifier, ClientConfig, ClientConnection,
-    ClientHello, Connection, PrivateKey, ResolvesClientCert, ResolvesServerCert,
-    ServerCertVerified, ServerCertVerifier, ServerConfig, ServerConnection, ServerName,
+    Certificate, ClientConfig, ClientConnection, PrivateKey, ServerConfig, ServerConnection,
+    ServerName,
 };
 
 use crate::{Error, Result};
@@ -171,7 +175,7 @@ impl TlsConfig {
     }
 
     pub fn tls_client<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
-        let client_config = ClientConfig::builder()
+        let client_config: ClientConfig<Ring> = ClientConfig::builder()
             .with_cipher_suites(&[TLS13_AES_256_GCM_SHA384])
             .with_kx_groups(&[&SECP384R1])
             .with_protocol_versions(&[&rustls::version::TLS13])
@@ -192,7 +196,7 @@ impl TlsConfig {
     }
 
     pub fn tls_server<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
-        let server_config = ServerConfig::builder()
+        let server_config: ServerConfig<Ring> = ServerConfig::builder()
             .with_cipher_suites(&[TLS13_AES_256_GCM_SHA384])
             .with_kx_groups(&[&SECP384R1])
             .with_protocol_versions(&[&rustls::version::TLS13])
@@ -272,10 +276,9 @@ impl ServerCertVerifier for Verifier {
         end_entity: &Certificate,
         _intermediates: &[Certificate],
         _server_name: &ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
         _now: SystemTime,
-    ) -> core::result::Result<ServerCertVerified, TlsLibError> {
+    ) -> core::result::Result<ServerCertVerified, rustls::Error> {
         if let Err(e) = (self.cb)(end_entity.as_ref()) {
             match e {
                 Error::TlsVerifyPeerCert(e) => Err(rustls::Error::General(format!(
@@ -288,6 +291,28 @@ impl ServerCertVerifier for Verifier {
             Ok(ServerCertVerified::assertion())
         }
     }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &Certificate,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> core::result::Result<rustls::client::HandshakeSignatureValid, rustls::Error> {
+        WebPkiServerVerifier::default_verify_tls13_signature(message, cert, dss)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &Certificate,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> core::result::Result<rustls::client::HandshakeSignatureValid, rustls::Error> {
+        WebPkiServerVerifier::default_verify_tls12_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        WebPkiServerVerifier::default_supported_verify_schemes()
+    }
 }
 
 impl ClientCertVerifier for Verifier {
@@ -295,9 +320,8 @@ impl ClientCertVerifier for Verifier {
         &self,
         end_entity: &Certificate,
         _intermediates: &[Certificate],
-        _sni: Option<&rustls::DnsName>,
         _now: SystemTime,
-    ) -> core::result::Result<rustls::ClientCertVerified, TlsLibError> {
+    ) -> core::result::Result<ClientCertVerified, rustls::Error> {
         if let Err(e) = (self.cb)(end_entity.as_ref()) {
             match e {
                 Error::TlsVerifyPeerCert(e) => Err(rustls::Error::General(format!(
@@ -311,10 +335,29 @@ impl ClientCertVerifier for Verifier {
         }
     }
 
-    fn client_auth_root_subjects(
+    fn client_auth_root_subjects(&self) -> &[rustls::DistinguishedName] {
+        &[]
+    }
+
+    fn verify_tls13_signature(
         &self,
-        _sni: Option<&rustls::DnsName>,
-    ) -> Option<rustls::DistinguishedNames> {
-        Some(rustls::DistinguishedNames::new())
+        message: &[u8],
+        cert: &Certificate,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> core::result::Result<rustls::client::HandshakeSignatureValid, rustls::Error> {
+        WebPkiServerVerifier::default_verify_tls13_signature(message, cert, dss)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &Certificate,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> core::result::Result<rustls::client::HandshakeSignatureValid, rustls::Error> {
+        WebPkiServerVerifier::default_verify_tls12_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        WebPkiServerVerifier::default_supported_verify_schemes()
     }
 }

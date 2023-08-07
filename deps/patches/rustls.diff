@@ -1,123 +1,153 @@
-diff --git a/rustls-mio/Cargo.toml b/rustls-mio/Cargo.toml
-index 739a4c5..e5e65bd 100644
---- a/rustls-mio/Cargo.toml
-+++ b/rustls-mio/Cargo.toml
-@@ -28,7 +28,7 @@ regex = "1.0"
- serde = "1.0"
- serde_derive = "1.0"
- webpki-roots = "0.22"
--ring = "0.16.20"
-+ring = { version = "0.16.20", default-features = false, features = ["alloc"] }
- 
- [[example]]
- name = "tlsclient"
 diff --git a/rustls/Cargo.toml b/rustls/Cargo.toml
-index a960625..af358ca 100644
+index 1e4e1d50..945297ac 100644
 --- a/rustls/Cargo.toml
 +++ b/rustls/Cargo.toml
-@@ -13,15 +13,20 @@ autobenches = false
+@@ -17,9 +17,10 @@ rustversion = { version = "1.0.6", optional = true }
  
  [dependencies]
  log = { version = "0.4.4", optional = true }
 -ring = "0.16.20"
+-subtle = "2.5.0"
+-webpki = { package = "rustls-webpki", version = "0.102.0-alpha.0", features = ["alloc", "std", "ring"] }
 +ring = { version = "0.16.20", default-features = false }
- sct = "0.7.0"
--webpki = { version = "0.22.0", features = ["alloc", "std"] }
-+webpki = "0.22.0"
++subtle = { version = "2.5.0", default-features = false }
++webpki = { package = "rustls-webpki", version = "0.102.0-alpha.0", default-features = false, features = ["alloc", "ring"] }
 +rust_std_stub = { path = "../../../src/std-support/rust-std-stub", optional = true }
  
  [features]
--default = ["logging"]
-+default = ["logging", "std"]
- logging = ["log"]
- dangerous_configuration = []
+ default = ["logging", "tls12"]
+@@ -29,6 +30,9 @@ secret_extraction = []
  quic = []
-+alloc = ["ring/alloc", "webpki/alloc"]
+ tls12 = []
+ read_buf = ["rustversion"]
++alloc = ["ring/alloc"]
 +std = ["alloc", "ring/std", "webpki/std"]
-+
 +no_std = ["rust_std_stub", "alloc"]
  
  [dev-dependencies]
- env_logger = "0.8.2"
-diff --git a/rustls/src/keylog.rs b/rustls/src/keylog.rs
-index af4911b..79d06c4 100644
---- a/rustls/src/keylog.rs
-+++ b/rustls/src/keylog.rs
-@@ -1,8 +1,14 @@
-+#[cfg(feature = "std")]
- use std::env;
-+#[cfg(feature = "std")]
- use std::fs::{File, OpenOptions};
-+#[cfg(feature = "std")]
+ bencher = "0.1.5"
+diff --git a/rustls/src/client/client_conn.rs b/rustls/src/client/client_conn.rs
+index ac768a2e..a665577e 100644
+--- a/rustls/src/client/client_conn.rs
++++ b/rustls/src/client/client_conn.rs
+@@ -26,6 +26,7 @@ use core::marker::PhantomData;
+ use core::ops::{Deref, DerefMut};
+ use core::{fmt, mem};
  use std::io;
 +#[cfg(feature = "std")]
- use std::io::Write;
-+#[cfg(feature = "std")]
- use std::path::Path;
-+#[cfg(feature = "std")]
- use std::sync::Mutex;
+ use std::net::IpAddr;
  
- #[cfg(feature = "logging")]
-@@ -64,12 +70,17 @@ impl KeyLog for NoKeyLog {
-     }
- }
+ /// A trait for the ability to store client session data, so that sessions
+@@ -366,7 +367,13 @@ pub enum ServerName {
  
-+#[cfg(not(feature = "std"))]
-+pub use NoKeyLog as KeyLogFile;
+     /// The server is identified by an IP address. SNI is not
+     /// done.
++    #[cfg(feature = "std")]
+     IpAddress(IpAddr),
 +
- // Internal mutable state for KeyLogFile
-+#[cfg(feature = "std")]
- struct KeyLogFileInner {
-     file: Option<File>,
-     buf: Vec<u8>,
++    /// The server is identified by an IP address. SNI is not
++    /// done.
++    #[cfg(not(feature = "std"))]
++    IpAddress(()),
  }
  
-+#[cfg(feature = "std")]
- impl KeyLogFileInner {
-     fn new(var: Result<String, env::VarError>) -> Self {
-         let path = match var {
-@@ -132,8 +143,10 @@ impl KeyLogFileInner {
- ///
- /// If such a file cannot be opened, or cannot be written then
- /// this does nothing but logs errors at warning-level.
-+#[cfg(feature = "std")]
- pub struct KeyLogFile(Mutex<KeyLogFileInner>);
- 
-+#[cfg(feature = "std")]
- impl KeyLogFile {
-     /// Makes a new `KeyLogFile`.  The environment variable is
-     /// inspected and the named file is opened during this call.
-@@ -143,6 +156,7 @@ impl KeyLogFile {
+ impl fmt::Debug for ServerName {
+@@ -403,10 +410,13 @@ impl TryFrom<&str> for ServerName {
+     fn try_from(s: &str) -> Result<Self, Self::Error> {
+         match DnsNameRef::try_from(s) {
+             Ok(dns) => Ok(Self::DnsName(dns.to_owned())),
++            #[cfg(feature = "std")]
+             Err(InvalidDnsNameError) => match s.parse() {
+                 Ok(ip) => Ok(Self::IpAddress(ip)),
+                 Err(_) => Err(InvalidDnsNameError),
+             },
++            #[cfg(not(feature = "std"))]
++            Err(_) => Err(InvalidDnsNameError),
+         }
      }
  }
+diff --git a/rustls/src/error.rs b/rustls/src/error.rs
+index d15ed194..35036383 100644
+--- a/rustls/src/error.rs
++++ b/rustls/src/error.rs
+@@ -2,6 +2,7 @@ use crate::enums::{AlertDescription, ContentType, HandshakeType};
+ use crate::msgs::handshake::KeyExchangeAlgorithm;
+ use crate::rand;
  
 +#[cfg(feature = "std")]
- impl KeyLog for KeyLogFile {
-     fn log(&self, label: &str, client_random: &[u8], secret: &[u8]) {
-         #[cfg_attr(not(feature = "logging"), allow(unused_variables))]
+ use alloc::sync::Arc;
+ use core::fmt;
+ use std::error::Error as StdError;
+@@ -315,6 +316,7 @@ pub enum CertificateError {
+     /// reasons.
+     ApplicationVerificationFailure,
+ 
++    #[cfg(feature = "std")]
+     /// Any other error.
+     ///
+     /// This can be used by custom verifiers to expose the underlying error
+@@ -326,6 +328,9 @@ pub enum CertificateError {
+     ///
+     /// Enums holding this variant will never compare equal to each other.
+     Other(Arc<dyn StdError + Send + Sync>),
++    #[cfg(not(feature = "std"))]
++    /// Any other error.
++    Other(()),
+ }
+ 
+ impl PartialEq<Self> for CertificateError {
+@@ -397,10 +402,16 @@ pub enum CertRevocationListError {
+     /// The CRL issuer does not specify the cRLSign key usage.
+     IssuerInvalidForCrl,
+ 
++    #[cfg(feature = "std")]
+     /// The CRL is invalid for some other reason.
+     ///
+     /// Enums holding this variant will never compare equal to each other.
+     Other(Arc<dyn StdError + Send + Sync>),
++    #[cfg(not(feature = "std"))]
++    /// The CRL is invalid for some other reason.
++    ///
++    /// Enums holding this variant will never compare equal to each other.
++    Other,
+ 
+     /// The CRL is not correctly encoded.
+     ParseError,
 diff --git a/rustls/src/lib.rs b/rustls/src/lib.rs
-index d6526d2..3c7392d 100644
+index 67b79806..84599ddd 100644
 --- a/rustls/src/lib.rs
 +++ b/rustls/src/lib.rs
-@@ -206,7 +206,9 @@
- //!
+@@ -259,7 +259,9 @@
  
  // Require docs for public APIs, deny unsafe code, etc.
--#![forbid(unsafe_code, unused_must_use, unstable_features)]
-+#![forbid(unsafe_code, unused_must_use)]
+ #![forbid(unsafe_code, unused_must_use)]
+-#![cfg_attr(not(any(read_buf, bench)), forbid(unstable_features))]
 +// If std feature enabled, forbit unstable_features
 +#![cfg_attr(feature = "std", forbid(unstable_features))]
++#![cfg_attr(feature = "std", deny(unused_qualifications))]
  #![deny(
+     clippy::alloc_instead_of_core,
      clippy::clone_on_ref_ptr,
-     clippy::use_self,
-@@ -238,6 +240,22 @@
- // Enable documentation for all features on docs.rs
- #![cfg_attr(docsrs, feature(doc_cfg))]
- 
+@@ -270,8 +272,7 @@
+     missing_docs,
+     unreachable_pub,
+     unused_import_braces,
+-    unused_extern_crates,
+-    unused_qualifications
++    unused_extern_crates
+ )]
+ // Relax these clippy lints:
+ // - ptr_arg: this triggers on references to type aliases that are Vec
+@@ -302,9 +303,24 @@
+ // cross-compiling.
+ #![cfg_attr(read_buf, feature(read_buf))]
+ #![cfg_attr(bench, feature(test))]
 +// Enable no_std support, and no_std support need prelude_import feature.
 +#![cfg_attr(not(feature = "std"), no_std)]
-+#![cfg_attr(not(feature = "std"), feature(prelude_import))]
-+
++#![feature(prelude_import)]
+ 
+ extern crate alloc;
+ 
 +#[cfg(not(feature = "std"))]
 +#[macro_use]
 +extern crate rust_std_stub as std;
@@ -130,33 +160,96 @@ index d6526d2..3c7392d 100644
 +#[macro_use]
 +use std::prelude::*;
 +
- // log for logging (optional).
- #[cfg(feature = "logging")]
- use log;
-diff --git a/rustls/src/verify.rs b/rustls/src/verify.rs
-index be43f55..f8f4664 100644
---- a/rustls/src/verify.rs
-+++ b/rustls/src/verify.rs
-@@ -305,8 +305,10 @@ impl ServerCertVerifier for WebPkiVerifier {
-         now: SystemTime,
-     ) -> Result<ServerCertVerified, Error> {
-         let (cert, chain, trustroots) = prepare(end_entity, intermediates, &self.roots)?;
-+        #[cfg(feature = "std")]
-         let webpki_now = webpki::Time::try_from(now).map_err(|_| Error::FailedToGetCurrentTime)?;
--
-+        #[cfg(not(feature = "std"))]
-+        let webpki_now = webpki::Time::from_seconds_since_unix_epoch(now.as_secs());
-         let ServerName::DnsName(dns_name) = server_name;
+ // Import `test` sysroot crate for `Bencher` definitions.
+ #[cfg(bench)]
+ #[allow(unused_extern_crates)]
+@@ -351,6 +367,7 @@ mod builder;
+ mod enums;
+ mod key;
+ mod key_log;
++#[cfg(feature = "std")]
+ mod key_log_file;
+ mod suites;
+ mod ticketer;
+@@ -392,6 +409,7 @@ pub use crate::error::{
+ };
+ pub use crate::key::{Certificate, PrivateKey};
+ pub use crate::key_log::{KeyLog, NoKeyLog};
++#[cfg(feature = "std")]
+ pub use crate::key_log_file::KeyLogFile;
+ pub use crate::msgs::enums::NamedGroup;
+ pub use crate::msgs::handshake::DistinguishedName;
+@@ -409,6 +427,8 @@ pub use crate::tls13::Tls13CipherSuite;
+ pub use crate::verify::DigitallySignedStruct;
+ pub use crate::versions::{SupportedProtocolVersion, ALL_VERSIONS, DEFAULT_VERSIONS};
+ pub use crate::webpki::{OwnedTrustAnchor, RootCertStore};
++#[cfg(not(feature = "std"))]
++pub use NoKeyLog as KeyLogFile;
  
-         let cert = cert
-@@ -433,7 +435,10 @@ impl ClientCertVerifier for AllowAnyAuthenticatedClient {
-         now: SystemTime,
-     ) -> Result<ClientCertVerified, Error> {
-         let (cert, chain, trustroots) = prepare(end_entity, intermediates, &self.roots)?;
+ /// Items for use in a client.
+ pub mod client {
+diff --git a/rustls/src/webpki/verify.rs b/rustls/src/webpki/verify.rs
+index 8d8f52e5..e25f233f 100644
+--- a/rustls/src/webpki/verify.rs
++++ b/rustls/src/webpki/verify.rs
+@@ -51,7 +51,10 @@ pub fn verify_server_cert_signed_by_trust_anchor(
+ ) -> Result<(), Error> {
+     let chain = intermediate_chain(intermediates);
+     let trust_roots = trust_roots(roots);
++    #[cfg(feature = "std")]
+     let webpki_now = webpki::Time::try_from(now).map_err(|_| Error::FailedToGetCurrentTime)?;
++    #[cfg(not(feature = "std"))]
++    let webpki_now = webpki::Time::from_seconds_since_unix_epoch(now.as_secs());
+ 
+     cert.0
+         .verify_for_usage(
+@@ -83,6 +86,7 @@ pub fn verify_server_name(cert: &ParsedCertificate, server_name: &ServerName) ->
+                 .verify_is_valid_for_subject_name(name)
+                 .map_err(pki_error)?;
+         }
++        #[cfg(feature = "std")]
+         ServerName::IpAddress(ip_addr) => {
+             let ip_addr = webpki::IpAddr::from(*ip_addr);
+             cert.0
+@@ -91,6 +95,8 @@ pub fn verify_server_name(cert: &ParsedCertificate, server_name: &ServerName) ->
+                 ))
+                 .map_err(pki_error)?;
+         }
++        #[cfg(not(feature = "std"))]
++        ServerName::IpAddress(_) => {}
+     }
+     Ok(())
+ }
+@@ -353,7 +359,10 @@ impl ClientCertVerifier for WebPkiClientVerifier {
+         let cert = ParsedCertificate::try_from(end_entity)?;
+         let chain = intermediate_chain(intermediates);
+         let trust_roots = trust_roots(&self.roots);
 +        #[cfg(feature = "std")]
          let now = webpki::Time::try_from(now).map_err(|_| Error::FailedToGetCurrentTime)?;
 +        #[cfg(not(feature = "std"))]
 +        let now = webpki::Time::from_seconds_since_unix_epoch(now.as_secs());
-         cert.verify_is_valid_tls_client_cert(
-             SUPPORTED_SIG_ALGS,
-             &webpki::TlsClientTrustAnchors(&trustroots),
+ 
+         #[allow(trivial_casts)] // Cast to &dyn trait is required.
+         let crls = self
+@@ -439,7 +448,10 @@ fn pki_error(error: webpki::Error) -> Error {
+             CertRevocationListError::BadSignature.into()
+         }
+ 
++        #[cfg(feature = "std")]
+         _ => CertificateError::Other(Arc::new(error)).into(),
++        #[cfg(not(feature = "std"))]
++        _ => CertificateError::Other(()).into(),
+     }
+ }
+ 
+@@ -460,7 +472,10 @@ impl From<webpki::Error> for CertRevocationListError {
+             UnsupportedIndirectCrl => Self::UnsupportedIndirectCrl,
+             UnsupportedRevocationReason => Self::UnsupportedRevocationReason,
+ 
++            #[cfg(feature = "std")]
+             _ => Self::Other(Arc::new(e)),
++            #[cfg(not(feature = "std"))]
++            _ => Self::Other,
+         }
+     }
+ }
