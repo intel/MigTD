@@ -15,6 +15,7 @@ pub use alloc::rc;
 pub use alloc::string;
 pub use alloc::vec;
 
+pub use core::any;
 pub use core::cell;
 pub use core::cmp;
 pub use core::convert;
