@@ -69,6 +69,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b13c32d80ecc7ab747b80c3784bce54ee8a7a0cc4fbda9bf4cda2cf6fe90854"
 
 [[package]]
+name = "async_rustls"
+version = "0.1.0"
+dependencies = [
+ "futures-io",
+ "rust_std_stub",
+ "rustls",
+]
+
+[[package]]
 name = "atomic_refcell"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -343,6 +352,13 @@ checksum = "aa68f1b12764fab894d2755d2518754e71b4fd80ecfb822714a1206c2aab39bf"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "futures-io"
+version = "0.1.0"
+dependencies = [
+ "rust_std_stub",
 ]
 
 [[package]]

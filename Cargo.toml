@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+    "src/async_rustls",
     "src/attestation",
     "src/crypto",
     "src/devices/pci",

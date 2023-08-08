@@ -1,0 +1,15 @@
+[package]
+name = "async_rustls"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rust_std_stub = { path = "../std-support/rust-std-stub" }
+futures-io = { path = "../std-support/futures-io" }
+rustls = { path = "../../deps/rustls/rustls", default-features = false, features = ["no_std", "alloc"] }
+
+[features]
+dangerous_configuration = ["rustls/dangerous_configuration"]
+early-data = []
