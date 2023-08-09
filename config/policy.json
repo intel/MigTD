@@ -28,6 +28,10 @@
                 "operation":"equal",
                 "reference":"self"
             },
+            "MRTD": { 
+                "operation": "equal", 
+                "reference": "self" 
+            }, 
             "MRCONFIGID":{
                 "operation":"equal",
                 "reference":"self"
@@ -39,6 +43,22 @@
             "MROWNERCONFIG":{
                 "operation":"equal",
                 "reference":"self"
+            },
+            "RTMR0": { 
+                "operation": "equal", 
+                "reference": "self" 
+            }, 
+            "RTMR1": { 
+                "operation": "equal", 
+                "reference": "self" 
+            }, 
+            "RTMR2": { 
+                "operation": "equal", 
+                "reference": "self" 
+            }, 
+            "RTMR3": { 
+                "operation": "equal", 
+                "reference": "self" 
             }
         },
         "EventLog": {
