@@ -89,6 +89,7 @@ To specify the root certificate to be enrolled, you can use the `--root-ca` argu
 ```
 cargo image --root-ca /path/to/cert
 ```
+Note: SGX SBX Root CA can be downloaded at https://sbx-certificates.trustedservices.intel.com/Intel_SGX_Provisioning_Certification_RootCA.cer
 
 To specify the policy file to be enrolled, you can use the `--policy` argument:
 ```
