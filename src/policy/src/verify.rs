@@ -172,6 +172,7 @@ impl From<&str> for EventName {
 }
 
 pub fn verify_policy(
+    is_src: bool,
     policy: &[u8],
     report: &[u8],
     event_log: &[u8],
@@ -199,13 +200,13 @@ pub fn verify_policy(
     let report_peer = Report::read_from_raw_report(report_peer);
 
     if let Some(policy) = policy.migtd.tee_tcb_info.as_ref() {
-        if !verify_tee_tcb_info(policy, &report_local, &report_peer) {
+        if !verify_tee_tcb_info(is_src, policy, &report_local, &report_peer) {
             return PolicyVerifyReulst::UnqulifiedTeeTcbInfo;
         }
     }
 
     if let Some(policy) = policy.migtd.td_info.as_ref() {
-        if !verify_td_info(policy, &report_local, &report_peer) {
+        if !verify_td_info(is_src, policy, &report_local, &report_peer) {
             return PolicyVerifyReulst::UnqulifiedTdInfo;
         }
     }
@@ -218,7 +219,7 @@ pub fn verify_policy(
         if let (Some(log_local), Some(log_peer)) =
             (parse_events(event_log), parse_events(event_log_peer))
         {
-            if !verify_event_log(policy, &log_local, &log_peer) {
+            if !verify_event_log(is_src, policy, &log_local, &log_peer) {
                 return PolicyVerifyReulst::UnqulifiedEventLog;
             }
         } else {
@@ -230,6 +231,7 @@ pub fn verify_policy(
 }
 
 fn verify_tee_tcb_info(
+    is_src: bool,
     policy: &BTreeMap<String, Property>,
     local_report: &Report,
     peer_report: &Report,
@@ -239,6 +241,7 @@ fn verify_tee_tcb_info(
     for (property, action) in policy {
         let property = TeeTcbInfoProperty::from(property.as_str());
         verify_result &= action.verify(
+            is_src,
             local_report.get_tee_tcb_info_property(&property),
             peer_report.get_tee_tcb_info_property(&property),
         );
@@ -248,6 +251,7 @@ fn verify_tee_tcb_info(
 }
 
 fn verify_td_info(
+    is_src: bool,
     policy: &BTreeMap<String, Property>,
     local_report: &Report,
     peer_report: &Report,
@@ -257,6 +261,7 @@ fn verify_td_info(
     for (property, action) in policy {
         let property = TdInfoProperty::from(property.as_str());
         verify_result &= action.verify(
+            is_src,
             local_report.get_td_info_property(&property),
             peer_report.get_td_info_property(&property),
         );
@@ -356,6 +361,7 @@ fn replay_event_log(event_log: &[u8], report_peer: &Report) -> bool {
 }
 
 fn verify_event_log(
+    is_src: bool,
     policy: &BTreeMap<String, Property>,
     local_event_log: &BTreeMap<EventName, CcEvent>,
     peer_event_log: &BTreeMap<EventName, CcEvent>,
@@ -369,13 +375,14 @@ fn verify_event_log(
             return false;
         }
 
-        verify_result &= verify_event(&event_name, value, local_event_log, peer_event_log);
+        verify_result &= verify_event(is_src, &event_name, value, local_event_log, peer_event_log);
     }
 
     verify_result
 }
 
 fn verify_event(
+    is_src: bool,
     event_name: &EventName,
     policy: &Property,
     local_event_log: &BTreeMap<EventName, CcEvent>,
@@ -387,12 +394,13 @@ fn verify_event(
     ) {
         if let Some(data) = local.data.as_ref() {
             if let Some(data_peer) = peer.data.as_ref() {
-                policy.verify(data, data_peer)
+                policy.verify(is_src, data, data_peer)
             } else {
                 false
             }
         } else {
             policy.verify(
+                is_src,
                 &local.header.digest.digests[0].digest.sha384,
                 &peer.header.digest.digests[0].digest.sha384,
             )
@@ -421,6 +429,7 @@ mod tests {
     fn test_verify_invalid_parameter() {
         let policy_bytes = include_bytes!("../test/policy.json");
         let verify_result = verify_policy(
+            true,
             policy_bytes,
             &[0u8; TD_REPORT_LEN - 1],
             &[0u8; 8],
@@ -430,6 +439,7 @@ mod tests {
         assert_eq!(verify_result, PolicyVerifyReulst::InvalidParameter);
 
         let verify_result = verify_policy(
+            true,
             policy_bytes,
             &[0u8; TD_REPORT_LEN],
             &[0u8; 8],
@@ -447,44 +457,86 @@ mod tests {
         report[264..280].copy_from_slice(&[1u8; 16]);
 
         let policy_bytes = include_bytes!("../test/policy_full1.json");
-        let verify_result = verify_policy(policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
+        let verify_result =
+            verify_policy(true, policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
         assert_eq!(verify_result, PolicyVerifyReulst::Succeed);
 
         // peer's svn smaller than src
         let mut report_peer = [0u8; 1024];
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTeeTcbInfo);
 
-        // peer's svn greater than src
+        // dst's svn is greater than src
         report_peer[Report::R_TEE_TCB_SVN].copy_from_slice(&[2u8; 16]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::Succeed);
+
+        // src's svn is greater than dst
+        let verify_result = verify_policy(
+            false,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTeeTcbInfo);
 
         // different mrseam, not equal
         report_peer[Report::R_MRSEAM].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTeeTcbInfo);
         report_peer[Report::R_MRSEAM].copy_from_slice(&[0u8; 48]);
 
         // different mrsigner_seam, not equal
         report_peer[Report::R_MRSEAMSIGNER].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTeeTcbInfo);
         report_peer[Report::R_MRSEAMSIGNER].copy_from_slice(&[0u8; 48]);
 
         // different attributes, not equal
         report_peer[Report::R_ATTR_SEAM].copy_from_slice(&[1u8; 8]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTeeTcbInfo);
     }
 
@@ -494,7 +546,8 @@ mod tests {
         let report = [0u8; 1024];
 
         let policy_bytes = include_bytes!("../test/policy_no.json");
-        let verify_result = verify_policy(policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
+        let verify_result =
+            verify_policy(true, policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
         assert_eq!(verify_result, PolicyVerifyReulst::Succeed);
 
         // different attributes, not equal, but attributes is not in policy
@@ -502,8 +555,14 @@ mod tests {
         let mut report_peer = [0u8; 1024];
 
         report_peer[Report::R_ATTR_TD].copy_from_slice(&[1u8; 8]);
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::Succeed);
         report_peer[Report::R_ATTR_TD].copy_from_slice(&[0u8; 8]);
 
@@ -511,80 +570,140 @@ mod tests {
         // different attributes, not equal
         report_peer[Report::R_ATTR_TD].copy_from_slice(&[1u8; 8]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_ATTR_TD].copy_from_slice(&[0u8; 8]);
 
         // different xfam, not equal
         report_peer[Report::R_XFAM].copy_from_slice(&[1u8; 8]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_XFAM].copy_from_slice(&[0u8; 8]);
 
         // different mrtd, not equal
         report_peer[Report::R_MRTD].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_MRTD].copy_from_slice(&[0u8; 48]);
 
         // different mrconfig_id, not equal
         report_peer[Report::R_MRCONFIGID].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_MRCONFIGID].copy_from_slice(&[0u8; 48]);
 
         // different mrowner, not equal
         report_peer[Report::R_MROWNER].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_MROWNER].copy_from_slice(&[0u8; 48]);
 
         // different mrownerconfig, not equal
         report_peer[Report::R_MROWNERCONFIG].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_MROWNERCONFIG].copy_from_slice(&[0u8; 48]);
 
         // different rtmr0, not equal
         report_peer[Report::R_RTMR0].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_RTMR0].copy_from_slice(&[0u8; 48]);
 
         // different rtmr1, not equal
         report_peer[Report::R_RTMR1].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_RTMR1].copy_from_slice(&[0u8; 48]);
 
         // different rtmr2, not equal
         report_peer[Report::R_RTMR2].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
         report_peer[Report::R_RTMR2].copy_from_slice(&[0u8; 48]);
 
         // different rtmr3, not equal
         report_peer[Report::R_RTMR3].copy_from_slice(&[1u8; 48]);
 
-        let verify_result =
-            verify_policy(policy_bytes, &report, &[0u8; 8], &report_peer, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedTdInfo);
     }
 
@@ -594,7 +713,8 @@ mod tests {
 
         let policy_bytes = include_bytes!("../test/policy_full2.json");
         // Invalid event log
-        let verify_result = verify_policy(policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
+        let verify_result =
+            verify_policy(true, policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedEventLog);
 
         let mut evt1 = vec![0u8; 0x1000];
@@ -618,7 +738,7 @@ mod tests {
             )
             .unwrap();
 
-        let verify_result = verify_policy(policy_bytes, &report, &evt1, &report, &evt1);
+        let verify_result = verify_policy(true, policy_bytes, &report, &evt1, &report, &evt1);
         assert_eq!(verify_result, PolicyVerifyReulst::UnqulifiedEventLog);
     }
 
@@ -706,6 +826,7 @@ mod tests {
         let local_events = parse_events(&event_log).unwrap();
 
         assert!(verify_event_log(
+            true,
             &event_log_policy,
             &local_events,
             &local_events
@@ -744,6 +865,7 @@ mod tests {
             .unwrap();
 
         assert!(!verify_event_log(
+            true,
             &event_log_policy,
             &parse_events(&local_events).unwrap(),
             &parse_events(&peer_events).unwrap(),
@@ -782,6 +904,7 @@ mod tests {
             .unwrap();
 
         assert!(!verify_event_log(
+            true,
             &event_log_policy,
             &parse_events(&local_events).unwrap(),
             &parse_events(&peer_events).unwrap(),
@@ -811,6 +934,7 @@ mod tests {
             .unwrap();
 
         assert!(!verify_event_log(
+            true,
             &event_log_policy,
             &parse_events(&local_events).unwrap(),
             &parse_events(&local_events).unwrap(),
@@ -850,6 +974,7 @@ mod tests {
                 .unwrap();
 
         assert!(!verify_event_log(
+            true,
             &event_log_policy,
             &parse_events(&local_events).unwrap(),
             &parse_events(&peer_events).unwrap(),
@@ -888,6 +1013,7 @@ mod tests {
             .unwrap();
 
         assert!(!verify_event_log(
+            true,
             &event_log_policy,
             &parse_events(&local_events).unwrap(),
             &parse_events(&peer_events).unwrap(),

@@ -8,7 +8,11 @@ use tdx_tdcall::tdreport;
 
 use crate::{config::get_policy, event_log::get_event_log};
 
-pub fn authenticate_policy(td_report_peer: &[u8], event_log_peer: &[u8]) -> PolicyVerifyReulst {
+pub fn authenticate_policy(
+    is_src: bool,
+    td_report_peer: &[u8],
+    event_log_peer: &[u8],
+) -> PolicyVerifyReulst {
     let td_report = if let Ok(td_report) = tdreport::tdcall_report(&[0u8; 64]) {
         td_report
     } else {
@@ -28,6 +32,7 @@ pub fn authenticate_policy(td_report_peer: &[u8], event_log_peer: &[u8]) -> Poli
     };
 
     verify_policy(
+        is_src,
         policy,
         td_report.as_bytes(),
         event_log,
