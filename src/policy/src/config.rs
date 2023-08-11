@@ -33,7 +33,7 @@ pub struct Property {
 }
 
 impl Property {
-    pub fn verify(&self, local: &[u8], peer: &[u8]) -> bool {
+    pub fn verify(&self, is_src: bool, local: &[u8], peer: &[u8]) -> bool {
         match &self.reference {
             Reference::Integer(i) => {
                 if peer.len() > size_of::<usize>() {
@@ -42,17 +42,17 @@ impl Property {
                     let mut bytes = [0u8; 8];
                     bytes[..peer.len()].copy_from_slice(peer);
                     let peer = usize::from_le_bytes(bytes);
-                    i.verify(&self.operation, 0, peer)
+                    i.verify(is_src, &self.operation, 0, peer)
                 }
             }
             Reference::String(s) => {
                 if let Ok(peer) = String::from_utf8(peer.to_vec()) {
-                    s.verify(&self.operation, "", &peer)
+                    s.verify(is_src, &self.operation, "", &peer)
                 } else {
                     false
                 }
             }
-            Reference::Local(selfr) => selfr.verify(&self.operation, local, peer),
+            Reference::Local(selfr) => selfr.verify(is_src, &self.operation, local, peer),
             Reference::IntegerRange(r) => {
                 if peer.len() > size_of::<usize>() {
                     false
@@ -60,7 +60,7 @@ impl Property {
                     let mut bytes = [0u8; 8];
                     bytes[..peer.len()].copy_from_slice(peer);
                     let peer = usize::from_le_bytes(bytes);
-                    r.verify(&self.operation, 0, peer)
+                    r.verify(is_src, &self.operation, 0, peer)
                 }
             }
         }
@@ -126,7 +126,7 @@ impl<'de> Deserialize<'de> for Operation {
 struct Integer(usize);
 
 impl Integer {
-    fn verify(&self, op: &Operation, _local: usize, peer: usize) -> bool {
+    fn verify(&self, _is_src: bool, op: &Operation, _local: usize, peer: usize) -> bool {
         match op {
             Operation::Equal => peer == self.0,
             Operation::GreaterOrEqual => peer >= self.0,
@@ -141,7 +141,7 @@ impl Integer {
 struct RefString(String);
 
 impl RefString {
-    fn verify(&self, op: &Operation, _local: &str, peer: &str) -> bool {
+    fn verify(&self, _is_src: bool, op: &Operation, _local: &str, peer: &str) -> bool {
         match op {
             Operation::Equal => *peer == self.0,
             Operation::GreaterOrEqual => false,
@@ -156,10 +156,16 @@ impl RefString {
 struct RefLocal;
 
 impl RefLocal {
-    fn verify(&self, op: &Operation, local: &[u8], peer: &[u8]) -> bool {
+    fn verify(&self, is_src: bool, op: &Operation, local: &[u8], peer: &[u8]) -> bool {
         match op {
             Operation::Equal => peer == local,
-            Operation::GreaterOrEqual => peer >= local,
+            Operation::GreaterOrEqual => {
+                if is_src {
+                    peer >= local
+                } else {
+                    local >= peer
+                }
+            }
             Operation::Subset => false,
             Operation::InRange => false,
             Operation::InTimeRange => false,
@@ -171,7 +177,7 @@ impl RefLocal {
 struct IntegerRange(ops::Range<usize>);
 
 impl IntegerRange {
-    fn verify(&self, op: &Operation, _local: usize, peer: usize) -> bool {
+    fn verify(&self, _is_src: bool, op: &Operation, _local: usize, peer: usize) -> bool {
         match op {
             Operation::Equal => false,
             Operation::GreaterOrEqual => false,
@@ -254,7 +260,9 @@ mod test {
         let not_equal: usize = 0;
         let op = Operation::Equal;
 
-        assert!(Integer(1).verify(&op, 0, equal) && !Integer(1).verify(&op, 0, not_equal));
+        assert!(
+            Integer(1).verify(true, &op, 0, equal) && !Integer(1).verify(true, &op, 0, not_equal)
+        );
     }
 
     #[test]
@@ -266,9 +274,9 @@ mod test {
         let op = Operation::GreaterOrEqual;
 
         assert!(
-            !Integer(1).verify(&op, 0, less)
-                && Integer(1).verify(&op, 0, equal)
-                && Integer(1).verify(&op, 0, greater)
+            !Integer(1).verify(true, &op, 0, less)
+                && Integer(1).verify(true, &op, 0, equal)
+                && Integer(1).verify(true, &op, 0, greater)
         );
     }
 
@@ -280,8 +288,8 @@ mod test {
         let op = Operation::Equal;
 
         assert!(
-            RefString(String::from("abc")).verify(&op, &local, &equal)
-                && !RefString(String::from("abc")).verify(&op, &local, &not_equal)
+            RefString(String::from("abc")).verify(true, &op, &local, &equal)
+                && !RefString(String::from("abc")).verify(true, &op, &local, &not_equal)
         );
     }
 
@@ -293,12 +301,15 @@ mod test {
 
         let op = Operation::Equal;
 
-        assert!(!RefLocal.verify(&op, &local, &not_equal) && RefLocal.verify(&op, &local, &equal));
+        assert!(
+            !RefLocal.verify(true, &op, &local, &not_equal)
+                && RefLocal.verify(true, &op, &local, &equal)
+        );
     }
 
     #[test]
     fn test_self_greater_or_equal() {
-        let local = [1, 2, 3, 4];
+        let src = [1, 2, 3, 4];
         let less = [1, 2, 3];
         let equal = [1, 2, 3, 4];
         let greater = [1, 2, 3, 4, 5];
@@ -306,9 +317,16 @@ mod test {
         let op = Operation::GreaterOrEqual;
 
         assert!(
-            !RefLocal.verify(&op, &local, &less)
-                && RefLocal.verify(&op, &local, &equal)
-                && RefLocal.verify(&op, &local, &greater)
+            !RefLocal.verify(true, &op, &src, &less)
+                && RefLocal.verify(true, &op, &src, &equal)
+                && RefLocal.verify(true, &op, &src, &greater)
+        );
+
+        let dst = src;
+        assert!(
+            RefLocal.verify(false, &op, &dst, &less)
+                && RefLocal.verify(false, &op, &dst, &equal)
+                && !RefLocal.verify(false, &op, &dst, &greater)
         );
     }
 
@@ -320,8 +338,8 @@ mod test {
         let op = Operation::InRange;
 
         assert!(
-            !IntegerRange(0..3).verify(&op, 0, not_inrange)
-                && IntegerRange(0..3).verify(&op, 0, inrange)
+            !IntegerRange(0..3).verify(true, &op, 0, not_inrange)
+                && IntegerRange(0..3).verify(true, &op, 0, inrange)
         );
     }
 }

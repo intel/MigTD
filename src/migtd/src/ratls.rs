@@ -82,7 +82,8 @@ pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
     let mut signing_key = EcdsaPk::new()?;
     let certs = vec![gen_cert(&mut signing_key)?];
 
-    let config = TlsConfig::new(certs, signing_key, verify_peer_cert)?;
+    // Server verifies certificate of client
+    let config = TlsConfig::new(certs, signing_key, verify_client_cert)?;
     config.tls_server(stream).map_err(|e| e.into())
 }
 
@@ -90,7 +91,8 @@ pub fn client<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
     let mut signing_key = EcdsaPk::new()?;
     let certs = vec![gen_cert(&mut signing_key)?];
 
-    let config = TlsConfig::new(certs, signing_key, verify_peer_cert)?;
+    // Client verifies certificate of server
+    let config = TlsConfig::new(certs, signing_key, verify_server_cert)?;
     config.tls_client(stream).map_err(|e| e.into())
 }
 
@@ -153,7 +155,15 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     attestation::get_quote(td_report.as_bytes()).map_err(|_| RatlsError::GetQuote)
 }
 
-fn verify_peer_cert(cert: &[u8]) -> core::result::Result<(), CryptoError> {
+fn verify_server_cert(cert: &[u8]) -> core::result::Result<(), CryptoError> {
+    verify_peer_cert(true, cert)
+}
+
+fn verify_client_cert(cert: &[u8]) -> core::result::Result<(), CryptoError> {
+    verify_peer_cert(false, cert)
+}
+
+fn verify_peer_cert(is_client: bool, cert: &[u8]) -> core::result::Result<(), CryptoError> {
     let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
 
     let extensions = cert
@@ -168,7 +178,8 @@ fn verify_peer_cert(cert: &[u8]) -> core::result::Result<(), CryptoError> {
     if let Ok(report) = attestation::verify_quote(quote_report) {
         verify_signature(&cert, report.as_slice())?;
 
-        if mig_policy::authenticate_policy(report.as_slice(), event_log)
+        // MigTD-src acts as TLS client
+        if mig_policy::authenticate_policy(is_client, report.as_slice(), event_log)
             != policy::PolicyVerifyReulst::Succeed
         {
             return Err(CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()));
