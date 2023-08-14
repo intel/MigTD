@@ -20,8 +20,9 @@ tdvf_image="/home/env/OVMF.fd"
 mig_src_log="migtd-src.log"
 mig_dst_log="migtd-dst.log"
 
-firmware=""
-type="pe"
+src_migtd=""
+dst_migtd=""
+payload=""
 
 cycle=0
 
@@ -29,6 +30,18 @@ cycle=0
 cpus=1
 memory=32M
 device=vsock
+
+# Function test case list
+func_tcs_list=(
+    *001*
+    *002*
+    *004*
+    *005*
+    *010*
+    *011*
+    *012*
+    *013*
+)
 
 # trap cleanup exit
 
@@ -48,58 +61,66 @@ migtd_qemu_cmd="${qemu_tdx_path} \
 usage() {
     cat << EOM
 Usage: $(basename "$0") [OPTION]...
-  -f <TD Shim Firmware file path> required.
+  -s <Source migtd binary path> required for pre migration test.
+  -d <Destination migtd binary path> required for pre migration test.
+  -f <Test td payload file path> required for test td payload test.
   -p <Cloud Hypervisor/Qemu path>.
   -i <Guest image file path> by default is td-guest.raw.
   -k <Kernel binary file path> by default is vmlinuz.
-  -t [pe|elf] firmware type, by default it is "pe".
   -c <CPU number> by default is 1.
   -m <Memory size> by defalt is 2G.
   -n Cycle test number.
-  -d Device(transport) used for host-guest communication, by default is `vsock`.
+  -t Device(transport) used for host-guest communication, by default is `vsock`.
   -h Show help info
 EOM
     exit 0
 }
 
 proccess_args() {
-    while getopts ":i:p:k:f:t:c:m:n:d:h" option; do
+    while getopts ":f:i:p:k:s:t:c:m:n:d:h" option; do
         case "${option}" in
             i) guest_image=${OPTARG};;
             p) qemu_tdx_path=${OPTARG};;
             k) kernel=${OPTARG};;
-            f) firmware=${OPTARG};;
-            t) type=${OPTARG};;
+            f) payload=${OPTARG};;
+            s) src_migtd=${OPTARG};;
+            d) dst_migtd=${OPTARG};;
             c) cpus=${OPTARG};;
             m) memory=${OPTARG};;
             n) cycle=${OPTARG};; 
-            d) device=${OPTARG};;
+            t) device=${OPTARG};;
             h) usage;;
         esac
     done
+    
+    if [[ ${payload} == "" ]]; then
+        if [[ -z ${src_migtd} ]]; then
+            die "Please input correct source migtd binary path"
+        fi
+        [ -e ${src_migtd} ] || die "Source migtd binary path: ${src_migtd} is not exists"
 
-    if [[ -z ${firmware} ]]; then
-        die "Please input correct Migration TD Image path"
+        if [[ -z ${dst_migtd} ]]; then
+            die "Please input correct destination migtd binary path"
+        fi
+        [ -e ${dst_migtd} ] || die "Destination migtd binary path: ${dst_migtd} is not exists" 
+    else
+        if [[ -z ${payload} ]]; then
+            die "Please input correct test td payload binary path"
+        fi
+        [ -e ${payload} ] || die "Test td payload path: ${payload} is not exists" 
     fi
 
-    [ -e ${firmware} ] || die "Migration TD Image path: ${firmware} is not exists"
     [ -e ${qemu_tdx_path} ] || die "TDX QEMU path: ${qemu_tdx_path} is not exists"
 
-    if [[ -n ${type} ]]; then
-        case "${type}" in
-            pe|elf) echo "";;
-            *) die "Unspported type: ${type}";;
-        esac
-    fi
-
     echo "========================================="
-    echo "TD Shim Image     : ${firmware}"
-    echo "Guest Image       : ${guest_image}"
-    echo "Kernel binary     : ${kernel}"
-    echo "Type              : ${type}"
-    echo "CPUs              : ${cpus}"
-    echo "Memmory Size      : ${memory}"
-    echo "Device type       : ${device}"
+    echo "Source migtd binary         : ${src_migtd}"
+    echo "Destination migtd binary    : ${dst_migtd}"
+    echo "Test td pyalod binary       : ${payload}"
+    echo "Guest Image                 : ${guest_image}"
+    echo "Kernel binary               : ${kernel}"
+    echo "CPUs                        : ${cpus}"
+    echo "Memmory Size                : ${memory}"
+    echo "Device type                 : ${device}"
     echo "========================================="
 }
 
@@ -129,6 +150,24 @@ kill_socat() {
 die() {
     echo "ERROR: $*" >&2
     exit 1
+}
+
+is_function_tcs() {
+    result=1
+    for tcs_no in ${func_tcs_list[@]}; do
+        if [[ ${dst_migtd} == *${tcs_no}* ]]
+        then
+            result=0
+            break
+        fi
+    done
+
+    if [[ ${dst_migtd} == *migtd.bin* ]]
+    then
+        result=0
+    fi
+
+    return ${result}
 }
 
 check_result()  {
@@ -175,7 +214,7 @@ setup_agent() {
 
 launch_src_migtd() {
     local cmd="${migtd_qemu_cmd} \
-                -bios $1 \
+                -bios ${src_migtd} \
                 -name migtd-src,process=migtd-src,debug-threads=on \
                 -serial mon:stdio"
 
@@ -193,12 +232,12 @@ launch_src_migtd() {
 
     nohup ${cmd} > ${mig_src_log} &
 
-    sleep 10
+    sleep 1
 }
 
 launch_dst_migtd() {
     local cmd="${migtd_qemu_cmd} \
-                -bios $1 \
+                -bios ${dst_migtd} \
                 -name migtd-dst,process=migtd-dst,debug-threads=on \
                 -serial mon:stdio"
 
@@ -216,12 +255,12 @@ launch_dst_migtd() {
 
     nohup ${cmd} > ${mig_dst_log} &
 
-    sleep 10
+    sleep 1
 }
 
 launch_src_migtd_without_device() {
     local cmd="${migtd_qemu_cmd} \
-                -bios $1 \
+                -bios ${src_migtd} \
                 -name migtd-src,process=migtd-src,debug-threads=on \
                 -serial mon:stdio"
 
@@ -234,7 +273,7 @@ launch_src_migtd_without_device() {
 
     nohup ${cmd} > ${mig_src_log} &
 
-    sleep 10
+    sleep 1
 }
 
 launch_src_td() {
@@ -258,7 +297,7 @@ launch_src_td() {
         -D qemu_src.log -nographic -vga none \
         -monitor unix:${qmp_sock_src},server,nowait &
 
-    sleep 10
+    sleep 1
 }
 
 launch_dst_td() {
@@ -281,7 +320,7 @@ launch_dst_td() {
         -monitor unix:${qmp_sock_dst},server,nowait \
         -incoming tcp:0:6666 &
 
-    sleep 10
+    sleep 1
 }
 
 send_mig_command() {
@@ -303,20 +342,14 @@ test_migtd() {
     fi
 
     echo "-- launch dst migtd"
-    launch_dst_migtd ${firmware}
+    launch_dst_migtd
 
     echo "-- launch src migtd"
-    if [[ ${firmware} == *004* ]] || [[ ${firmware} == *005* ]] || [[ ${firmware} == *006* ]] || [[ ${firmware} == *migtd.bin* ]]
+    if [[ ${src_migtd} == *009* ]]
     then
-        launch_src_migtd ${firmware}
-    elif [[ ${firmware} == *007* ]] || [[ ${firmware} == *008* ]]
-    then 
-        launch_src_migtd "`dirname ${firmware}`/migtd_no.bin"
-    elif [[ ${firmware} == *009* ]]
-    then
-        launch_src_migtd_without_device "`dirname ${firmware}`/migtd_no.bin"
+        launch_src_migtd_without_device 
     else
-        launch_src_migtd "`dirname ${firmware}`/migtd_001.bin"
+        launch_src_migtd
     fi
 
     echo "-- launch src td"
@@ -326,7 +359,7 @@ test_migtd() {
     echo "-- send migration command"
     send_mig_command
 
-    if [[ ${firmware} == *001* ]] || [[ ${firmware} == *002* ]] || [[ ${firmware} == *migtd.bin* ]] || [[ ${firmware} == *004* ]] || [[ ${firmware} == *005* ]]
+    if is_function_tcs
     then
         # TBD need to update to avoid no run scenario
         local key_str="Pre-migration is done"
@@ -356,9 +389,9 @@ cycle_test_migtd() {
         setup_agent
     fi
     echo "-- launch dst migtd"
-    launch_dst_migtd ${firmware}
+    launch_dst_migtd
     echo "-- launch src migtd"
-    launch_src_migtd ${firmware}
+    launch_src_migtd
     
     for ((i=1;i<${cycle};i++))
     do
@@ -404,7 +437,7 @@ launch_td_test_payload() {
         -machine q35,kernel_irqchip=split,confidential-guest-support=tdx \
         -no-hpet \
         -cpu host,host-phys-bits,-kvm-steal-time,pmu=off,-amx-tile,-amx-int8 \
-        -bios ${firmware} \
+        -bios ${payload} \
         -device vhost-vsock-pci,id=vhost-vsock-pci1,guest-cid=37,disable-legacy=on \
         -m ${memory} -nographic -vga none -nic none \
         -serial mon:stdio > ${nohup_logfile} 2>&1 &
@@ -425,17 +458,16 @@ run_test() {
     echo "========================================="
     echo "               Run Test                  "
     echo "========================================="
-    if [[ ${firmware} == *final*-test* ]] 
+    if [[ ${payload} == "" ]] 
     then
+        if [[ ${cycle} -eq 0 ]]
+        then
+            test_migtd
+        else
+            cycle_test_migtd
+        fi
+    else
         launch_td_test_payload
-    fi
-
-    if [[ ${firmware} == *migtd* ]] && [[ ${cycle} -ne 0 ]]
-    then
-        cycle_test_migtd
-    elif [[ ${firmware} == *migtd* ]] && [[ ${cycle} -eq 0 ]]
-    then
-        test_migtd
     fi
 }
 

@@ -44,11 +44,11 @@ jobs:
 
       - name: Run Tests - Test Migration TD
         run: |
-          sudo bash sh_script/integration_tdx.sh -f target/release/migtd.bin
+          sudo bash sh_script/integration_tdx.sh -d target/release/migtd.bin -s target/release/migtd.bin
 
       - name: Run Tests - Cycle Test Migration TD (20)
         run: |
-          sudo bash sh_script/integration_tdx.sh -f target/release/migtd.bin -n 20
+          sudo bash sh_script/integration_tdx.sh -d target/release/migtd.bin -s target/release/migtd.bin -n 20
       
       - name: Build all test binaries
         run: bash sh_script/build_final.sh -t test -c -a on
@@ -59,47 +59,59 @@ jobs:
 
       - name: Run Tests - Run migration test case 001
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_001.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_001.bin -s Bin/migtd_001.bin
       
       - name: Run Tests - Run migration test case 002
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_002.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_002.bin -s Bin/migtd_001.bin
       
       - name: Run Tests - Run migration test case 003
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_003.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_003.bin -s Bin/migtd_001.bin
 
       - name: Run Tests - Run migration test case 004
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_004.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_004.bin -s Bin/migtd_004.bin
       
       - name: Run Tests - Run migration test case 005
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_005.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_005.bin -s Bin/migtd_005.bin
       
       - name: Run Tests - Run migration test case 006
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_006.bin
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_006.bin -s Bin/migtd_006.bin
 
       - name: Run Tests - Run migration test case 007
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_007.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_007.bin -s Bin/migtd_no.bin
       
       - name: Run Tests - Run migration test case 008
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_008.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_008.bin -s Bin/migtd_no.bin
       
       - name: Run Tests - Run migration test case 009
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_009.bin  
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_009.bin -s Bin/migtd_009.bin
       
       - name: Run Tests - Run migration test case 010
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_010.bin 
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_010.bin -s Bin/migtd_010.bin 
       
       - name: Run Tests - Run migration test case 011
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_011.bin
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_011.bin -s Bin/migtd_011.bin 
+
+      - name: Run Tests - Run migration test case 012
+        run: |
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_dst_012.bin -s Bin/migtd_src_012.bin
+  
+      - name: Run Tests - Run migration test case 013
+        run: |
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_dst_013.bin -s Bin/migtd_src_013.bin
+
+      - name: Run Tests - Run migration test case 014
+        run: |
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_dst_014.bin -s Bin/migtd_src_014.bin
 
   virtio_serial:
     name: Run TDX Integration Test (virtio-serial)
@@ -116,55 +128,67 @@ jobs:
 
       - name: Run Tests - Test Migration TD
         run: |
-          sudo bash sh_script/integration_tdx.sh -f target/release/migtd.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d target/release/migtd.bin -s target/release/migtd.bin -t serial
 
       - name: Run Tests - Cycle Test Migration TD (20)
         run: |
-          sudo bash sh_script/integration_tdx.sh -f target/release/migtd.bin -d serial -n 20
+          sudo bash sh_script/integration_tdx.sh -d target/release/migtd.bin -s target/release/migtd.bin -t serial -n 20
       
       - name: Build all test binaries
         run: bash sh_script/build_final.sh -t test -c -a on -d serial
 
       - name: Run Tests - Run migration test case 001
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_001.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_001.bin -s Bin/migtd_001.bin -t serial
       
       - name: Run Tests - Run migration test case 002
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_002.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_002.bin -s Bin/migtd_001.bin -t serial
       
       - name: Run Tests - Run migration test case 003
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_003.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_003.bin -s Bin/migtd_001.bin -t serial
 
       - name: Run Tests - Run migration test case 004
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_004.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_004.bin -s Bin/migtd_004.bin -t serial
       
       - name: Run Tests - Run migration test case 005
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_005.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_005.bin -s Bin/migtd_005.bin -t serial
       
       - name: Run Tests - Run migration test case 006
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_006.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_006.bin -s Bin/migtd_006.bin -t serial
 
       - name: Run Tests - Run migration test case 007
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_007.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_007.bin -s Bin/migtd_no.bin -t serial
       
       - name: Run Tests - Run migration test case 008
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_008.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_008.bin -s Bin/migtd_no.bin -t serial
       
       - name: Run Tests - Run migration test case 009
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_009.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_009.bin -s Bin/migtd_009.bin -t serial
       
       - name: Run Tests - Run migration test case 010
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_010.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_010.bin -s Bin/migtd_010.bin  -t serial
       
       - name: Run Tests - Run migration test case 011
         run: |
-          sudo bash sh_script/integration_tdx.sh -f Bin/migtd_011.bin -d serial
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_011.bin -s Bin/migtd_011.bin -t serial
+
+      - name: Run Tests - Run migration test case 012
+        run: |
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_dst_012.bin -s Bin/migtd_src_012.bin -t serial
+
+      - name: Run Tests - Run migration test case 013
+        run: |
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_dst_013.bin -s Bin/migtd_src_013.bin -t serial
+
+      - name: Run Tests - Run migration test case 014
+        run: |
+          sudo bash sh_script/integration_tdx.sh -d Bin/migtd_dst_014.bin -s Bin/migtd_src_014.bin -t serial
