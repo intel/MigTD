@@ -168,7 +168,34 @@ function final_test_migtd() {
    
     echo "-- Build final binary for test case 011 of migration TD"
     # full policy with 
-    enroll "migtd_sb1.bin" "policy_full2.json" "migtd_011.bin"
+    enroll "migtd_sb3.bin" "policy_full2.json" "migtd_011.bin"
+
+    echo "-- Build final binary for test case 012 of migration TD"
+    # Secure boot and dst svn(2) greater than src svn(1) 
+    sign "migtd_src_sb12" 1
+    sign "migtd_dst_sb12" 2
+    link "migtd_src_sb12" "migtd_src_sb12.bin"
+    link "migtd_dst_sb12" "migtd_dst_sb12.bin"
+    enroll "migtd_src_sb12.bin" "policy_006.json" "migtd_src_012.bin"
+    enroll "migtd_dst_sb12.bin" "policy_006.json" "migtd_dst_012.bin"
+
+    echo "-- Build final binary for test case 013 of migration TD"
+    # Secure boot and dst svn(1) equal than src svn(1) 
+    sign "migtd_src_sb13" 1
+    sign "migtd_dst_sb13" 1
+    link "migtd_src_sb13" "migtd_src_sb13.bin"
+    link "migtd_dst_sb13" "migtd_dst_sb13.bin"
+    enroll "migtd_src_sb13.bin" "policy_006.json" "migtd_src_013.bin"
+    enroll "migtd_dst_sb13.bin" "policy_006.json" "migtd_dst_013.bin"
+
+    echo "-- Build final binary for test case 014 of migration TD"
+    # Secure boot and dst svn(1) smaller than src svn(2) 
+    sign "migtd_src_sb14" 2
+    sign "migtd_dst_sb14" 1
+    link "migtd_src_sb14" "migtd_src_sb14.bin"
+    link "migtd_dst_sb14" "migtd_dst_sb14.bin"
+    enroll "migtd_src_sb14.bin" "policy_006.json" "migtd_src_014.bin"
+    enroll "migtd_dst_sb14.bin" "policy_006.json" "migtd_dst_014.bin"
 
     cleanup
     build_migtd
