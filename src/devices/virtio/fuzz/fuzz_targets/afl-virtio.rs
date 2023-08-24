@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 mod fuzzlib;
-use fuzzlib::{get_fuzz_seed_address, init, COMMON_HEADER, fuzz_virtio};
+use fuzzlib::{fuzz_virtio, get_fuzz_seed_address, init, COMMON_HEADER};
 use pci::PciDevice;
 use virtio::{virtio_pci::VirtioPciTransport, virtqueue::VirtQueue, VirtioTransport};
 
@@ -26,7 +26,7 @@ fn main() {
     let ptr = (ptr.as_ptr() as u64 & PTR_ALIGN_VAR) + PTR_OFFSET as u64;
     let data = unsafe { core::slice::from_raw_parts_mut(ptr as *mut u8, DATA_LEN) };
 
-    let common_addr = ptr + 0x10c;
+    let common_addr = 0;
     let paddr = ptr + PAGE_SIZE as u64;
     init(paddr as usize, TD_PAYLOAD_DMA_SIZE);
     COMMON_HEADER.try_init_once(|| ptr).expect("init error");
@@ -38,15 +38,10 @@ fn main() {
         if let Some(arg) = args.next() {
             println!("{}", arg);
             let paths = std::path::Path::new(&arg);
-            
+
             if paths.is_file() {
                 let tmp = std::fs::read(paths).expect("read crash file fail");
                 data[..tmp.len()].clone_from_slice(&tmp);
-                unsafe {
-                    std::ptr::write_volatile((ptr + BARU64_1_OFFSET) as *mut u64, 0);
-                    std::ptr::write_volatile((ptr + BARU64_2_OFFSET) as *mut u64, 0);
-                    std::ptr::write_volatile((ptr + BARU64_3_OFFSET) as *mut u64, common_addr);
-                }
                 fuzz_virtio(paddr);
             } else if paths.is_dir() {
                 for path in std::fs::read_dir(paths).unwrap() {
@@ -56,11 +51,6 @@ fn main() {
                     }
                     let tmp = std::fs::read(&path).expect("read crash file fail");
                     data[..tmp.len()].clone_from_slice(&tmp);
-                    unsafe {
-                        std::ptr::write_volatile((ptr + BARU64_1_OFFSET) as *mut u64, 0);
-                        std::ptr::write_volatile((ptr + BARU64_2_OFFSET) as *mut u64, 0);
-                        std::ptr::write_volatile((ptr + BARU64_3_OFFSET) as *mut u64, common_addr);
-                    }
                     fuzz_virtio(paddr);
                 }
             } else {
@@ -71,11 +61,6 @@ fn main() {
     #[cfg(feature = "fuzz")]
     afl::fuzz!(|tmp: &[u8]| {
         data[..tmp.len()].clone_from_slice(&tmp);
-        unsafe {
-            std::ptr::write_volatile((ptr + BARU64_1_OFFSET) as *mut u64, 0);
-            std::ptr::write_volatile((ptr + BARU64_2_OFFSET) as *mut u64, 0);
-            std::ptr::write_volatile((ptr + BARU64_3_OFFSET) as *mut u64, common_addr);
-        }
         fuzz_virtio(paddr);
     });
 }

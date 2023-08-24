@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use conquer_once::spin::OnceCell;
-pub use dma_alloc::{dma_init, DMA_ALLOCATOR};
+pub use dma_alloc::{init, virtio_dma_alloc, virtio_dma_dealloc};
 
 pub use pci::{get_fuzz_seed_address, PciDevice, COMMON_HEADER};
 pub use virtio::{virtio_pci::VirtioPciTransport, virtqueue::VirtQueue, VirtioTransport};
@@ -24,108 +24,126 @@ pub const DATA_LEN: usize = 0x100_0000;
 mod dma_alloc {
 
     use bitmap_allocator::{BitAlloc, BitAlloc4K};
-    use spin::{once::Once, Mutex};
-    const PAGE_SIZE: usize = 0x1000;
+    use spin::Mutex;
 
-    pub static DMA_ALLOCATOR: Mutex<Once<DmaAllocator>> = Mutex::new(Once::new());
+    static DMA_ALLOCATOR: Mutex<DmaAlloc> = Mutex::new(DmaAlloc::empty());
 
-    pub fn dma_init(base: u64, size: usize, share_bit: u64) -> Option<u64> {
-        let allocator = DmaAllocator::new(base, size, PAGE_SIZE, share_bit)?;
-        DMA_ALLOCATOR.lock().call_once(|| allocator);
-        Some(base)
+    pub fn init(dma_base: usize, dma_size: usize) {
+        println!("init dma - {:#x} - {:#x}\n", dma_base, dma_base + dma_size);
+        init_dma(dma_base, dma_size);
     }
 
-    pub struct DmaAllocator {
-        allocator: PageAllocator,
-        base: u64,
-        size: usize,
-        page_size: usize,
-        share_bit: u64,
+    fn init_dma(dma_base: usize, dma_size: usize) {
+        // set page table flags TBD:
+        *DMA_ALLOCATOR.lock() = DmaAlloc::new(dma_base as usize, dma_size);
     }
 
-    impl DmaAllocator {
-        pub fn new(base: u64, size: usize, page_size: usize, share_bit: u64) -> Option<Self> {
-            if page_size % PAGE_SIZE != 0 {
-                return None;
-            }
-    
-            let allocator = PageAllocator::new(base as usize, size, page_size)?;
-    
-            Some(DmaAllocator {
-                allocator,
-                base,
-                size,
-                page_size,
-                share_bit,
-            })
-        }
-    
-        pub fn alloc_page(&mut self) -> Option<u64> {
-            let page = self.allocator.alloc()? as u64;
-            Some(page)
-        }
-    
-        pub fn alloc_pages(&mut self, page_num: usize) -> Option<u64> {
-            let page = self.allocator.alloc_contiguous(page_num)? as u64;
-            Some(page)
-        }
-    
-        pub fn free_page(&mut self, page_addr: u64) {
-            self.allocator.dealloc(page_addr as usize);
-        }
-    
-        pub fn free_pages(&mut self, page_addr: u64, page_num: usize) {
-            self.allocator
-                .dealloc_contiguous(page_addr as usize, page_num);
-        }
+    #[no_mangle]
+    pub extern "C" fn virtio_dma_alloc(blocks: usize) -> PhysAddr {
+        let paddr = unsafe { DMA_ALLOCATOR.lock().alloc_contiguous(blocks, 0) }.unwrap_or(0);
+        paddr
     }
 
-    pub struct PageAllocator {
+    #[no_mangle]
+    pub extern "C" fn virtio_dma_dealloc(paddr: PhysAddr, blocks: usize) -> i32 {
+        let _ = unsafe { DMA_ALLOCATOR.lock().dealloc_contiguous(paddr, blocks) };
+        0
+    }
+
+    #[no_mangle]
+    pub extern "C" fn virtio_phys_to_virt(paddr: PhysAddr) -> VirtAddr {
+        paddr
+    }
+
+    #[no_mangle]
+    pub extern "C" fn virtio_virt_to_phys(vaddr: VirtAddr) -> PhysAddr {
+        vaddr
+    }
+
+    type VirtAddr = usize;
+    type PhysAddr = usize;
+
+    struct DmaAlloc {
         base: usize,
-        block_size: usize,
         inner: BitAlloc4K,
     }
 
-    impl PageAllocator {
-        /// Caller needs to ensure:
-        /// - base is page aligned
-        /// - size is page aligned
-        pub fn new(base: usize, length: usize, block_size: usize) -> Option<Self> {
-            if base % block_size != 0 || length % block_size != 0 {
-                return None;
+    const BLOCK_SIZE: usize = 4096;
+
+    impl Default for DmaAlloc {
+        fn default() -> Self {
+            Self {
+                base: 0,
+                inner: BitAlloc4K::DEFAULT,
             }
-    
+        }
+    }
+
+    impl DmaAlloc {
+        pub fn new(base: usize, length: usize) -> Self {
             let mut inner = BitAlloc4K::DEFAULT;
-            let blocks = length / block_size;
+            let blocks = length / BLOCK_SIZE;
             assert!(blocks <= BitAlloc4K::CAP);
             inner.insert(0..blocks);
-            Some(Self {
-                base,
-                inner,
-                block_size,
-            })
+            DmaAlloc { base, inner }
         }
-    
-        pub fn alloc(&mut self) -> Option<usize> {
-            self.inner.alloc().map(|idx| idx * 4096 + self.base)
+
+        const fn empty() -> Self {
+            Self {
+                base: 0,
+                inner: BitAlloc4K::DEFAULT,
+            }
         }
-    
-        pub fn alloc_contiguous(&mut self, block_num: usize) -> Option<usize> {
-            let idx = self.inner.alloc_contiguous(block_num, 0)?;
-            let ret = idx * self.block_size + self.base;
-            Some(ret)
+
+        /// # Safety
+        ///
+        /// This function is unsafe because manual deallocation is needed.
+        #[allow(unused)]
+        pub unsafe fn alloc(&mut self) -> Option<usize> {
+            let ret = self.inner.alloc().map(|idx| idx * 4096 + self.base);
+            println!("Alloc DMA block: {:x?}\n", ret);
+            ret
         }
-    
-        pub fn dealloc(&mut self, target: usize) {
-            self.inner.dealloc((target - self.base) / self.block_size)
+
+        /// # Safety
+        ///
+        /// This function is unsafe because manual deallocation is needed.
+        pub unsafe fn alloc_contiguous(
+            &mut self,
+            block_count: usize,
+            align_log2: usize,
+        ) -> Option<usize> {
+            let ret = self
+                .inner
+                .alloc_contiguous(block_count, align_log2)
+                .map(|idx| idx * BLOCK_SIZE + self.base);
+            println!(
+                "Allocate {} DMA blocks with alignment {}: {:x?}\n",
+                block_count,
+                1 << align_log2,
+                ret
+            );
+            ret
         }
-    
-        pub fn dealloc_contiguous(&mut self, target: usize, block_num: usize) {
-            let start_idx = (target - self.base) / self.block_size;
-            for i in start_idx..start_idx + block_num {
+
+        /// # Safety
+        ///
+        /// This function is unsafe because the DMA must have been allocated.
+        #[allow(unused)]
+        pub unsafe fn dealloc(&mut self, target: usize) {
+            println!("Deallocate DMA block: {:x}\n", target);
+            self.inner.dealloc((target - self.base) / BLOCK_SIZE)
+        }
+
+        /// # Safety
+        ///
+        /// This function is unsafe because the DMA must have been allocated.
+        unsafe fn dealloc_contiguous(&mut self, target: usize, block_count: usize) {
+            println!("Deallocate {} DMA blocks: {:x}\n", block_count, target);
+            let start_idx = (target - self.base) / BLOCK_SIZE;
+            for i in start_idx..start_idx + block_count {
                 self.inner.dealloc(i)
             }
         }
     }
-    
-}    
+}
