@@ -386,6 +386,7 @@ impl PciDevice {
         }
     }
 
+    #[cfg(not(feature = "fuzz"))]
     pub fn init(&mut self) -> Result<()> {
         let (vendor_id, device_id) =
             ConfigSpace::get_device_details(self.bus, self.device, self.func);
@@ -469,6 +470,77 @@ impl PciDevice {
         for bar in &self.bars {
             log::info!("Bar: type={:?} address={:x}\n", bar.bar_type, bar.address);
         }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fuzz")]
+    pub fn init(&mut self) -> Result<()> {
+        let (vendor_id, device_id) =
+            ConfigSpace::get_device_details(self.bus, self.device, self.func);
+        self.common_header.vendor_id = vendor_id;
+        self.common_header.device_id = device_id;
+        let command = self.read_u16(0x4);
+        let status = self.read_u16(0x6);
+
+        let mut current_bar_offset = 0x10;
+        let mut current_bar = 0;
+
+        //0x24 offset is last bar
+        while current_bar_offset <= 0x24 {
+            let bar = self.read_u32(current_bar_offset);
+
+            // lsb is 1 for I/O space bars
+            if bar & 1 == 1 {
+                self.bars[current_bar].bar_type = PciBarType::IoSpace;
+                self.bars[current_bar].address = u64::from(bar & 0xffff_fffc);
+            } else {
+                // bits 2-1 are the type 0 is 32-but, 2 is 64 bit
+                match bar >> 1 & 3 {
+                    0 => {
+                        let size = self.read_u32(current_bar_offset);
+
+                        let addr = if size > 0 {
+                            let addr = alloc_mmio32(size)?;
+                            self.set_bar_addr(current_bar_offset, addr);
+                            addr
+                        } else {
+                            bar
+                        };
+
+                        self.bars[current_bar].bar_type = PciBarType::MemorySpace32;
+                        self.bars[current_bar].address =
+                            u64::from(addr & PCI_MEM32_BASE_ADDRESS_MASK);
+                    }
+                    2 => {
+                        self.bars[current_bar].bar_type = PciBarType::MemorySpace64;
+
+                        let mut size = self.read_u64(current_bar_offset);
+                        let addr = if size > 0 {
+                            let addr = alloc_mmio64(size)?;
+                            self.set_bar_addr(current_bar_offset, addr as u32);
+                            self.set_bar_addr(current_bar_offset + 4, (addr >> 32) as u32);
+                            addr
+                        } else {
+                            bar as u64
+                        };
+
+                        self.bars[current_bar].address = addr & PCI_MEM64_BASE_ADDRESS_MASK;
+                        current_bar_offset += 4;
+                    }
+                    _ => return Err(PciError::InvalidBarType),
+                }
+            }
+
+            current_bar += 1;
+            current_bar_offset += 4;
+        }
+
+        // Enable the bits 0 (IO Space) and 1 (Memory Space) to activate the bar configuration
+        self.write_u16(
+            0x4,
+            (PciCommand::IO_SPACE | PciCommand::MEMORY_SPACE | PciCommand::BUS_MASTER).bits(),
+        );
 
         Ok(())
     }

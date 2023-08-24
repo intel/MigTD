@@ -30,11 +30,11 @@ members = ["."]
 default = ["libfuzzer-sys"]
 fuzz = ["afl"]
 
-# [[bin]]
-# name = "afl_vsock"
-# path = "fuzz_targets/afl-vsock.rs"
-# test = false
-# doc = false
+[[bin]]
+name = "afl_vsock"
+path = "fuzz_targets/afl-vsock.rs"
+test = false
+doc = false
 
 # [[bin]]
 # name = "vsock"

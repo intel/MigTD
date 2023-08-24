@@ -24,6 +24,7 @@ fuzz = ["afl"]
 [dependencies.virtio]
 path = ".."
 default-features = false
+features = ["fuzz"]
 
 # Prevent this from interfering with workspaces
 [workspace]

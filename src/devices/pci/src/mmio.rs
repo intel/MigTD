@@ -15,6 +15,11 @@ lazy_static! {
     static ref MMIO64: Mutex<u64> = Mutex::new(0);
 }
 
+#[cfg(feature = "fuzz")]
+lazy_static! {
+    static ref MMIO_OFFSET: Mutex<u64> = Mutex::new(0);
+}
+
 pub fn init_mmio(end_of_ram: u64) {
     *MMIO32.lock() = MMIO32_START;
 
@@ -29,8 +34,13 @@ pub fn init_mmio(end_of_ram: u64) {
 
 #[cfg(feature = "fuzz")]
 pub fn alloc_mmio32(size: u32) -> Result<u32> {
-    let addr = crate::get_fuzz_seed_address() + 0x10c;
-    Ok(addr as u32)
+    let cur = *MMIO_OFFSET.lock();
+    let addr = align_up(cur, size as u64).ok_or(PciError::InvalidParameter)?;
+
+    let addr = u32::try_from(addr).map_err(|_| PciError::InvalidParameter)?;
+
+    *MMIO_OFFSET.lock() = addr.checked_add(size).ok_or(PciError::InvalidParameter)? as u64;
+    Ok(addr)
 }
 
 #[cfg(not(feature = "fuzz"))]
@@ -48,7 +58,10 @@ pub fn alloc_mmio32(size: u32) -> Result<u32> {
 
 #[cfg(feature = "fuzz")]
 pub fn alloc_mmio64(size: u64) -> Result<u64> {
-    let addr = crate::get_fuzz_seed_address() + 0x10c;
+    let cur: u64 = *MMIO_OFFSET.lock();
+    let addr = align_up(cur, size).ok_or(PciError::InvalidParameter)?;
+
+    *MMIO_OFFSET.lock() = addr.checked_add(size).ok_or(PciError::InvalidParameter)?;
     Ok(addr)
 }
 

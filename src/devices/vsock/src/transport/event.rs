@@ -19,6 +19,7 @@ pub fn register_callback(vector: u8, cb: unsafe extern "C" fn()) {}
 pub fn wait_for_event(event_flag: &AtomicBool, timer: &dyn VsockTimeout) -> bool {
     while !event_flag.load(Ordering::SeqCst) {
         // Halt to wait until interrupt comming
+        #[cfg(not(feature = "fuzz"))]
         enable_and_hlt();
         if event_flag.load(Ordering::SeqCst) {
             break;

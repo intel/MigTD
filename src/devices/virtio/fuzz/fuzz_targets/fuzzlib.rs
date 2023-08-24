@@ -9,7 +9,7 @@ pub use dma_alloc::init;
 pub use pci::{get_fuzz_seed_address, PciDevice, COMMON_HEADER};
 pub use virtio::{
     virtio_pci::VirtioPciTransport,
-    virtqueue::{VirtqueueBuf, VirtQueue, VirtQueueLayout},
+    virtqueue::{VirtQueue, VirtQueueLayout, VirtqueueBuf},
     VirtioTransport,
 };
 
