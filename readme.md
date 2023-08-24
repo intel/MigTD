@@ -45,21 +45,21 @@ cargo install cargo-xbuild
   *  On Red Hat Enterprise Linux 8.5
   ```
     sudo yum groupinstall 'Development Tools'
-    sudo yum install ocaml ocaml-ocamlbuild wget rpm-build pkgconf
+    sudo yum install ocaml ocaml-ocamlbuild wget rpm-build pkgconf libtool
   ```
   *  On CentOS Stream 8
   ```
     sudo dnf group install 'Development Tools'
-    sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgconf
+    sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgconf libtool
   ```
   *  On CentOS Stream 9
   ```
     sudo dnf group install 'Development Tools'
-    sudo dnf install ocaml ocaml-ocamlbuild wget rpm-build pkgconf perl-FindBin
+    sudo dnf install ocaml ocaml-ocamlbuild wget rpm-build pkgconf perl-FindBin libtool
   ```
   * On Ubuntu 22.04
   ```
-    sudo apt-get install build-essential ocaml ocamlbuild wget pkgconf
+    sudo apt-get install build-essential ocaml ocamlbuild wget pkgconf libtool
   ```
 
 ### Download Source Code
