@@ -281,8 +281,8 @@ pub struct PciDeviceCommonHeader {
 bitflags! {
     #[derive(Default)]
     pub struct HeaderType: u8 {
-        const MF   = 0b10000000;
-        const STANDARD = 0x0;
+        // STANDARD: 0x0
+        const MF = 0b10000000;
         const PCI2PCI_BRIDGE = 0x1;
         const PCI2CARDBUS_BRIDGE = 0x2;
     }
