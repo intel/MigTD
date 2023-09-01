@@ -2,6 +2,7 @@ use super::{Custom, Error, ErrorKind, Repr};
 use crate::error;
 use crate::sys::decode_error_kind;
 use crate::sys::os::error_string;
+use alloc::boxed::Box;
 use core::fmt;
 
 #[test]
@@ -10,12 +11,12 @@ fn test_debug_error() {
     let msg = error_string(code);
     let kind = decode_error_kind(code);
     let err = Error {
-        repr: Repr::Custom(box Custom {
+        repr: Repr::Custom(Box::new(Custom {
             kind: ErrorKind::InvalidInput,
-            error: box Error {
+            error: Box::new(Error {
                 repr: super::Repr::Os(code),
-            },
-        }),
+            }),
+        })),
     };
     let expected = format!(
         "Custom {{ \
