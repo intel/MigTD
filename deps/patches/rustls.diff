@@ -11,7 +11,7 @@ index 1e4e1d50..945297ac 100644
 -webpki = { package = "rustls-webpki", version = "0.102.0-alpha.0", features = ["alloc", "std", "ring"] }
 +ring = { version = "0.16.20", default-features = false }
 +subtle = { version = "2.5.0", default-features = false }
-+webpki = { package = "rustls-webpki", version = "0.102.0-alpha.0", default-features = false, features = ["alloc", "ring"] }
++webpki = { package = "rustls-webpki", version = "=0.102.0-alpha.0", default-features = false, features = ["alloc", "ring"] }
 +rust_std_stub = { path = "../../../src/std-support/rust-std-stub", optional = true }
  
  [features]
