@@ -94,6 +94,9 @@ impl VmcallVsock {
         let mut header = Vec::new();
         let mut data = Vec::new();
 
+        if pkt.len() < HEADER_LEN {
+            return Err(VsockTransportError::InvalidVsockPacket);
+        }
         // Read out the packet header into a safe place
         header.extend_from_slice(&pkt[..HEADER_LEN]);
 
