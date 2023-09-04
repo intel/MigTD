@@ -230,7 +230,8 @@ impl VirtioVsock {
                 .ok_or(VsockTransportError::DmaAllocation)?;
         }
 
-        let packet_hdr = Packet::new_unchecked(&hdr_buf[..]);
+        let packet_hdr = Packet::new_checked(&hdr_buf[..])
+            .map_err(|_| VsockTransportError::InvalidVsockPacket)?;
         let data_len = packet_hdr.data_len();
         if data_len != 0 {
             if data_len > pkt[1].len {
