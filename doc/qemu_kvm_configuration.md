@@ -3,14 +3,14 @@
 ### Known issue
 
 ### Ingredients (component - version)
-1. SEAMLDR - SEAMLDR_1.5.00.15 (NPW signed)
-2. TDX Module - TDX_1.5.00.19
-3. Host Kernel - mvp-tdx-6.2 (6.2)
-4. Qemu - mvp-qemu-7.2 (7.2)
-5. Guest Kernel - mvp-tdx-6.2 (6.2)
+1. SEAMLDR - SEAMLDR_1.5.00.15.147
+2. TDX Module - TDX_1.5.00.24.534
+3. Host Kernel - [MVP-KERNEL-6.2.16-v3.7](https://github.com/intel/tdx-tools/tree/2023ww27)
+4. Qemu - [MVP-QEMU-7.2-v2.5](https://github.com/intel/tdx-tools/tree/2023ww27)
+5. Guest Kernel - [MVP-KERNEL-6.2.16-v3.7](https://github.com/intel/tdx-tools/tree/2023ww27)
 6. OS - centos stream 8
-7. Attestation Library - tdx_1.5_mvp_23q1
-8. DCAP - tdx_1.5_dcap_mvp_23q1
+7. Attestation Library - [sgx_2.21](https://github.com/intel/linux-sgx/tree/sgx_2.21)
+8. DCAP - [sgx_2.21](https://github.com/intel/linux-sgx/tree/sgx_2.21)
 
 ### Run Source MigTD (MigTD-s) Script
 ```
