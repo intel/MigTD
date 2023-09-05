@@ -124,7 +124,7 @@ cargo hash --image /path/to/migtd.bin --servtd-info /path/to/servtd_info.json
 
 2. TDX Attestation Software Stack
 
-* MigTD depends on `sgx-dcap-pccs` and `tdx-qgs` to do remote attestation. Please refer to [linux-sgx](https://github.com/intel/linux-sgx/tree/tdx_1.5_mvp_23q1) for details or follow the [tdx-tools wiki](https://github.com/intel/tdx-tools/wiki/5.-TDX-End-to-End-Attestation) to setup the environment.
+* MigTD depends on `sgx-dcap-pccs` and `tdx-qgs` to do remote attestation. Please refer to [linux-sgx](https://github.com/intel/linux-sgx/tree/sgx_2.21) for details or follow the [tdx-tools wiki](https://github.com/intel/tdx-tools/wiki/5.-TDX-End-to-End-Attestation) to setup the environment.
 
 3. Guest-Hypervisor Communication Interface (GHCI) required for remote attestation
 
