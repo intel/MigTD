@@ -6,10 +6,6 @@
                 "operation":"greater-or-equal",
                 "reference":"self"
             },
-            "MRSEAM": {
-                "operation":"equal",
-                "reference":"self"
-            },
             "MRSIGNERSEAM":{
                 "operation":"equal",
                 "reference":"self"
