@@ -35,10 +35,10 @@ pub fn alloc_mmio32(size: u32) -> Result<u32> {
 
 #[cfg(not(feature = "fuzz"))]
 pub fn alloc_mmio32(size: u32) -> Result<u32> {
-    let addr = *MMIO32.lock();
-    let addr = align_up(addr as usize, size as usize);
+    let cur = *MMIO32.lock();
+    let addr = align_up(cur as u64, size as u64).ok_or(PciError::InvalidParameter)?;
 
-    if size > MMIO32_SIZE || addr > (MMIO32_START + MMIO32_SIZE - size) as usize {
+    if size > MMIO32_SIZE || addr > (MMIO32_START + MMIO32_SIZE - size) as u64 {
         return Err(PciError::MmioOutofResource);
     }
 
@@ -54,14 +54,16 @@ pub fn alloc_mmio64(size: u64) -> Result<u64> {
 
 #[cfg(not(feature = "fuzz"))]
 pub fn alloc_mmio64(size: u64) -> Result<u64> {
-    let addr = *MMIO64.lock();
-    addr.checked_add(size).ok_or(PciError::InvalidParameter)?;
+    let cur = *MMIO64.lock();
+    let addr = align_up(cur, size).ok_or(PciError::InvalidParameter)? as u64;
 
-    let addr = align_up(addr as usize, size as usize) as u64;
-    *MMIO64.lock() = addr + size;
+    *MMIO64.lock() = addr.checked_add(size).ok_or(PciError::InvalidParameter)?;
     Ok(addr)
 }
 
-fn align_up(addr: usize, align: usize) -> usize {
-    (addr + align - 1) & !(align - 1)
+fn align_up(addr: u64, align: u64) -> Option<u64> {
+    if align == 0 {
+        return None;
+    }
+    Some((addr.checked_add(align)? - 1) & !(align - 1))
 }
