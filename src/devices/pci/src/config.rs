@@ -6,7 +6,7 @@ use bitflags::bitflags;
 use core::convert::From;
 
 use crate::mmio::{alloc_mmio32, alloc_mmio64};
-use crate::{PciCommand, Result};
+use crate::{PciCommand, PciError, Result};
 
 pub const PCI_CONFIGURATION_ADDRESS_PORT: u16 = 0xCF8;
 pub const PCI_CONFIGURATION_DATA_PORT: u16 = 0xCFC;
@@ -453,7 +453,7 @@ impl PciDevice {
                         self.bars[current_bar].address = addr & PCI_MEM64_BASE_ADDRESS_MASK;
                         current_bar_offset += 4;
                     }
-                    _ => panic!("Unsupported BAR type"),
+                    _ => return Err(PciError::InvalidBarType),
                 }
             }
 
