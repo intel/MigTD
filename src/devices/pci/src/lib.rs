@@ -25,4 +25,5 @@ pub type Result<T> = core::result::Result<T, PciError>;
 pub enum PciError {
     InvalidParameter,
     MmioOutofResource,
+    InvalidBarType,
 }
