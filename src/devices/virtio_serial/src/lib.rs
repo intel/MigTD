@@ -644,7 +644,7 @@ impl VirtioSerial {
 
             let vq = self.queues.index(CONTROL_RECEIVEQ as usize);
             // A buffer chain contains a packet header buffer and a data buffer
-            vq.borrow_mut().add(&[], &h2g).unwrap();
+            vq.borrow_mut().add(&[], &h2g)?;
 
             self.receive_queues_prefill[CONTROL_RECEIVEQ as usize / 2] += 1;
         }
@@ -674,8 +674,7 @@ impl VirtioSerial {
             self.queues
                 .index(queue_idx as usize)
                 .borrow_mut()
-                .add(&[], &h2g)
-                .unwrap();
+                .add(&[], &h2g)?;
 
             prefill_nr += 1;
         }

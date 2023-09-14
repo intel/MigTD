@@ -178,7 +178,7 @@ impl VirtioVsock {
         let mut g2h = Vec::new();
         let mut h2g = Vec::new();
 
-        let _ = self.rx.borrow_mut().pop_used(&mut g2h, &mut h2g).unwrap();
+        let _ = self.rx.borrow_mut().pop_used(&mut g2h, &mut h2g)?;
         if h2g.len() != 2 {
             self.rx_buf_num -= h2g.len();
             return Err(VsockTransportError::InvalidVsockPacket);
@@ -282,7 +282,7 @@ impl VirtioVsock {
             ];
 
             // A buffer chain contains a packet header buffer and a data buffer
-            self.rx.get_mut().add(&[], &h2g).unwrap();
+            self.rx.get_mut().add(&[], &h2g)?;
 
             self.rx_buf_num += 2;
         }
@@ -383,7 +383,7 @@ impl VsockTransport for VirtioVsock {
 
         let mut g2h = Vec::new();
         let mut h2g = Vec::new();
-        let _ = self.tx.borrow_mut().pop_used(&mut g2h, &mut h2g).unwrap();
+        let _ = self.tx.borrow_mut().pop_used(&mut g2h, &mut h2g)?;
 
         for vq_buf in &g2h {
             self.free_dma_memory(vq_buf.addr)
