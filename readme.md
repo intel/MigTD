@@ -187,13 +187,16 @@ $QEMU -accel kvm \
 
 3. Do pre-migration:
 
+Ask migtd-dst to start pre-migration and wait for migtd-src's connection:
 ```
-# Asking migtd-src to connect to the src socat
-echo "qom-set /objects/tdx0/ vsockport 1234" | nc -U /tmp/qmp-sock-src
+echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-dst
+```
 
-# Asking migtd-dst to connect to the dst socat
-echo "qom-set /objects/tdx0/ vsockport 1235" | nc -U /tmp/qmp-sock-dst
+Ask migtd-src to start pre-migration:
 ```
+echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
+```
+
 Note: user TDs need to be bound to MigTDs before pre-migration.
 
 #### Virtio-serial approach [experimental feature]
@@ -250,12 +253,14 @@ Replace the IP specified by `host=127.0.0.1` with the target IP address, if cros
 
 3. Do pre-migration:
 
-Here we still set the `vsockport` as a workaround to trigger the pre-migration:
+Here we still set the `vsockport` as a workaround to trigger the pre-migration.
 
+Ask migtd-dst to start pre-migration and wait for migtd-src's connection:
 ```
-# Asking migtd-src to start pre-migration
-echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
-
-# Asking migtd-dst to start pre-migration
 echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-dst
+```
+
+Ask migtd-src to start pre-migration:
+```
+echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
 ```
