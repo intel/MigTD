@@ -3,7 +3,7 @@
     "MigTd":{
       "TEE_TCB_INFO":{
             "TEE_TCB_SVN.SEAM":{
-                "operation":"greater-or-equal",
+                "operation":"equal",
                 "reference":"self"
             },
             "MRSIGNERSEAM":{
