@@ -263,4 +263,16 @@ echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-dst
 Ask migtd-src to start pre-migration:
 ```
 echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
+
+## Reproducible Build
+
+Reproducible build of MigTD binary requires same system user and
+source code path (see https://github.com/intel/MigTD/issues/51).
+
+The [Dockerfile](./Dockerfile) is provided to build the docker image with
+the MigTD compilation environment for reproducible build. You can use the
+[docker.sh](./sh_script/docker.sh) to build and run the docker container:
+
+```
+./sh_script/docker.sh -f container
 ```
