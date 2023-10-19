@@ -134,12 +134,14 @@ cleanup() {
 }
 
 kill_qemu() {
-    ps aux | grep ${qemu_tdx_path} | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    ps aux | grep migtd-src-ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    ps aux | grep migtd-dst-ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    kill_user_td
 }
 
 kill_user_td() {
-    ps aux | grep lm_src | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
-    ps aux | grep lm_dst | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    ps aux | grep lm_src_ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    ps aux | grep lm_dst_ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
     sleep 3
 }
 
@@ -215,7 +217,7 @@ setup_agent() {
 launch_src_migtd() {
     local cmd="${migtd_qemu_cmd} \
                 -bios ${src_migtd} \
-                -name migtd-src,process=migtd-src,debug-threads=on \
+                -name migtd-src,process=migtd-src-ci,debug-threads=on \
                 -serial mon:stdio"
 
     if [[ ${device} == serial ]]
@@ -238,7 +240,7 @@ launch_src_migtd() {
 launch_dst_migtd() {
     local cmd="${migtd_qemu_cmd} \
                 -bios ${dst_migtd} \
-                -name migtd-dst,process=migtd-dst,debug-threads=on \
+                -name migtd-dst,process=migtd-dst-ci,debug-threads=on \
                 -serial mon:stdio"
 
     if [[ ${device} == serial ]]
@@ -261,7 +263,7 @@ launch_dst_migtd() {
 launch_src_migtd_without_device() {
     local cmd="${migtd_qemu_cmd} \
                 -bios ${src_migtd} \
-                -name migtd-src,process=migtd-src,debug-threads=on \
+                -name migtd-src,process=migtd-src-ci,debug-threads=on \
                 -serial mon:stdio"
 
     # Connect to dst MigTD to make it run
@@ -277,7 +279,7 @@ launch_src_migtd_without_device() {
 }
 
 launch_src_td() {
-    local MIGTD_PID=$(pgrep migtd-src) 
+    local MIGTD_PID=$(pgrep migtd-src-ci) 
     nohup ${qemu_tdx_path} -accel kvm \
         -cpu host,host-phys-bits,pmu=off,-kvm-steal-time,-kvmclock,-kvm-asyncpf,-kvmclock-stable-bit,tsc-freq=1000000000 \
         -smp 1 \
@@ -292,7 +294,7 @@ launch_src_td() {
         -drive file=${guest_image},if=virtio,id=virtio-disk0,format=raw \
         -kernel ${kernel} \
         -append "root=/dev/vda1 rw console=hvc0" \
-        -name process=lm_src,debug-threads=on \
+        -name process=lm_src_ci,debug-threads=on \
         -no-hpet -nodefaults \
         -D qemu_src.log -nographic -vga none \
         -monitor unix:${qmp_sock_src},server,nowait &
@@ -301,7 +303,7 @@ launch_src_td() {
 }
 
 launch_dst_td() {
-    local MIGTD_PID=$(pgrep migtd-dst) 
+    local MIGTD_PID=$(pgrep migtd-dst-ci) 
     nohup ${qemu_tdx_path} -accel kvm \
         -cpu host,host-phys-bits,pmu=off,-kvm-steal-time,-kvmclock,-kvm-asyncpf,-kvmclock-stable-bit,tsc-freq=1000000000 \
         -smp 1 \
@@ -314,7 +316,7 @@ launch_dst_td() {
         -device virtio-serial,romfile= \
         -device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux \
         -drive file=${guest_image},if=virtio,id=virtio-disk0,format=raw \
-        -name process=lm_dst,debug-threads=on \
+        -name process=lm_dst_ci,debug-threads=on \
         -no-hpet -nodefaults \
         -D qemu_dst.log -nographic -vga none \
         -monitor unix:${qmp_sock_dst},server,nowait \
