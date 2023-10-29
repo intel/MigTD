@@ -109,12 +109,12 @@ fn fuzz_vsock(paddr: u64, packet: &[u8]) {
         dma_input.copy_from_slice(&packet[..PACKET_LEN]);
     }
 
-    let mut server_socket = VsockStream::new();
+    let mut server_socket = VsockStream::new(true);
     let listen_addrss = VsockAddr::new(33, 1234);
     println!("{:?}", listen_addrss);
     server_socket.bind(&listen_addrss).expect("bind error\n");
     let _ = server_socket.listen(1);
-    let _ = server_socket.accept();
+    let _ = server_socket.accept(true);
 
     unsafe {
         std::ptr::write_volatile(
@@ -169,7 +169,7 @@ fn fuzz_vsock(paddr: u64, packet: &[u8]) {
             }
         }
     });
-    let mut s = VsockStream::new();
+    let mut s = VsockStream::new(true);
     let con_res = s.connect(&VsockAddr::new(0, 40000));
     sp.join().unwrap();
     if con_res.is_ok() {

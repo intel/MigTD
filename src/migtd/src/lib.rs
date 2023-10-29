@@ -55,7 +55,11 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     init(payload);
 
     // Initialize the timer based on the APIC TSC deadline mode
+    #[cfg(not(feature = "async"))]
     driver::timer::init_timer();
+
+    #[cfg(feature = "async")]
+    driver::ticks::init_sys_tick();
 
     #[cfg(feature = "virtio-serial")]
     driver::serial::virtio_serial_device_init(end_of_ram() as u64);

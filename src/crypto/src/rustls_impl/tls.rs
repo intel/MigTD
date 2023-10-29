@@ -27,6 +27,29 @@ use super::ecdsa::EcdsaPk;
 pub type TlsLibError = rustls::Error;
 const TLS_CUSTOM_CALLBACK_ERROR: &str = "TlsCustomCallbackError";
 
+impl From<io::Error> for Error {
+    fn from(e: io::Error) -> Self {
+        match e.kind() {
+            io::ErrorKind::InvalidData => {
+                let desc = e.to_string();
+
+                if let Some(index) = desc.find(TLS_CUSTOM_CALLBACK_ERROR) {
+                    let start = index + TLS_CUSTOM_CALLBACK_ERROR.len() + 1;
+                    let end = match desc[start..].find(')') {
+                        Some(index) => start + index,
+                        None => return Error::Unexpected,
+                    };
+
+                    return Error::TlsVerifyPeerCert(desc[start..end].to_string());
+                }
+
+                Error::TlsStream
+            }
+            _ => Error::TlsStream,
+        }
+    }
+}
+
 pub struct SecureChannel<T: Read + Write> {
     conn: TlsConnection,
     stream: T,
@@ -53,7 +76,7 @@ where
     }
 }
 
-enum TlsConnection {
+pub(crate) enum TlsConnection {
     Server(ServerConnection),
     Client(ClientConnection),
 }
@@ -63,15 +86,11 @@ impl TlsConnection {
         match self {
             Self::Server(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .read(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.read(data).map_err(|e| e.into())
             }
             Self::Client(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .read(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.read(data).map_err(|e| e.into())
             }
         }
     }
@@ -80,20 +99,16 @@ impl TlsConnection {
         match self {
             Self::Server(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .write(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.write(data).map_err(|e| e.into())
             }
             Self::Client(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .write(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.write(data).map_err(|e| e.into())
             }
         }
     }
 
-    fn peer_cert(&self) -> Option<Vec<&[u8]>> {
+    pub(crate) fn peer_cert(&self) -> Option<Vec<&[u8]>> {
         let mut list = Vec::new();
         match self {
             Self::Server(conn) => conn.peer_certificates().map(|certs| {
@@ -108,27 +123,6 @@ impl TlsConnection {
                 }
                 list
             }),
-        }
-    }
-
-    fn handle_stream_error(e: io::Error) -> Error {
-        match e.kind() {
-            io::ErrorKind::InvalidData => {
-                let desc = e.to_string();
-
-                if let Some(index) = desc.find(TLS_CUSTOM_CALLBACK_ERROR) {
-                    let start = index + TLS_CUSTOM_CALLBACK_ERROR.len() + 1;
-                    let end = match desc[start..].find(')') {
-                        Some(index) => start + index,
-                        None => return Error::Unexpected,
-                    };
-
-                    return Error::TlsVerifyPeerCert(desc[start..end].to_string());
-                }
-
-                Error::TlsStream
-            }
-            _ => Error::TlsStream,
         }
     }
 }
@@ -174,7 +168,7 @@ impl TlsConfig {
         Ok(())
     }
 
-    pub fn tls_client<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
+    pub(crate) fn client_conn(self) -> Result<ClientConnection> {
         let client_config: ClientConfig<Ring> = ClientConfig::builder()
             .with_cipher_suites(&[TLS13_AES_256_GCM_SHA384])
             .with_kx_groups(&[&SECP384R1])
@@ -183,11 +177,15 @@ impl TlsConfig {
             .with_custom_certificate_verifier(Arc::new(self.verifier))
             .with_client_cert_resolver(Arc::new(self.resolver));
 
-        let connection = rustls::ClientConnection::new(
+        rustls::ClientConnection::new(
             alloc::sync::Arc::new(client_config),
             ServerName::try_from("localhost").map_err(|_| Error::InvalidDnsName)?,
         )
-        .map_err(|e| Error::SetupTlsContext(e))?;
+        .map_err(|e| Error::SetupTlsContext(e))
+    }
+
+    pub fn tls_client<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
+        let connection = self.client_conn()?;
 
         Ok(SecureChannel::new(
             TlsConnection::Client(connection),
@@ -195,7 +193,7 @@ impl TlsConfig {
         ))
     }
 
-    pub fn tls_server<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
+    pub(crate) fn server_conn(self) -> Result<ServerConnection> {
         let server_config: ServerConfig<Ring> = ServerConfig::builder()
             .with_cipher_suites(&[TLS13_AES_256_GCM_SHA384])
             .with_kx_groups(&[&SECP384R1])
@@ -204,8 +202,12 @@ impl TlsConfig {
             .with_client_cert_verifier(Arc::new(self.verifier))
             .with_cert_resolver(Arc::new(self.resolver));
 
-        let connection = rustls::ServerConnection::new(alloc::sync::Arc::new(server_config))
-            .map_err(|e| Error::SetupTlsContext(e))?;
+        rustls::ServerConnection::new(alloc::sync::Arc::new(server_config))
+            .map_err(|e| Error::SetupTlsContext(e))
+    }
+
+    pub fn tls_server<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
+        let connection = self.server_conn()?;
 
         Ok(SecureChannel::new(
             TlsConnection::Server(connection),

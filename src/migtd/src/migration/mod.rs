@@ -7,6 +7,8 @@ pub mod event;
 // #[cfg(any(target_os = "none", target_os = "uefi"))]
 pub mod session;
 
+#[cfg(feature = "async")]
+use crate::driver::ticks::TimeoutError;
 use crate::ratls::RatlsError;
 use crate::ratls::MIG_POLICY_ERROR;
 use crate::ratls::MUTUAL_ATTESTATION_ERROR;
@@ -212,5 +214,12 @@ impl From<TdVmcallError> for MigrationResult {
 impl From<TdCallError> for MigrationResult {
     fn from(_: TdCallError) -> Self {
         MigrationResult::TdxModuleError
+    }
+}
+
+#[cfg(feature = "async")]
+impl From<TimeoutError> for MigrationResult {
+    fn from(_: TimeoutError) -> Self {
+        MigrationResult::NetworkError
     }
 }

@@ -9,11 +9,14 @@ name = "migtd"
 required-features = ["main"]
 
 [dependencies]
+async_io = { path = "../async/async_io", optional = true }
+async_runtime = { path = "../async/async_runtime", optional = true }
 bitfield = "0.13.2"
 anyhow = { version = "1.0.68", default-features = false }
 attestation = { path = "../attestation", default-features = false }
 cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
 crypto = { path = "../crypto" }
+futures-util = { version = "0.3.17", default-features = false, optional = true }
 lazy_static = { version = "1.0", features = ["spin_no_std"] }
 log = { version = "0.4.13", features = ["release_max_level_off"] }
 pci = { path="../devices/pci" }
@@ -42,6 +45,7 @@ td-benchmark = { path = "../../deps/td-shim/devtools/td-benchmark", default-feat
 
 [features]
 default = ["tdx"]
+async = ["crypto/async", "async_io", "async_runtime", "futures-util", "vsock/async"]
 cet-shstk = ["td-payload/cet-shstk"]
 coverage = ["minicov"]
 main = []

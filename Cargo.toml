@@ -9,6 +9,9 @@ members = [
     "src/devices/virtio_serial",
     "src/migtd",
     "src/policy",
+    "src/async/async_io",
+    "src/async/async_rustls",
+    "src/async/async_runtime",
     "tests/test-td-payload",
     "xtask",
     ]

@@ -138,13 +138,13 @@ fn fuzz_vsock(paddr: u64, packet: &[u8]) {
         dma_input.copy_from_slice(&packet[..PACKET_LEN]);
     }
 
-    let mut server_socket = VsockStream::new().unwrap();
+    let mut server_socket = VsockStream::new(true).unwrap();
     let listen_addrss = VsockAddr::new(33, 1234);
 
     server_socket.connect(&listen_addrss);
     server_socket.bind(&listen_addrss);
     let _ = server_socket.listen(1);
-    let _ = server_socket.accept();
+    let _ = server_socket.accept(true);
 
     // unsafe {
     //     std::ptr::write_volatile(

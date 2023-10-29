@@ -5,6 +5,8 @@ license = "BSD-2-Clause-Patent"
 edition = "2021"
 
 [dependencies]
+async_io = { path = "../async/async_io" }
+async_rustls = { path = "../async/async_rustls" }
 cfg-if = "1.0"
 der = {version = "0.5.1", features = ["oid", "alloc", "derive"]}
 rust_std_stub = { path = "../std-support/rust-std-stub" }
@@ -18,3 +20,4 @@ zeroize = "1.5.7"
 [features]
 default = ["rustls_impl"]
 rustls_impl = ["rustls", "ring"]
+async = []

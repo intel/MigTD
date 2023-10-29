@@ -39,6 +39,8 @@ pub enum VsockError {
     Illegal,
     /// There is no listen socket on remote
     REFUSED,
+    /// There is no data has been sent or received
+    DataNotReady,
 }
 
 impl Display for VsockError {
@@ -51,6 +53,7 @@ impl Display for VsockError {
             VsockError::REFUSED => write!(f, "REFUSED"),
             VsockError::NoAvailablePort => write!(f, "NoAvailablePort"),
             VsockError::AddressAlreadyUsed => write!(f, "AddressAlreadyUsed"),
+            VsockError::DataNotReady => write!(f, "DataNotReady"),
         }
     }
 }
@@ -65,7 +68,10 @@ impl From<VsockError> for io::Error {
 
 impl From<VsockTransportError> for VsockError {
     fn from(e: VsockTransportError) -> Self {
-        Self::Transport(e)
+        match e {
+            VsockTransportError::DataNotReady => Self::DataNotReady,
+            _ => Self::Transport(e),
+        }
     }
 }
 

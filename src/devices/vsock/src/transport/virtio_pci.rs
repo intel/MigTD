@@ -370,16 +370,22 @@ impl VsockTransport for VirtioVsock {
 
         self.kick_queue(QUEUE_TX)?;
 
-        self.timer
-            .set_timeout(timeout)
-            .ok_or(VsockTransportError::InvalidParameter)?;
-
-        while !self.tx.borrow_mut().can_pop() {
-            if !wait_for_event(&TX_FLAG, self.timer.as_ref()) && !self.tx.borrow_mut().can_pop() {
-                return Err(VsockTransportError::Timeout);
-            }
+        if timeout == 0 && !self.tx.borrow_mut().can_pop() {
+            return Err(VsockTransportError::DataNotReady);
         }
-        self.timer.reset_timeout();
+
+        if timeout > 0 {
+            self.timer
+                .set_timeout(timeout)
+                .ok_or(VsockTransportError::InvalidParameter)?;
+            while !self.tx.borrow_mut().can_pop() {
+                if !wait_for_event(&TX_FLAG, self.timer.as_ref()) && !self.tx.borrow_mut().can_pop()
+                {
+                    return Err(VsockTransportError::Timeout);
+                }
+            }
+            self.timer.reset_timeout();
+        }
 
         let mut g2h = Vec::new();
         let mut h2g = Vec::new();
@@ -402,22 +408,35 @@ impl VsockTransport for VirtioVsock {
             return Ok(data);
         }
 
-        self.timer
-            .set_timeout(timeout)
-            .ok_or(VsockTransportError::InvalidParameter)?;
-
-        loop {
-            while !self.rx.borrow_mut().can_pop() {
-                if !wait_for_event(&RX_FLAG, self.timer.as_ref()) && !self.rx.borrow_mut().can_pop()
-                {
-                    return Err(VsockTransportError::Timeout);
+        if timeout == 0 {
+            if !self.rx.borrow_mut().can_pop() {
+                return Err(VsockTransportError::DataNotReady);
+            } else {
+                self.pop_used_rx()?;
+                if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
+                    return Ok(data);
+                } else {
+                    return Err(VsockTransportError::DataNotReady);
                 }
             }
+        } else {
+            self.timer
+                .set_timeout(timeout)
+                .ok_or(VsockTransportError::InvalidParameter)?;
+            loop {
+                while !self.rx.borrow_mut().can_pop() {
+                    if !wait_for_event(&RX_FLAG, self.timer.as_ref())
+                        && !self.rx.borrow_mut().can_pop()
+                    {
+                        return Err(VsockTransportError::Timeout);
+                    }
+                }
 
-            self.pop_used_rx()?;
-            if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
-                self.timer.reset_timeout();
-                return Ok(data);
+                self.pop_used_rx()?;
+                if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
+                    self.timer.reset_timeout();
+                    return Ok(data);
+                }
             }
         }
     }
