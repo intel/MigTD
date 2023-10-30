@@ -45,6 +45,12 @@ pub struct MigrationSession {
     state: MigrationState,
 }
 
+impl Default for MigrationSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MigrationSession {
     pub fn new() -> Self {
         MigrationSession {

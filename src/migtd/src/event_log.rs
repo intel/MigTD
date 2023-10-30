@@ -44,11 +44,11 @@ impl TaggedEvent {
 }
 
 pub fn get_event_log_mut() -> Option<&'static mut [u8]> {
-    get_ccel().map(|ccel| event_log_slice(ccel))
+    get_ccel().map(event_log_slice)
 }
 
 pub fn get_event_log() -> Option<&'static [u8]> {
-    let raw = get_ccel().map(|ccel| event_log_slice(ccel))?;
+    let raw = get_ccel().map(event_log_slice)?;
     event_log_size(raw).map(|size| &raw[..size + 1])
 }
 
@@ -138,7 +138,7 @@ pub fn extend_rtmr(digest: &[u8; SHA384_DIGEST_SIZE], mr_index: u32) -> Result<(
     let digest = tdx::TdxDigest { data: *digest };
 
     let rtmr_index = match mr_index {
-        1 | 2 | 3 | 4 => mr_index - 1,
+        1..=4 => mr_index - 1,
         _ => {
             return Err(anyhow!("Invalid mr_index 0x{:x}\n", mr_index));
         }

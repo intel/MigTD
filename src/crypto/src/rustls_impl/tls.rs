@@ -63,15 +63,11 @@ impl TlsConnection {
         match self {
             Self::Server(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .read(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.read(data).map_err(Self::handle_stream_error)
             }
             Self::Client(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .read(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.read(data).map_err(Self::handle_stream_error)
             }
         }
     }
@@ -80,15 +76,11 @@ impl TlsConnection {
         match self {
             Self::Server(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .write(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.write(data).map_err(Self::handle_stream_error)
             }
             Self::Client(conn) => {
                 let mut tls_stream = rustls::Stream::new(conn, stream);
-                tls_stream
-                    .write(data)
-                    .map_err(|e| Self::handle_stream_error(e))
+                tls_stream.write(data).map_err(Self::handle_stream_error)
             }
         }
     }
@@ -179,7 +171,7 @@ impl TlsConfig {
             .with_cipher_suites(&[TLS13_AES_256_GCM_SHA384])
             .with_kx_groups(&[&SECP384R1])
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(|e| Error::SetupTlsContext(e))?
+            .map_err(Error::SetupTlsContext)?
             .with_custom_certificate_verifier(Arc::new(self.verifier))
             .with_client_cert_resolver(Arc::new(self.resolver));
 
@@ -187,7 +179,7 @@ impl TlsConfig {
             alloc::sync::Arc::new(client_config),
             ServerName::try_from("localhost").map_err(|_| Error::InvalidDnsName)?,
         )
-        .map_err(|e| Error::SetupTlsContext(e))?;
+        .map_err(Error::SetupTlsContext)?;
 
         Ok(SecureChannel::new(
             TlsConnection::Client(connection),
@@ -200,12 +192,12 @@ impl TlsConfig {
             .with_cipher_suites(&[TLS13_AES_256_GCM_SHA384])
             .with_kx_groups(&[&SECP384R1])
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(|e| Error::SetupTlsContext(e))?
+            .map_err(Error::SetupTlsContext)?
             .with_client_cert_verifier(Arc::new(self.verifier))
             .with_cert_resolver(Arc::new(self.resolver));
 
         let connection = rustls::ServerConnection::new(alloc::sync::Arc::new(server_config))
-            .map_err(|e| Error::SetupTlsContext(e))?;
+            .map_err(Error::SetupTlsContext)?;
 
         Ok(SecureChannel::new(
             TlsConnection::Server(connection),
