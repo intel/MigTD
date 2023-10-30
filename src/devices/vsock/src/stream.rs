@@ -66,8 +66,9 @@ impl VsockDevice {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum State {
+    #[default]
     Closed,
     Listening,
     RequestSend,
@@ -81,12 +82,6 @@ pub struct VsockStream {
     addr: VsockAddrPair,
 
     rx_cnt: u32,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        State::Closed
-    }
 }
 
 impl Read for VsockStream {

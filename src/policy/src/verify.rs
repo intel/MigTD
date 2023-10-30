@@ -338,7 +338,7 @@ fn replay_event_log(event_log: &[u8], report_peer: &Report) -> bool {
     for (event_header, _) in event_log.cc_events {
         let rtmr_index = match event_header.mr_index {
             0 => 0xFF,
-            1 | 2 | 3 | 4 => event_header.mr_index - 1,
+            1..=4 => event_header.mr_index - 1,
             _ => 0xFF,
         } as usize;
 

@@ -79,8 +79,8 @@ pub const MISMATCH_PUBLIC_KEY: &str = "MismatchPublicKeyError";
 const PUBLIC_KEY_HASH_SIZE: usize = 48;
 
 pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
-    let mut signing_key = EcdsaPk::new()?;
-    let certs = vec![gen_cert(&mut signing_key)?];
+    let signing_key = EcdsaPk::new()?;
+    let certs = vec![gen_cert(&signing_key)?];
 
     // Server verifies certificate of client
     let config = TlsConfig::new(certs, signing_key, verify_client_cert)?;
@@ -88,15 +88,15 @@ pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
 }
 
 pub fn client<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
-    let mut signing_key = EcdsaPk::new()?;
-    let certs = vec![gen_cert(&mut signing_key)?];
+    let signing_key = EcdsaPk::new()?;
+    let certs = vec![gen_cert(&signing_key)?];
 
     // Client verifies certificate of server
     let config = TlsConfig::new(certs, signing_key, verify_server_cert)?;
     config.tls_client(stream).map_err(|e| e.into())
 }
 
-fn gen_cert(signing_key: &mut EcdsaPk) -> Result<Vec<u8>> {
+fn gen_cert(signing_key: &EcdsaPk) -> Result<Vec<u8>> {
     let algorithm = AlgorithmIdentifier {
         algorithm: ID_EC_PUBKEY_OID,
         parameters: Some(Any::new(Tag::ObjectIdentifier, SECP384R1_OID.as_bytes())?),
