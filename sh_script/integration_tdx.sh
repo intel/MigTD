@@ -136,6 +136,7 @@ cleanup() {
 kill_qemu() {
     ps aux | grep migtd-src-ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
     ps aux | grep migtd-dst-ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    ps aux | grep migtd_testpayload | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
     kill_user_td
 }
 
@@ -433,7 +434,7 @@ launch_td_test_payload() {
 
     nohup ${qemu_tdx_path} -accel kvm \
         -M q35 \
-        -name process=tdxvm \
+        -name process=migtd_testpayload \
         -smp ${cpus}\
         -object tdx-guest,id=tdx,quote-generation-service=vsock:1:4050,sept-ve-disable=off,debug=off \
         -machine q35,kernel_irqchip=split,confidential-guest-support=tdx \
