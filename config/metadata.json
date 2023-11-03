@@ -1,12 +1,20 @@
 {
     "Sections": [
         {
-            "DataOffset": "0x81000",
-            "RawDataSize": "0xF7F000",
-            "MemoryAddress": "0xFF081000",
-            "MemoryDataSize": "0xF7F000",
+            "DataOffset": "0xDF7000",
+            "RawDataSize": "0x209000",
+            "MemoryAddress": "0xFFDF7000",
+            "MemoryDataSize": "0x209000",
             "Type": "BFV",
             "Attributes": "0x1"
+        },
+        {
+            "DataOffset": "0x81000",
+            "RawDataSize": "0xD76000",
+            "MemoryAddress": "0xFF081000",
+            "MemoryDataSize": "0xD76000",
+            "Type": "Payload",
+            "Attributes": "0x0"
         },
         {
             "DataOffset": "0x0",
