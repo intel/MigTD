@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use conquer_once::spin::OnceCell;
-pub use dma_alloc::{init, virtio_dma_alloc, virtio_dma_dealloc};
+pub use shared_alloc::{init, virtio_shared_alloc, virtio_shared_dealloc};
 
 pub use pci::{get_fuzz_seed_address, PciDevice, COMMON_HEADER};
 pub use virtio::{virtio_pci::VirtioPciTransport, virtqueue::VirtQueue, VirtioTransport};
@@ -16,17 +16,17 @@ pub const BARU64_2_OFFSET: u64 = 0x18;
 pub const BARU64_3_OFFSET: u64 = 0x20;
 
 pub const VEC_CAPACITY: usize = 0x10000_0000;
-pub const TD_PAYLOAD_DMA_SIZE: usize = 0x100_0000;
+pub const TD_PAYLOAD_SHARED_MEMORY_SIZE: usize = 0x100_0000;
 pub const PTR_ALIGN_VAR: u64 = 0xffff_ffff_ffff_0000;
 
 pub const DATA_LEN: usize = 0x100_0000;
 
-mod dma_alloc {
+mod shared_alloc {
 
     use bitmap_allocator::{BitAlloc, BitAlloc4K};
     use spin::Mutex;
 
-    static DMA_ALLOCATOR: Mutex<DmaAlloc> = Mutex::new(DmaAlloc::empty());
+    static SHARED_MEMORY_ALLOCATOR: Mutex<SharedAlloc> = Mutex::new(SharedAlloc::empty());
 
     pub fn init(dma_base: usize, dma_size: usize) {
         println!("init dma - {:#x} - {:#x}\n", dma_base, dma_base + dma_size);
@@ -35,18 +35,18 @@ mod dma_alloc {
 
     fn init_dma(dma_base: usize, dma_size: usize) {
         // set page table flags TBD:
-        *DMA_ALLOCATOR.lock() = DmaAlloc::new(dma_base as usize, dma_size);
+        *SHARED_MEMORY_ALLOCATOR.lock() = SharedAlloc::new(dma_base as usize, dma_size);
     }
 
     #[no_mangle]
-    pub extern "C" fn virtio_dma_alloc(blocks: usize) -> PhysAddr {
-        let paddr = unsafe { DMA_ALLOCATOR.lock().alloc_contiguous(blocks, 0) }.unwrap_or(0);
+    pub extern "C" fn virtio_shared_alloc(blocks: usize) -> PhysAddr {
+        let paddr = unsafe { SHARED_MEMORY_ALLOCATOR.lock().alloc_contiguous(blocks, 0) }.unwrap_or(0);
         paddr
     }
 
     #[no_mangle]
-    pub extern "C" fn virtio_dma_dealloc(paddr: PhysAddr, blocks: usize) -> i32 {
-        let _ = unsafe { DMA_ALLOCATOR.lock().dealloc_contiguous(paddr, blocks) };
+    pub extern "C" fn virtio_shared_dealloc(paddr: PhysAddr, blocks: usize) -> i32 {
+        let _ = unsafe { SHARED_MEMORY_ALLOCATOR.lock().dealloc_contiguous(paddr, blocks) };
         0
     }
 
@@ -63,14 +63,14 @@ mod dma_alloc {
     type VirtAddr = usize;
     type PhysAddr = usize;
 
-    struct DmaAlloc {
+    struct SharedAlloc {
         base: usize,
         inner: BitAlloc4K,
     }
 
     const BLOCK_SIZE: usize = 4096;
 
-    impl Default for DmaAlloc {
+    impl Default for SharedAlloc {
         fn default() -> Self {
             Self {
                 base: 0,
@@ -79,13 +79,13 @@ mod dma_alloc {
         }
     }
 
-    impl DmaAlloc {
+    impl SharedAlloc {
         pub fn new(base: usize, length: usize) -> Self {
             let mut inner = BitAlloc4K::DEFAULT;
             let blocks = length / BLOCK_SIZE;
             assert!(blocks <= BitAlloc4K::CAP);
             inner.insert(0..blocks);
-            DmaAlloc { base, inner }
+            SharedAlloc { base, inner }
         }
 
         const fn empty() -> Self {

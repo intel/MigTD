@@ -24,7 +24,7 @@ const BARU64_2_OFFSET: u64 = 0x18;
 const BARU64_3_OFFSET: u64 = 0x20;
 
 const VEC_CAPACITY: usize = 0x10000_0000;
-const TD_PAYLOAD_DMA_SIZE: usize = 0x100_0000;
+const TD_PAYLOAD_SHARED_MEMORY_SIZE: usize = 0x100_0000;
 const PTR_ALIGN_VAR: u64 = 0xffff_ffff_ffff_0000;
 
 const DATA_LEN: usize = 0x100_0000;
@@ -231,7 +231,7 @@ fuzz_target!(|data: &[u8]| {
     data[..tmp.len()].copy_from_slice(&tmp);
     let common_addr = ptr + 0x10c;
     let paddr = ptr + PAGE_SIZE as u64;
-    init(paddr as usize, TD_PAYLOAD_DMA_SIZE);
+    init(paddr as usize, TD_PAYLOAD_SHARED_MEMORY_SIZE);
     COMMON_HEADER.try_init_once(|| ptr).expect("init error");
 
     unsafe {

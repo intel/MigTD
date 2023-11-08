@@ -41,7 +41,7 @@ const VMCALL_SERVICE_MIGTD_GUID: guid::Guid = guid::Guid::from_fields(
 pub struct VmcallVsock {
     mid: u64,
     cid: u64,
-    dma_allocator: Box<dyn VsockDmaPageAllocator>,
+    shared_allocator: Box<dyn VsockDmaPageAllocator>,
     timer: Box<dyn VsockTimeout>,
     // DMA record table
     dma_record: BTreeMap<u64, usize>,
@@ -51,7 +51,7 @@ impl VmcallVsock {
     pub fn new(
         mid: u64,
         cid: u64,
-        dma_allocator: Box<dyn VsockDmaPageAllocator>,
+        shared_allocator: Box<dyn VsockDmaPageAllocator>,
         timer: Box<dyn VsockTimeout>,
     ) -> Result<Self> {
         register_callback(VMCALL_VECTOR, vmcall_notification);
@@ -59,7 +59,7 @@ impl VmcallVsock {
         Ok(Self {
             mid,
             cid,
-            dma_allocator,
+            shared_allocator,
             timer,
             dma_record: BTreeMap::new(),
         })
@@ -229,7 +229,7 @@ impl VmcallVsock {
     fn allocate_dma(&mut self, size: usize) -> Result<&'static mut [u8]> {
         let dma_size = align_up(size);
         let dma_addr = self
-            .dma_allocator
+            .shared_allocator
             .alloc_pages(dma_size / PAGE_SIZE)
             .ok_or(VsockTransportError::DmaAllocation)?;
 
@@ -237,7 +237,7 @@ impl VmcallVsock {
     }
 
     fn free_dma(&mut self, dma: &[u8]) {
-        self.dma_allocator
+        self.shared_allocator
             .free_pages(dma.as_ptr() as u64, dma.len() / PAGE_SIZE);
     }
 }
@@ -313,7 +313,7 @@ impl VsockTransport for VmcallVsock {
 impl Drop for VmcallVsock {
     fn drop(&mut self) {
         for record in &self.dma_record {
-            self.dma_allocator
+            self.shared_allocator
                 .free_pages(*record.0, *record.1 / PAGE_SIZE)
         }
     }

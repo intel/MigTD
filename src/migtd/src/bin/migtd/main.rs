@@ -96,8 +96,9 @@ fn handle_pre_mig() {
             #[cfg(all(feature = "coverage", feature = "tdx"))]
             {
                 const MAX_COVERAGE_DATA_PAGE_COUNT: usize = 0x200;
-                let mut dma = td_payload::mm::dma::DmaMemory::new(MAX_COVERAGE_DATA_PAGE_COUNT)
-                    .expect("New dma fail.");
+                let mut shared =
+                    td_payload::mm::shared::SharedMemory::new(MAX_COVERAGE_DATA_PAGE_COUNT)
+                        .expect("New dma fail.");
                 let buffer = dma.as_mut_bytes();
                 let coverage_len = minicov::get_coverage_data_size();
                 assert!(coverage_len < MAX_COVERAGE_DATA_PAGE_COUNT * td_paging::PAGE_SIZE);

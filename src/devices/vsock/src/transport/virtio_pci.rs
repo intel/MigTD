@@ -49,7 +49,7 @@ impl DmaRecord {
 
 pub struct VirtioVsock {
     pub virtio_transport: Box<dyn VirtioTransport>,
-    dma_allocator: Box<dyn VsockDmaPageAllocator>,
+    shared_allocator: Box<dyn VsockDmaPageAllocator>,
     timer: Box<dyn VsockTimeout>,
     rx: RefCell<VirtQueue>,
     tx: RefCell<VirtQueue>,
@@ -65,7 +65,7 @@ pub struct VirtioVsock {
 impl VirtioVsock {
     pub fn new(
         mut virtio_transport: Box<dyn VirtioTransport>,
-        dma_allocator: Box<dyn VsockDmaPageAllocator>,
+        shared_allocator: Box<dyn VsockDmaPageAllocator>,
         timer: Box<dyn VsockTimeout>,
     ) -> Result<Self> {
         let transport = virtio_transport.as_mut();
@@ -106,7 +106,7 @@ impl VirtioVsock {
             VirtQueueLayout::new(QUEUE_SIZE as u16).ok_or(VirtioError::CreateVirtioQueue)?;
         // We have three queue for vsock (rx, tx and event)
         let queue_size = queue_layout.size() << 2;
-        let queue_dma_pages = dma_allocator
+        let queue_dma_pages = shared_allocator
             .alloc_pages(queue_size / PAGE_SIZE)
             .ok_or(VsockTransportError::DmaAllocation)?;
         dma_record.insert(queue_dma_pages, DmaRecord::new(queue_dma_pages, queue_size));
@@ -135,7 +135,7 @@ impl VirtioVsock {
 
         Ok(Self {
             virtio_transport,
-            dma_allocator,
+            shared_allocator,
             timer,
             rx: RefCell::new(queue_rx),
             tx: RefCell::new(queue_tx),
@@ -292,7 +292,7 @@ impl VirtioVsock {
 
     fn allocate_dma_memory(&mut self, size: usize) -> Option<DmaRecord> {
         let dma_size = align_up(size);
-        let dma_addr = self.dma_allocator.alloc_pages(dma_size / PAGE_SIZE)?;
+        let dma_addr = self.shared_allocator.alloc_pages(dma_size / PAGE_SIZE)?;
 
         let record = DmaRecord::new(dma_addr, dma_size);
         self.dma_record.insert(dma_addr, record);
@@ -303,7 +303,7 @@ impl VirtioVsock {
     fn free_dma_memory(&mut self, dma_addr: u64) -> Option<u64> {
         let record = self.dma_record.get(&dma_addr)?;
 
-        self.dma_allocator
+        self.shared_allocator
             .free_pages(record.dma_addr, record.dma_size / PAGE_SIZE);
 
         self.dma_record.remove(&dma_addr);
@@ -438,7 +438,7 @@ impl VsockTransport for VirtioVsock {
 impl Drop for VirtioVsock {
     fn drop(&mut self) {
         for record in &self.dma_record {
-            self.dma_allocator
+            self.shared_allocator
                 .free_pages(record.1.dma_addr, record.1.dma_size / PAGE_SIZE)
         }
     }

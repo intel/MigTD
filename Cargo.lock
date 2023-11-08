@@ -241,7 +241,7 @@ version = "0.1.0"
 dependencies = [
  "cfg-if",
  "der 0.5.1",
- "ring",
+ "ring 0.16.20",
  "rust_std_stub",
  "rustls",
  "zeroize",
@@ -654,9 +654,23 @@ dependencies = [
  "libc",
  "once_cell",
  "spin 0.5.2",
- "untrusted",
+ "untrusted 0.7.1",
  "web-sys",
  "winapi",
+]
+
+[[package]]
+name = "ring"
+version = "0.17.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb0205304757e5d899b9c2e448b867ffd03ae7f988002e47cd24954391394d0b"
+dependencies = [
+ "cc",
+ "getrandom",
+ "libc",
+ "spin 0.9.8",
+ "untrusted 0.9.0",
+ "windows-sys",
 ]
 
 [[package]]
@@ -685,7 +699,7 @@ dependencies = [
 name = "rustls"
 version = "0.22.0-alpha.0"
 dependencies = [
- "ring",
+ "ring 0.16.20",
  "rust_std_stub",
  "rustls-webpki",
  "subtle",
@@ -697,8 +711,8 @@ version = "0.102.0-alpha.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "984a9510c24d64bc5c53a6b0d329f883b0f95048fa14ee30223ed35c7e1ba38b"
 dependencies = [
- "ring",
- "untrusted",
+ "ring 0.16.20",
+ "untrusted 0.7.1",
 ]
 
 [[package]]
@@ -971,7 +985,7 @@ dependencies = [
  "der 0.4.5",
  "lazy_static",
  "r-efi",
- "ring",
+ "ring 0.17.5",
  "scroll",
  "td-layout",
  "td-uefi-pi",
@@ -1068,6 +1082,12 @@ name = "untrusted"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
+
+[[package]]
+name = "untrusted"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "utf8parse"

@@ -123,7 +123,7 @@ impl DmaMemoryRegion {
 }
 
 /// Trait to allow separation of transport from block driver
-pub trait DmaPageAllocator {
+pub trait SharedPageAllocator {
     fn alloc_pages(&self, page_num: usize) -> Option<u64>;
     fn free_pages(&self, addr: u64, page_num: usize);
 }
@@ -186,7 +186,7 @@ impl From<u16> for ControlEvent {
 
 pub struct VirtioSerial {
     virtio: Box<dyn VirtioTransport>,
-    dma_allocator: Box<dyn DmaPageAllocator>,
+    shared_allocator: Box<dyn SharedPageAllocator>,
     timer: Box<dyn Timer>,
 
     /// DMA allocation table
@@ -211,12 +211,12 @@ unsafe impl Sync for VirtioSerial {}
 impl VirtioSerial {
     pub fn new(
         virtio: Box<dyn VirtioTransport>,
-        dma_allocator: Box<dyn DmaPageAllocator>,
+        shared_allocator: Box<dyn SharedPageAllocator>,
         timer: Box<dyn Timer>,
     ) -> Result<Self> {
         Ok(Self {
             virtio,
-            dma_allocator,
+            shared_allocator,
             timer,
             queues: Vec::new(),
             receive_queues_prefill: Vec::new(),
@@ -792,7 +792,7 @@ impl VirtioSerial {
 
     fn allocate_dma_memory(&mut self, size: usize) -> Option<DmaMemoryRegion> {
         let dma_size = align_up(size);
-        let dma_addr = self.dma_allocator.alloc_pages(dma_size / PAGE_SIZE)?;
+        let dma_addr = self.shared_allocator.alloc_pages(dma_size / PAGE_SIZE)?;
 
         let record = DmaMemoryRegion::new(dma_addr, dma_size);
         self.dma_allocation.insert(dma_addr, record);
@@ -803,7 +803,7 @@ impl VirtioSerial {
     fn free_dma_memory(&mut self, dma_addr: u64) -> Option<u64> {
         let record = self.dma_allocation.get(&dma_addr)?;
 
-        self.dma_allocator
+        self.shared_allocator
             .free_pages(record.dma_addr, record.dma_size / PAGE_SIZE);
 
         self.dma_allocation.remove(&dma_addr);

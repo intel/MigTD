@@ -41,7 +41,7 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
         heap_size: HEAP_SIZE,
         stack_size: STACK_SIZE,
         page_table_size: PT_SIZE,
-        dma_size: DEFAULT_DMA_SIZE,
+        shared_memory_size: DEFAULT_SHARED_MEMORY_SIZE,
         #[cfg(feature = "cet-shstk")]
         shadow_stack_size: DEFAULT_SHADOW_STACK_SIZE,
     };

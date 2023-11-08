@@ -17,7 +17,7 @@ fuzz_target!(|data: &[u8]| {
 
     let common_addr = ptr + 0x10c;
     let paddr = ptr + PAGE_SIZE as u64;
-    init(paddr as usize, TD_PAYLOAD_DMA_SIZE);
+    init(paddr as usize, TD_PAYLOAD_SHARED_MEMORY_SIZE);
     // COMMON_HEADER.try_init_once(|| ptr).expect("init error");
     if !COMMON_HEADER.is_initialized() {
         COMMON_HEADER.init_once(|| ptr);

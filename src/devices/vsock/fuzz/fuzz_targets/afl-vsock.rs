@@ -4,7 +4,7 @@
 
 mod fuzzlib;
 use conquer_once::spin::OnceCell;
-use fuzzlib::{init, virtio_dma_alloc, virtio_dma_dealloc, COMMON_HEADER};
+use fuzzlib::{init, virtio_shared_alloc, virtio_shared_dealloc, COMMON_HEADER};
 use spin::{once::Once, Mutex};
 use std::thread::spawn;
 use virtio::{virtio_pci::VirtioPciTransport, Result};
@@ -21,7 +21,7 @@ const BARU64_2_OFFSET: u64 = 0x18;
 const BARU64_3_OFFSET: u64 = 0x20;
 
 const VEC_CAPACITY: usize = 0x10000_0000;
-const TD_PAYLOAD_DMA_SIZE: usize = 0x100_0000;
+const TD_PAYLOAD_SHARED_MEMORY_SIZE: usize = 0x100_0000;
 const PTR_ALIGN_VAR: u64 = 0xffff_ffff_ffff_0000;
 
 const DATA_LEN: usize = 0x100_0000;
@@ -62,7 +62,7 @@ struct Allocator;
 
 impl VsockDmaPageAllocator for Allocator {
     fn alloc_pages(&self, page_num: usize) -> Option<u64> {
-        let addr = virtio_dma_alloc(page_num);
+        let addr = virtio_shared_alloc(page_num);
         if addr == 0 {
             None
         } else {
@@ -71,7 +71,7 @@ impl VsockDmaPageAllocator for Allocator {
     }
 
     fn free_pages(&self, addr: u64, page_num: usize) {
-        virtio_dma_dealloc(addr as usize, page_num);
+        virtio_shared_dealloc(addr as usize, page_num);
     }
 }
 
@@ -238,7 +238,7 @@ fn main() {
     data[..DEVICE_HEADER.len()].copy_from_slice(&DEVICE_HEADER);
     COMMON_HEADER.try_init_once(|| ptr).expect("init error");
     let paddr = ptr + PAGE_SIZE as u64;
-    init(paddr as usize, TD_PAYLOAD_DMA_SIZE);
+    init(paddr as usize, TD_PAYLOAD_SHARED_MEMORY_SIZE);
 
     #[cfg(not(feature = "fuzz"))]
     {
