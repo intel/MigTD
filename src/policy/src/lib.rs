@@ -13,12 +13,15 @@ pub use verify::*;
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
-pub enum PolicyVerifyReulst {
-    Succeed = 0,
-    FailGetReport = 1,
-    InvalidParameter = 2,
-    InvalidPolicy = 3,
-    UnqulifiedTeeTcbInfo = 4,
-    UnqulifiedTdInfo = 5,
-    UnqulifiedEventLog = 6,
+pub enum PolicyError {
+    FailGetReport,
+    InvalidParameter,
+    InvalidPolicy,
+    InvalidEventLog,
+    UnqulifiedTeeTcbInfo,
+    UnqulifiedTdInfo,
+    UnqulifiedEventLog,
+    UnqulifiedPlatformTcb,
+    UnqulifiedQeIdentity,
+    Crypto,
 }
