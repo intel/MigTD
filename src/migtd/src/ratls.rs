@@ -179,11 +179,8 @@ fn verify_peer_cert(is_client: bool, cert: &[u8]) -> core::result::Result<(), Cr
         verify_signature(&cert, report.as_slice())?;
 
         // MigTD-src acts as TLS client
-        if mig_policy::authenticate_policy(is_client, report.as_slice(), event_log)
-            != policy::PolicyVerifyReulst::Succeed
-        {
-            return Err(CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()));
-        }
+        mig_policy::authenticate_policy(is_client, report.as_slice(), event_log)
+            .map_err(|_| CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()))?;
     } else {
         return Err(CryptoError::TlsVerifyPeerCert(
             MUTUAL_ATTESTATION_ERROR.to_string(),
