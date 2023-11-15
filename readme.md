@@ -263,6 +263,7 @@ echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-dst
 Ask migtd-src to start pre-migration:
 ```
 echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
+```
 
 ## Reproducible Build
 
