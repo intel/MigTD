@@ -111,7 +111,6 @@ To generate the SERVTD_HASH_INFO of a MigTD binary with a default TD configurati
 ```
 cargo hash --image /path/to/migtd.bin
 ```
-The output of hash digest is `./migtd.servtd_info_hash` by default.
 
 You can also specify a custom configuration in the same format with `config/servtd_info.json`
 ```
