@@ -7,14 +7,13 @@ use core::{ffi::c_void, ptr::null_mut, slice::from_raw_parts_mut};
 use td_payload::arch::apic::{disable, enable_and_hlt};
 use td_payload::arch::idt::register;
 use td_payload::{interrupt_handler_template, mm::dma::DmaMemory};
-use tdx_tdcall::{td_vmcall, tdx, TdVmcallArgs, TdVmcallError};
+use tdx_tdcall::tdx::tdvmcall_get_quote;
 
 use crate::binding::AttestLibError;
 
 pub const NOTIFY_VALUE: u8 = 1;
 const NOTIFY_VECTOR: u8 = 0x51;
 const GET_QUOTE_MAX_SIZE: u64 = 32 * 0x1000;
-const TDVMCALL_GETQUOTE: u64 = 0x10002;
 
 pub static NOTIFIER: AtomicU8 = AtomicU8::new(0);
 
@@ -45,26 +44,6 @@ pub extern "C" fn migtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i32
 
     // Success
     0
-}
-
-// TODO: remove this after next version of `td-shim` is released
-fn tdvmcall_get_quote(buffer: &mut [u8]) -> Result<(), TdVmcallError> {
-    let addr = buffer.as_mut_ptr() as u64 | tdx::td_shared_mask().unwrap();
-
-    let mut args = TdVmcallArgs {
-        r11: TDVMCALL_GETQUOTE,
-        r12: addr,
-        r13: buffer.len() as u64,
-        ..Default::default()
-    };
-
-    let ret = td_vmcall(&mut args);
-
-    if ret != 0 {
-        return Err(ret.into());
-    }
-
-    Ok(())
 }
 
 interrupt_handler_template!(vmm_notification, _stack, {
