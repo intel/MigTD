@@ -29,9 +29,10 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     use td_payload::mm::end_of_ram;
     use td_payload::mm::layout::*;
 
-    const STACK_SIZE: usize = 0x1_0000;
-    const HEAP_SIZE: usize = 0x10_0000;
+    const STACK_SIZE: usize = 0x18_0000;
+    const HEAP_SIZE: usize = 0x68_0000;
     const PT_SIZE: usize = 0x8_0000;
+    const DMA_SIZE: usize = 0x50_0000;
 
     extern "C" {
         fn main();
@@ -41,7 +42,7 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
         heap_size: HEAP_SIZE,
         stack_size: STACK_SIZE,
         page_table_size: PT_SIZE,
-        dma_size: DEFAULT_DMA_SIZE,
+        dma_size: DMA_SIZE,
         #[cfg(feature = "cet-shstk")]
         shadow_stack_size: DEFAULT_SHADOW_STACK_SIZE,
     };
