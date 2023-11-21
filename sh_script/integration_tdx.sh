@@ -131,22 +131,67 @@ cleanup() {
     sudo dmesg --clear
 
     kill_qemu && kill_socat
+    echo "========================================="
 }
 
 kill_qemu() {
-    ps aux | grep migtd-src-ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
-    ps aux | grep migtd-dst-ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    kill_mig_td
     kill_user_td
 }
 
+kill_mig_td() {
+    # kill proccess with vsock port
+    while true
+    do
+        exist_migtd=`ps aux | grep vsock:1:4050 | grep -v grep`
+        if [[ $exist_migtd == "" ]]
+        then
+            echo "All migtd proccesses have been killed"
+            break
+        else
+            ps aux | grep vsock:1:4050 | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+        fi
+    done
+}
+
 kill_user_td() {
-    ps aux | grep lm_src_ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
-    ps aux | grep lm_dst_ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
-    sleep 3
+    while true
+    do
+        exist_srctd=`ps aux | grep lm_src_ci | grep -v grep`
+        if [[ $exist_srctd == "" ]]
+        then
+            echo "Source td proccess has been killed"
+            break
+        else
+            ps aux | grep lm_src_ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+        fi
+    done
+
+    while true
+    do
+        exist_dsttd=`ps aux | grep lm_dst_ci | grep -v grep`
+        if [[ $exist_dsttd == "" ]]
+        then
+            echo "Destination td proccess has been killed"
+            break
+        else
+            ps aux | grep lm_dst_ci | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+        fi
+    done 
 }
 
 kill_socat() {
-    ps aux | grep socat | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+    while true
+    do
+        exist_socat=`ps aux | grep socat | grep -v grep` 
+        if [[ $exist_socat == "" ]]
+        then
+            echo "All socat proccesses have been killed"
+            break
+        else
+            ps aux | grep socat | grep -v grep | awk -F ' ' '{print $2}' | xargs kill -9
+        fi
+    done
 }
 
 die() {
@@ -210,8 +255,37 @@ install_qemu_tdx() {
 }
 
 setup_agent() {
-    socat TCP4-LISTEN:9001,reuseaddr VSOCK-LISTEN:1234,fork &
-    socat TCP4-CONNECT:127.0.0.1:9001,reuseaddr VSOCK-LISTEN:1235,fork &
+    time_out=30 
+    while ((${time_out}>0))
+    do
+        socat TCP4-LISTEN:9001,reuseaddr VSOCK-LISTEN:1234,fork &
+        socat_pnum=`ps aux | grep socat | grep -v grep | wc -l`
+        if [[ $socat_pnum == 1 ]]
+        then
+            break
+        else
+            let "time_out--"
+            continue
+        fi
+    done
+
+    [ $time_out -ne 0 ] || die "Faild to launch socat"
+
+    time_out=30 
+    while ((${time_out}>0))
+    do
+        socat TCP4-CONNECT:127.0.0.1:9001,reuseaddr VSOCK-LISTEN:1235,fork &
+        socat_pnum=`ps aux | grep socat | grep -v grep | wc -l`
+        if [[ $socat_pnum == 2 ]]
+        then
+            break
+        else
+            let "time_out--"
+            continue
+        fi
+    done
+
+    [ $time_out -ne 0 ] || die "Faild to launch socat"
 }
 
 launch_src_migtd() {
@@ -279,50 +353,78 @@ launch_src_migtd_without_device() {
 }
 
 launch_src_td() {
-    local MIGTD_PID=$(pgrep migtd-src-ci) 
-    nohup ${qemu_tdx_path} -accel kvm \
-        -cpu host,host-phys-bits,pmu=off,-kvm-steal-time,-kvmclock,-kvm-asyncpf,-kvmclock-stable-bit,tsc-freq=1000000000 \
-        -smp 1 \
-        -m 2G \
-        -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${MIGTD_PID} \
-        -object memory-backend-memfd-private,id=ram1,size=2G \
-        -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
-        -bios ${tdvf_image} \
-        -chardev stdio,id=mux,mux=on \
-        -device virtio-serial,romfile= \
-        -device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux \
-        -drive file=${guest_image},if=virtio,id=virtio-disk0,format=raw \
-        -kernel ${kernel} \
-        -append "root=/dev/vda1 rw console=hvc0" \
-        -name process=lm_src_ci,debug-threads=on \
-        -no-hpet -nodefaults \
-        -D qemu_src.log -nographic -vga none \
-        -monitor unix:${qmp_sock_src},server,nowait &
+    local MIGTD_PID=$(pgrep migtd-src-ci)
+    time_out=30 
+    while ((${time_out}>0))
+    do
+        nohup ${qemu_tdx_path} -accel kvm \
+            -cpu host,host-phys-bits,pmu=off,-kvm-steal-time,-kvmclock,-kvm-asyncpf,-kvmclock-stable-bit,tsc-freq=1000000000 \
+            -smp 1 \
+            -m 2G \
+            -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${MIGTD_PID} \
+            -object memory-backend-memfd-private,id=ram1,size=2G \
+            -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
+            -bios ${tdvf_image} \
+            -chardev stdio,id=mux,mux=on \
+            -device virtio-serial,romfile= \
+            -device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux \
+            -drive file=${guest_image},if=virtio,id=virtio-disk0,format=raw \
+            -kernel ${kernel} \
+            -append "root=/dev/vda1 rw console=hvc0" \
+            -name process=lm_src_ci,debug-threads=on \
+            -no-hpet -nodefaults \
+            -D qemu_src.log -nographic -vga none \
+            -monitor unix:${qmp_sock_src},server,nowait &
+        
+        sleep 1
+        exist_srctd=`ps aux | grep lm_src_ci | grep -v grep`
+        if [[ $exist_srctd == "" ]]
+        then
+            let "time_out--"
+            continue
+        else
+            break
+        fi
+    done
 
-    sleep 1
+    [ $time_out -ne 0 ] || die "Faild to launch source TD"
 }
 
 launch_dst_td() {
-    local MIGTD_PID=$(pgrep migtd-dst-ci) 
-    nohup ${qemu_tdx_path} -accel kvm \
-        -cpu host,host-phys-bits,pmu=off,-kvm-steal-time,-kvmclock,-kvm-asyncpf,-kvmclock-stable-bit,tsc-freq=1000000000 \
-        -smp 1 \
-        -m 2G \
-        -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${MIGTD_PID} \
-        -object memory-backend-memfd-private,id=ram1,size=2G \
-        -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
-        -bios ${tdvf_image} \
-        -chardev stdio,id=mux,mux=on \
-        -device virtio-serial,romfile= \
-        -device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux \
-        -drive file=${guest_image},if=virtio,id=virtio-disk0,format=raw \
-        -name process=lm_dst_ci,debug-threads=on \
-        -no-hpet -nodefaults \
-        -D qemu_dst.log -nographic -vga none \
-        -monitor unix:${qmp_sock_dst},server,nowait \
-        -incoming tcp:0:6666 &
+    local MIGTD_PID=$(pgrep migtd-dst-ci)
+    time_out=30 
+    while ((${time_out}>0))
+        do
+            nohup ${qemu_tdx_path} -accel kvm \
+            -cpu host,host-phys-bits,pmu=off,-kvm-steal-time,-kvmclock,-kvm-asyncpf,-kvmclock-stable-bit,tsc-freq=1000000000 \
+            -smp 1 \
+            -m 2G \
+            -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${MIGTD_PID} \
+            -object memory-backend-memfd-private,id=ram1,size=2G \
+            -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
+            -bios ${tdvf_image} \
+            -chardev stdio,id=mux,mux=on \
+            -device virtio-serial,romfile= \
+            -device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux \
+            -drive file=${guest_image},if=virtio,id=virtio-disk0,format=raw \
+            -name process=lm_dst_ci,debug-threads=on \
+            -no-hpet -nodefaults \
+            -D qemu_dst.log -nographic -vga none \
+            -monitor unix:${qmp_sock_dst},server,nowait \
+            -incoming tcp:0:6666 &              
+        
+        sleep 1
+        exist_dsttd=`ps aux | grep lm_dst_ci | grep -v grep`
+        if [[ $exist_dsttd == "" ]]
+        then
+            let "time_out--"
+            continue
+        else
+            break
+        fi
+    done
 
-    sleep 1
+    [ $time_out -ne 0 ] || die "Faild to launch destination TD" 
 }
 
 send_mig_command() {

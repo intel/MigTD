@@ -35,7 +35,7 @@ jobs:
       #   run:  sudo dnf group install 'Development Tools' | sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgcon
 
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with: 
           submodules: recursive
 
@@ -119,7 +119,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with: 
           submodules: recursive
 

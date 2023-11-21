@@ -103,16 +103,22 @@ cargo image --no-default-features --features remote-attestation,stack-guard,virt
 
 ### Generate SERVTD_INFO_HASH
 
+`SERVTD_HASH_INFO` can be calculated based on a given MigTD image and a TD configuration such as
+TD attributes, XFAM etc. An example configuration can be found in `config/servtd_info.json`. If a
+field is masked by VMM, then it should be set to zero in the configuration file.
+
 To generate the SERVTD_HASH_INFO of a MigTD binary with a default TD configuration at `config/servtd_info.json`:
 ```
 cargo hash --image /path/to/migtd.bin
 ```
-The output of hash digest is `./migtd.servtd_info_hash` by default.
 
 You can also specify a custom configuration in the same format with `config/servtd_info.json`
 ```
 cargo hash --image /path/to/migtd.bin --servtd-info /path/to/servtd_info.json
 ```
+
+The hash value in string will be ouput to `stdout`. You can also output the binary by specifing
+output file through `-o`.
 
 ## How to run
 
@@ -263,6 +269,7 @@ echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-dst
 Ask migtd-src to start pre-migration:
 ```
 echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
+```
 
 ## Reproducible Build
 
