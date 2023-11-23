@@ -1,0 +1,10 @@
+[migtd.config]
+qemu="/usr/local/bin/qemu-system-x86_64"
+mig_td_script = "mig-td.sh"
+user_td_script = "user-td.sh"
+connect_script = "connect.sh"
+pre_mig_script = "pre-mig.sh"
+user_td_bios_img = "/home/env/OVMF.fd"
+kernel_img = "/home/env/bzImage"
+guest_img = "/home/env/guest.img"
+stress_test_cycles = 20
