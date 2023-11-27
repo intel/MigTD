@@ -42,10 +42,6 @@
             }
         },
         "EventLog": {
-            "Digest.MigTdCore": {
-                "operation": "equal",
-                "reference": "self"
-            },
             "Digest.MigTdPolicy": {
                 "operation": "equal",
                 "reference": "self"

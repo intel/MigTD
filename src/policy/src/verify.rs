@@ -843,7 +843,7 @@ mod tests {
     #[test]
     fn test_eventlogpolicy_verify_mismatch_payload() {
         let payload = vec![0xffu8; 1024];
-        let policy = include_str!("../test/policy_full2.json");
+        let policy = include_str!("../test/policy.json");
         let trust_anchor = vec![0xffu8; 128];
         let svn = u64::to_le_bytes(0xf);
         let root_key = vec![0xffu8; 96];

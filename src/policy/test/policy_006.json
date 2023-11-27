@@ -20,10 +20,6 @@
             }
         },
         "EventLog": {
-            "Digest.MigTdCore": {
-                "operation": "equal",
-                "reference": "self"
-            },
             "Digest.SecureBootKey": {
                 "operation": "equal",
                 "reference": "self"

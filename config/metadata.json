@@ -14,7 +14,7 @@
             "MemoryAddress": "0xFF081000",
             "MemoryDataSize": "0xD76000",
             "Type": "Payload",
-            "Attributes": "0x0"
+            "Attributes": "0x1"
         },
         {
             "DataOffset": "0x0",
