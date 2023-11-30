@@ -5,7 +5,7 @@
 use alloc::vec::Vec;
 use core::mem::size_of;
 use scroll::Pread;
-use td_payload::mm::dma::DmaMemory;
+use td_payload::mm::shared::SharedMemory;
 use td_uefi_pi::hob as hob_lib;
 use tdx_tdcall::tdx;
 use zerocopy::AsBytes;
@@ -60,8 +60,8 @@ impl MigrationSession {
 
     pub fn query() -> Result<()> {
         // Allocate one shared page for command and response buffer
-        let mut cmd_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-        let mut rsp_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
         // Set Migration query command buffer
         let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
@@ -117,8 +117,8 @@ impl MigrationSession {
         match self.state {
             MigrationState::WaitForRequest => {
                 // Allocate shared page for command and response buffer
-                let mut cmd_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-                let mut rsp_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+                let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+                let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
                 // Set Migration wait for request command buffer
                 let mut cmd =
@@ -209,8 +209,8 @@ impl MigrationSession {
 
     pub fn shutdown() -> Result<()> {
         // Allocate shared page for command and response buffer
-        let mut cmd_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-        let mut rsp_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
         // Set Command
         let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
@@ -233,8 +233,8 @@ impl MigrationSession {
         };
 
         // Allocate shared page for command and response buffer
-        let mut cmd_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-        let mut rsp_mem = DmaMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
         // Set Command
         let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
