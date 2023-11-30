@@ -4,7 +4,7 @@
 
 use alloc::boxed::Box;
 use core::sync::atomic::AtomicBool;
-use td_payload::mm::dma::{alloc_dma_pages, free_dma_pages};
+use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
 use virtio_serial::*;
 
 use crate::driver::timer;
@@ -19,11 +19,11 @@ struct Allocator;
 
 impl DmaPageAllocator for Allocator {
     fn alloc_pages(&self, page_num: usize) -> Option<u64> {
-        unsafe { alloc_dma_pages(page_num).map(|addr| addr as u64) }
+        unsafe { alloc_shared_pages(page_num).map(|addr| addr as u64) }
     }
 
     fn free_pages(&self, addr: u64, page_num: usize) {
-        unsafe { free_dma_pages(addr as usize, page_num) }
+        unsafe { free_shared_pages(addr as usize, page_num) }
     }
 }
 

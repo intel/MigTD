@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use core::{ffi::c_void, ptr::null_mut, slice::from_raw_parts_mut};
 use td_payload::arch::apic::{disable, enable_and_hlt};
 use td_payload::arch::idt::register;
-use td_payload::{interrupt_handler_template, mm::dma::DmaMemory};
+use td_payload::{interrupt_handler_template, mm::shared::SharedMemory};
 use tdx_tdcall::tdx::tdvmcall_get_quote;
 
 use crate::binding::AttestLibError;
@@ -25,7 +25,7 @@ pub extern "C" fn migtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i32
 
     let input = unsafe { from_raw_parts_mut(tdquote_req_buf as *mut u8, len as usize) };
 
-    let mut shared = if let Some(shared) = DmaMemory::new(len as usize / 0x1000) {
+    let mut shared = if let Some(shared) = SharedMemory::new(len as usize / 0x1000) {
         shared
     } else {
         return AttestLibError::MigtdAttestErrorOutOfMemory as i32;
