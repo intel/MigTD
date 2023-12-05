@@ -39,6 +39,7 @@ pub mod sync {
 
     // wrap spin::Mutex same as std::sync::Mutex
     // pub use spin::Mutex;
+    #[derive(Debug)]
     pub struct Mutex<T: ?Sized>(spin::Mutex<T>);
     impl<T> Mutex<T> {
         pub fn new(user_data: T) -> Self {

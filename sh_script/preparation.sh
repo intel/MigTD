@@ -6,7 +6,7 @@ preparation() {
     popd
 
     pushd deps/rustls
-    git reset --hard ef76fec1459c907e7472a19fb993567ca4b288f5
+    git reset --hard 4d1b762b5328a1714862ba73ec72d5522fe0c049
     git clean -f -d
     patch -p 1 -i ../patches/rustls.diff
     popd

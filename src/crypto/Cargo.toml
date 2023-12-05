@@ -7,11 +7,9 @@ edition = "2021"
 [dependencies]
 cfg-if = "1.0"
 der = {version = "0.5.1", features = ["oid", "alloc", "derive"]}
+pki-types = { package = "rustls-pki-types", version = "1" }
 rust_std_stub = { path = "../std-support/rust-std-stub" }
-
-# `dangerous_configuration`: this feature enables a `dangerous()` method on `ClientConfig` and `ServerConfig` that allows setting inadvisable options,
-# such as replacing the certificate verification process.  Applications requesting this feature should be reviewed carefully.
-rustls = { path = "../../deps/rustls/rustls", default-features = false, features = ["no_std", "alloc", "dangerous_configuration"], optional = true }
+rustls = { path = "../../deps/rustls/rustls", default-features = false, features = ["no_std"], optional = true }
 ring = { path = "../../deps/td-shim/library/ring", default-features = false, features = ["alloc"], optional = true }
 zeroize = "1.5.7"
 
