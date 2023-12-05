@@ -14,6 +14,12 @@ pub struct EcdsaPk {
     pk: Document,
 }
 
+impl core::fmt::Debug for EcdsaPk {
+    fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        Ok(())
+    }
+}
+
 impl EcdsaPk {
     pub fn new() -> Result<Self> {
         let rand = SystemRandom::new();
@@ -23,10 +29,13 @@ impl EcdsaPk {
     }
 
     pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let ecdsa_key =
-            EcdsaKeyPair::from_pkcs8(&signature::ECDSA_P384_SHA384_ASN1_SIGNING, self.pk.as_ref())
-                .map_err(|_| Error::GenerateKeyPair)?;
         let rand = SystemRandom::new();
+        let ecdsa_key = EcdsaKeyPair::from_pkcs8(
+            &signature::ECDSA_P384_SHA384_ASN1_SIGNING,
+            self.pk.as_ref(),
+            &rand,
+        )
+        .map_err(|_| Error::GenerateKeyPair)?;
 
         ecdsa_key
             .sign(&rand, data)
@@ -40,9 +49,13 @@ impl EcdsaPk {
     }
 
     pub fn public_key(&self) -> Result<Vec<u8>> {
-        let ecdsa_key =
-            EcdsaKeyPair::from_pkcs8(&signature::ECDSA_P384_SHA384_ASN1_SIGNING, self.pk.as_ref())
-                .map_err(|_| Error::GenerateKeyPair)?;
+        let rand = SystemRandom::new();
+        let ecdsa_key = EcdsaKeyPair::from_pkcs8(
+            &signature::ECDSA_P384_SHA384_ASN1_SIGNING,
+            self.pk.as_ref(),
+            &rand,
+        )
+        .map_err(|_| Error::GenerateKeyPair)?;
         Ok(ecdsa_key.public_key().as_ref().to_vec())
     }
 }
