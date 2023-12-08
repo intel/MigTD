@@ -2,10 +2,13 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 use core::{mem::size_of, ops, str::FromStr};
 use lexical_core::parse;
-use serde::{de::Error, Deserialize, Deserializer};
+use serde::{
+    de::{Error, Visitor},
+    Deserialize, Deserializer,
+};
 use td_uefi_pi::pi::guid::Guid;
 
 #[derive(Debug, Deserialize)]
@@ -28,8 +31,8 @@ pub struct Policy {
 
 #[derive(Debug, Deserialize)]
 pub struct Property {
-    operation: Operation,
-    reference: Reference,
+    pub(crate) operation: Operation,
+    pub(crate) reference: Reference,
 }
 
 impl Property {
@@ -46,11 +49,8 @@ impl Property {
                 }
             }
             Reference::String(s) => {
-                if let Ok(peer) = String::from_utf8(peer.to_vec()) {
-                    s.verify(is_src, &self.operation, "", &peer)
-                } else {
-                    false
-                }
+                let peer: String = peer.iter().map(|b| format!("{:02x}", b)).collect();
+                s.verify(is_src, &self.operation, "", &peer)
             }
             Reference::Local(selfr) => selfr.verify(is_src, &self.operation, local, peer),
             Reference::IntegerRange(r) => {
@@ -63,17 +63,18 @@ impl Property {
                     r.verify(is_src, &self.operation, 0, peer)
                 }
             }
+            _ => false,
         }
     }
 }
 
 #[derive(Debug)]
-enum Reference {
+pub(crate) enum Reference {
     Integer(Integer),
     String(RefString),
     Local(RefLocal),
     IntegerRange(IntegerRange),
-    // TimeRange(ops::Range<usize>),
+    Custom(Vec<BTreeMap<String, String>>), // TimeRange(ops::Range<usize>),
 }
 
 impl<'de> Deserialize<'de> for Reference {
@@ -81,23 +82,52 @@ impl<'de> Deserialize<'de> for Reference {
     where
         D: Deserializer<'de>,
     {
-        let s: &str = Deserialize::deserialize(deserializer)?;
-        if s == "self" {
-            Ok(Reference::Local(RefLocal))
-        } else if let Ok(num) = parse::<usize>(s.as_bytes()) {
-            Ok(Reference::Integer(Integer(num)))
-        } else if let Some(range) = parse_range(s) {
-            Ok(Reference::IntegerRange(IntegerRange(range)))
-        } else {
-            Ok(Reference::String(RefString(
-                String::from_str(s).map_err(D::Error::custom)?,
-            )))
+        struct ReferenceVisitor;
+
+        fn parse_str(s: &str) -> Option<Reference> {
+            if s == "self" {
+                Some(Reference::Local(RefLocal))
+            } else if let Ok(num) = parse::<usize>(s.as_bytes()) {
+                Some(Reference::Integer(Integer(num)))
+            } else if let Some(range) = parse_range(s) {
+                Some(Reference::IntegerRange(IntegerRange(range)))
+            } else {
+                Some(Reference::String(RefString(String::from_str(s).ok()?)))
+            }
         }
+
+        impl<'de> Visitor<'de> for ReferenceVisitor {
+            type Value = Reference;
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                parse_str(v).ok_or(E::custom("Invalid string value"))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut items = Vec::new();
+                while let Some(val) = seq.next_element()? {
+                    items.push(val);
+                }
+                Ok(Reference::Custom(items))
+            }
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                formatter.write_str("Expect a sequence of map or a string value")
+            }
+        }
+
+        deserializer.deserialize_any(ReferenceVisitor)
     }
 }
 
 #[derive(Debug, PartialEq)]
-enum Operation {
+pub(crate) enum Operation {
     Equal,
     GreaterOrEqual,
     Subset,
@@ -123,7 +153,7 @@ impl<'de> Deserialize<'de> for Operation {
 }
 
 #[derive(Debug)]
-struct Integer(usize);
+pub(crate) struct Integer(usize);
 
 impl Integer {
     fn verify(&self, _is_src: bool, op: &Operation, _local: usize, peer: usize) -> bool {
@@ -138,13 +168,19 @@ impl Integer {
 }
 
 #[derive(Debug)]
-struct RefString(String);
+pub(crate) struct RefString(pub(crate) String);
 
 impl RefString {
-    fn verify(&self, _is_src: bool, op: &Operation, _local: &str, peer: &str) -> bool {
+    pub(crate) fn verify(&self, _is_src: bool, op: &Operation, _local: &str, peer: &str) -> bool {
         match op {
             Operation::Equal => *peer == self.0,
-            Operation::GreaterOrEqual => false,
+            Operation::GreaterOrEqual => {
+                if peer.len() != self.0.len() {
+                    false
+                } else {
+                    compare_array_in_string(peer, self.0.as_str())
+                }
+            }
             Operation::Subset => false,
             Operation::InRange => false,
             Operation::InTimeRange => false,
@@ -152,8 +188,26 @@ impl RefString {
     }
 }
 
+fn compare_array_in_string(str1: &str, str2: &str) -> bool {
+    if str1.len() != str2.len() || str1.len() % 2 != 0 {
+        false
+    } else {
+        for idx in 0..str1.len() / 2 {
+            if let Ok(v1) = u8::from_str_radix(&str1[idx..idx + 2], 16) {
+                if let Ok(v2) = u8::from_str_radix(&str2[idx..idx + 2], 16) {
+                    if v1 >= v2 {
+                        continue;
+                    }
+                }
+            }
+            return false;
+        }
+        true
+    }
+}
+
 #[derive(Debug)]
-struct RefLocal;
+pub(crate) struct RefLocal;
 
 impl RefLocal {
     fn verify(&self, is_src: bool, op: &Operation, local: &[u8], peer: &[u8]) -> bool {
@@ -174,7 +228,7 @@ impl RefLocal {
 }
 
 #[derive(Debug)]
-struct IntegerRange(ops::Range<usize>);
+pub(crate) struct IntegerRange(ops::Range<usize>);
 
 impl IntegerRange {
     fn verify(&self, _is_src: bool, op: &Operation, _local: usize, peer: usize) -> bool {
@@ -292,6 +346,23 @@ mod test {
                 && !RefString(String::from("abc")).verify(true, &op, &local, &not_equal)
         );
     }
+    #[test]
+    fn test_string_greater_or_equal() {
+        let reference = String::from("02606a");
+        let local = String::from("");
+        let equal = String::from("02606a");
+        let greater = String::from("02616b");
+        let smaller = String::from("025a6a");
+        let invalid = String::from("02606a1");
+        let op = Operation::GreaterOrEqual;
+
+        assert!(
+            RefString(reference.clone()).verify(true, &op, &local, &equal)
+                && RefString(reference.clone()).verify(true, &op, &local, &greater)
+                && !RefString(reference.clone()).verify(true, &op, &local, &smaller)
+                && !RefString(reference.clone()).verify(true, &op, &local, &invalid)
+        );
+    }
 
     #[test]
     fn test_self_equal() {
@@ -341,5 +412,14 @@ mod test {
             !IntegerRange(0..3).verify(true, &op, 0, not_inrange)
                 && IntegerRange(0..3).verify(true, &op, 0, inrange)
         );
+    }
+
+    #[test]
+    fn test_complex_options() {
+        use super::*;
+        use serde_json;
+
+        let result = serde_json::from_str::<MigPolicy>(include_str!("../test/policy.json"));
+        assert!(result.is_ok());
     }
 }

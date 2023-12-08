@@ -12,6 +12,7 @@ pub fn authenticate_policy(
     is_src: bool,
     td_report_peer: &[u8],
     event_log_peer: &[u8],
+    peer_fmspc: [u8; 6],
 ) -> Result<(), PolicyError> {
     let td_report = if let Ok(td_report) = tdreport::tdcall_report(&[0u8; 64]) {
         td_report
@@ -38,5 +39,6 @@ pub fn authenticate_policy(
         event_log,
         td_report_peer,
         event_log_peer,
+        peer_fmspc,
     )
 }

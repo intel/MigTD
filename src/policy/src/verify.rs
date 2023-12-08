@@ -4,7 +4,7 @@
 
 use core::{convert::TryInto, ops::Range};
 
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 use cc_measurement::{
     log::CcEventLogReader, CcEventHeader, EV_EFI_PLATFORM_FIRMWARE_BLOB2, EV_PLATFORM_CONFIG_FLAGS,
 };
@@ -15,7 +15,7 @@ use td_shim::event_log::{
 
 use crate::{
     config::{MigPolicy, Property},
-    PolicyError,
+    Operation, PolicyError, RefString, Reference,
 };
 
 const TD_REPORT_LEN: usize = 1024;
@@ -181,6 +181,7 @@ pub fn verify_policy(
     event_log: &[u8],
     report_peer: &[u8],
     event_log_peer: &[u8],
+    peer_fmspc: [u8; 6],
 ) -> Result<(), PolicyError> {
     if report.len() < TD_REPORT_LEN || report_peer.len() < TD_REPORT_LEN {
         return Err(PolicyError::InvalidParameter);
@@ -203,7 +204,7 @@ pub fn verify_policy(
     let report_peer = Report::read_from_raw_report(report_peer);
 
     if let Some(policy) = policy.migtd.tee_tcb_info.as_ref() {
-        verify_tee_tcb_info(is_src, policy, &report_local, &report_peer)?;
+        verify_tee_tcb_info(is_src, policy, &report_local, &report_peer, &peer_fmspc)?;
     }
 
     if let Some(policy) = policy.migtd.td_info.as_ref() {
@@ -230,11 +231,17 @@ fn verify_tee_tcb_info(
     policy: &BTreeMap<String, Property>,
     local_report: &Report,
     peer_report: &Report,
+    peer_fmspc: &[u8; 6],
 ) -> Result<(), PolicyError> {
     let mut verify_result = true;
 
     for (property, action) in policy {
         let property = TeeTcbInfoProperty::from(property.as_str());
+
+        if property == TeeTcbInfoProperty::TeeTcbSvn {
+            verify_tee_tcb_svn(is_src, action, local_report, peer_report, peer_fmspc)?;
+            continue;
+        }
         verify_result &= action.verify(
             is_src,
             local_report.get_tee_tcb_info_property(&property)?,
@@ -247,6 +254,63 @@ fn verify_tee_tcb_info(
     } else {
         Err(PolicyError::UnqulifiedTeeTcbInfo)
     }
+}
+
+fn verify_tee_tcb_svn(
+    is_src: bool,
+    action: &Property,
+    local_report: &Report,
+    peer_report: &Report,
+    peer_fmspc: &[u8; 6],
+) -> Result<(), PolicyError> {
+    let local_svn = local_report.get_tee_tcb_info_property(&TeeTcbInfoProperty::TeeTcbSvn)?;
+    let peer_svn = peer_report.get_tee_tcb_info_property(&TeeTcbInfoProperty::TeeTcbSvn)?;
+    match &action.reference {
+        Reference::String(_) | Reference::Local(_) => {
+            if action.verify(is_src, local_svn, peer_svn) {
+                Ok(())
+            } else {
+                Err(PolicyError::UnqulifiedTeeTcbInfo)
+            }
+        }
+        Reference::Custom(ref_options) => {
+            verify_tee_tcb_svn_with_fmspc(ref_options, &action.operation, peer_svn, peer_fmspc)
+        }
+        _ => Err(PolicyError::InvalidPolicy),
+    }
+}
+
+fn verify_tee_tcb_svn_with_fmspc(
+    ref_options: &Vec<BTreeMap<String, String>>,
+    operation: &Operation,
+    peer_svn: &[u8],
+    peer_fmspc: &[u8; 6],
+) -> Result<(), PolicyError> {
+    const FMSPC_REF_LENGTH: usize = 12;
+    const SVN_REF_LENGTH: usize = 32;
+
+    for opt in ref_options {
+        if let Some(fmspc_ref) = opt.get("fmspc") {
+            if let Some(svn_ref) = opt.get("svn") {
+                if fmspc_ref.len() != FMSPC_REF_LENGTH || svn_ref.len() != SVN_REF_LENGTH {
+                    return Err(PolicyError::InvalidPolicy);
+                }
+                let peer_fmspc: String = peer_fmspc.iter().map(|b| format!("{:02x}", b)).collect();
+                let peer_svn: String = peer_svn.iter().map(|b| format!("{:02x}", b)).collect();
+
+                if RefString(svn_ref.clone()).verify(true, operation, "", &peer_svn)
+                    && peer_fmspc[0..4] == fmspc_ref[0..4]
+                {
+                    return Ok(());
+                }
+            } else {
+                return Err(PolicyError::InvalidPolicy);
+            }
+        } else {
+            return Err(PolicyError::InvalidPolicy);
+        }
+    }
+    Err(PolicyError::UnqulifiedTeeTcbInfo)
 }
 
 fn verify_td_info(
@@ -447,6 +511,7 @@ mod tests {
             &[0u8; 8],
             &[0u8; TD_REPORT_LEN],
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::InvalidParameter));
 
@@ -457,6 +522,7 @@ mod tests {
             &[0u8; 8],
             &[0u8; TD_REPORT_LEN - 1],
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::InvalidParameter));
     }
@@ -466,15 +532,34 @@ mod tests {
         let mut report = [0u8; 1024];
 
         // TEE_TCB_SVN.SEAM
-        report[264..280].copy_from_slice(&[1u8; 16]);
+        report[264..267].copy_from_slice(&[4, 1, 2]);
 
         let policy_bytes = include_bytes!("../test/policy_full1.json");
-        let verify_result =
-            verify_policy(true, policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report,
+            &[0u8; 8],
+            [0x20, 0xc0, 0x6f, 0x0, 0x0, 0x0],
+        );
         assert!(verify_result.is_ok());
 
-        // peer's svn smaller than src
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report,
+            &[0u8; 8],
+            [0x20, 0xc1, 0x6f, 0x0, 0x0, 0x0],
+        );
+        assert_eq!(verify_result, Err(PolicyError::UnqulifiedTeeTcbInfo));
+
+        // peer's svn smaller than reference
         let mut report_peer = [0u8; 1024];
+        report_peer[264..267].copy_from_slice(&[4, 0, 2]);
 
         let verify_result = verify_policy(
             true,
@@ -483,11 +568,12 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0x20, 0xc0, 0x6f, 0x0, 0x0, 0x0],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTeeTcbInfo));
 
-        // dst's svn is greater than src
-        report_peer[Report::R_TEE_TCB_SVN].copy_from_slice(&[2u8; 16]);
+        // dst's svn is greater than reference
+        report_peer[264..267].copy_from_slice(&[4, 1, 3]);
 
         let verify_result = verify_policy(
             true,
@@ -496,19 +582,9 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0x20, 0xc0, 0x6f, 0x0, 0x0, 0x0],
         );
         assert!(verify_result.is_ok());
-
-        // src's svn is greater than dst
-        let verify_result = verify_policy(
-            false,
-            policy_bytes,
-            &report,
-            &[0u8; 8],
-            &report_peer,
-            &[0u8; 8],
-        );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedTeeTcbInfo));
 
         // different mrseam, not equal
         report_peer[Report::R_MRSEAM].copy_from_slice(&[1u8; 48]);
@@ -520,6 +596,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0x20, 0xc0, 0x6f, 0x0, 0x0, 0x0],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTeeTcbInfo));
         report_peer[Report::R_MRSEAM].copy_from_slice(&[0u8; 48]);
@@ -534,6 +611,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0x20, 0xc0, 0x6f, 0x0, 0x0, 0x0],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTeeTcbInfo));
         report_peer[Report::R_MRSEAMSIGNER].copy_from_slice(&[0u8; 48]);
@@ -548,6 +626,40 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0x20, 0xc0, 0x6f, 0x0, 0x0, 0x0],
+        );
+        assert_eq!(verify_result, Err(PolicyError::UnqulifiedTeeTcbInfo));
+
+        // Take self as TEE_TCB_SVN.SEAM reference
+        let policy_bytes = include_bytes!("../test/policy_full3.json");
+        let mut report = [0u8; 1024];
+        let mut report_peer = [0u8; 1024];
+
+        // dst's svn is greater than self
+        report[Report::R_TEE_TCB_SVN].copy_from_slice(&[1u8; 16]);
+        report_peer[Report::R_TEE_TCB_SVN].copy_from_slice(&[2u8; 16]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+            [0u8; 6],
+        );
+        assert!(verify_result.is_ok());
+
+        // dst's svn is smaller than self
+        report[Report::R_TEE_TCB_SVN].copy_from_slice(&[2u8; 16]);
+        report_peer[Report::R_TEE_TCB_SVN].copy_from_slice(&[1u8; 16]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTeeTcbInfo));
     }
@@ -558,8 +670,15 @@ mod tests {
         let report = [0u8; 1024];
 
         let policy_bytes = include_bytes!("../test/policy_no.json");
-        let verify_result =
-            verify_policy(true, policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report,
+            &[0u8; 8],
+            [0u8; 6],
+        );
         assert!(verify_result.is_ok());
 
         // different attributes, not equal, but attributes is not in policy
@@ -574,6 +693,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert!(verify_result.is_ok());
         report_peer[Report::R_ATTR_TD].copy_from_slice(&[0u8; 8]);
@@ -589,6 +709,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_ATTR_TD].copy_from_slice(&[0u8; 8]);
@@ -603,6 +724,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_XFAM].copy_from_slice(&[0u8; 8]);
@@ -617,6 +739,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_MRTD].copy_from_slice(&[0u8; 48]);
@@ -631,6 +754,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_MRCONFIGID].copy_from_slice(&[0u8; 48]);
@@ -645,6 +769,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_MROWNER].copy_from_slice(&[0u8; 48]);
@@ -659,6 +784,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_MROWNERCONFIG].copy_from_slice(&[0u8; 48]);
@@ -673,6 +799,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_RTMR0].copy_from_slice(&[0u8; 48]);
@@ -687,6 +814,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_RTMR1].copy_from_slice(&[0u8; 48]);
@@ -701,6 +829,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
         report_peer[Report::R_RTMR2].copy_from_slice(&[0u8; 48]);
@@ -715,6 +844,7 @@ mod tests {
             &[0u8; 8],
             &report_peer,
             &[0u8; 8],
+            [0u8; 6],
         );
         assert_eq!(verify_result, Err(PolicyError::UnqulifiedTdInfo));
     }
@@ -725,8 +855,15 @@ mod tests {
 
         let policy_bytes = include_bytes!("../test/policy_full2.json");
         // Invalid event log
-        let verify_result =
-            verify_policy(true, policy_bytes, &report, &[0u8; 8], &report, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            &report,
+            &[0u8; 8],
+            &report,
+            &[0u8; 8],
+            [0u8; 6],
+        );
         assert_eq!(verify_result, Err(PolicyError::InvalidEventLog));
 
         let mut evt1 = vec![0u8; 0x1000];
@@ -750,7 +887,8 @@ mod tests {
             )
             .unwrap();
 
-        let verify_result = verify_policy(true, policy_bytes, &report, &evt1, &report, &evt1);
+        let verify_result =
+            verify_policy(true, policy_bytes, &report, &evt1, &report, &evt1, [0u8; 6]);
         assert_eq!(verify_result, Err(PolicyError::InvalidEventLog));
     }
 

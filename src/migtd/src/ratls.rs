@@ -176,18 +176,18 @@ fn verify_peer_cert(is_client: bool, cert: &[u8]) -> core::result::Result<(), Cr
         parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
 
     if let Ok(report) = attestation::verify_quote(quote_report) {
-        verify_signature(&cert, report.as_slice())?;
+        if let Ok(fmspc) = attestation::get_fmspc_from_quote(quote_report) {
+            verify_signature(&cert, report.as_slice())?;
 
-        // MigTD-src acts as TLS client
-        mig_policy::authenticate_policy(is_client, report.as_slice(), event_log)
-            .map_err(|_| CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()))?;
-    } else {
-        return Err(CryptoError::TlsVerifyPeerCert(
-            MUTUAL_ATTESTATION_ERROR.to_string(),
-        ));
+            // MigTD-src acts as TLS client
+            return mig_policy::authenticate_policy(is_client, report.as_slice(), event_log, fmspc)
+                .map_err(|_| CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()));
+        }
     }
 
-    Ok(())
+    Err(CryptoError::TlsVerifyPeerCert(
+        MUTUAL_ATTESTATION_ERROR.to_string(),
+    ))
 }
 
 fn parse_extensions<'a>(extensions: &'a Extensions) -> Option<(&'a [u8], &'a [u8])> {

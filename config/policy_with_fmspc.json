@@ -3,7 +3,7 @@
     "MigTd":{
       "TEE_TCB_INFO":{
             "TEE_TCB_SVN.SEAM":{
-                "operation":"greater-or-equal",
+                "operation":"equal",
                 "reference":[
                     {
                         "fmspc":"30806f000000",
@@ -12,16 +12,8 @@
                     {
                         "fmspc":"20c06f000000",
                         "svn":"04010200000000000000000000000000"
-                    },
-                    {
-                        "fmspc":"000000000000",
-                        "svn":"00000000000000000000000000000000"
                     }
                 ]
-            },
-            "MRSEAM": {
-                "operation":"equal",
-                "reference":"self"
             },
             "MRSIGNERSEAM":{
                 "operation":"equal",
@@ -72,6 +64,20 @@
             "RTMR3": { 
                 "operation": "equal", 
                 "reference": "self" 
+            }
+        },
+        "EventLog": {
+            "Digest.MigTdCore": {
+                "operation": "equal",
+                "reference": "self"
+            },
+            "Digest.MigTdPolicy": {
+                "operation": "equal",
+                "reference": "self"
+            },
+            "Digest.MigTdSgxRootKey": {
+                "operation": "equal",
+                "reference": "self"
             }
         }
     }
