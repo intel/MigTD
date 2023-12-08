@@ -5,8 +5,8 @@
 use alloc::vec::Vec;
 use core::convert::{TryFrom, TryInto};
 pub use der::asn1::{
-    Any, BitString, GeneralizedTime, ObjectIdentifier, OctetString, PrintableString, SetOfVec,
-    UIntBytes, UtcTime, Utf8String,
+    Any, BitString, GeneralizedTime, ObjectIdentifier, OctetString, PrintableString, SequenceOf,
+    SetOfVec, UIntBytes, UtcTime, Utf8String,
 };
 pub use der::{
     Choice, Decodable, Decoder, DerOrd, Encodable, Error as DerError, Header, Sequence, Tag,
