@@ -8,6 +8,8 @@
 extern crate alloc;
 
 use alloc::string::String;
+use pki_types::CertificateDer;
+use rustls_pemfile::Item;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "rustls")] {
@@ -62,6 +64,9 @@ pub enum Error {
     /// Unable to verify the TLS peer's certificates
     TlsVerifyPeerCert(String),
 
+    /// Pem certificate parsing error
+    DecodePemCert,
+
     /// Unexpected error that should not happen
     Unexpected,
 }
@@ -69,5 +74,16 @@ pub enum Error {
 impl From<x509::DerError> for Error {
     fn from(e: x509::DerError) -> Error {
         Error::GenerateCertificate(e)
+    }
+}
+
+pub fn pem_cert_to_der(cert: &[u8]) -> Result<CertificateDer<'static>> {
+    let item = rustls_pemfile::read_one_from_slice(cert)
+        .map_err(|_| Error::DecodePemCert)?
+        .map(|(item, _)| item)
+        .ok_or(Error::DecodePemCert)?;
+    match item {
+        Item::X509Certificate(cert) => Ok(cert),
+        _ => Err(Error::DecodePemCert),
     }
 }
