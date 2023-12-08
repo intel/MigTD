@@ -4,20 +4,7 @@
       "TEE_TCB_INFO":{
             "TEE_TCB_SVN.SEAM":{
                 "operation":"greater-or-equal",
-                "reference":[
-                    {
-                        "fmspc":"30806f000000",
-                        "svn":"04010600000000000000000000000000"
-                    },
-                    {
-                        "fmspc":"20c06f000000",
-                        "svn":"04010200000000000000000000000000"
-                    },
-                    {
-                        "fmspc":"000000000000",
-                        "svn":"00000000000000000000000000000000"
-                    }
-                ]
+                "reference":"self"
             },
             "MRSEAM": {
                 "operation":"equal",

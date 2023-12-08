@@ -504,6 +504,7 @@ version = "0.3.1"
 dependencies = [
  "anyhow",
  "attestation",
+ "base64",
  "bitfield",
  "cc-measurement",
  "crypto",
