@@ -6,14 +6,18 @@ use crate::{
     binding::get_quote as get_quote_inner, binding::init_heap, binding::verify_quote_integrity,
     binding::AttestLibError, root_ca::ROOT_CA, Error,
 };
-use alloc::{vec, vec::Vec};
+use alloc::{string::String, vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void};
+use crypto::x509;
+use der::{asn1::ObjectIdentifier, Any, Decodable, Decoder};
 use tdx_tdcall::tdreport::*;
 
 const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
 const ATTEST_HEAP_SIZE: usize = 0x80000;
 const TD_VERIFIED_REPORT_SIZE: usize = 584;
+const PEM_CERT_BEGIN: &str = "-----BEGIN CERTIFICATE-----\n";
+const PEM_CERT_END: &str = "-----END CERTIFICATE-----\n";
 
 pub fn attest_init_heap() -> Option<usize> {
     unsafe {
@@ -78,6 +82,65 @@ pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
     }
 
     Ok(wrap_verified_report(td_report_verify))
+}
+
+pub fn get_fmspc_from_quote(quote: &[u8]) -> Result<[u8; 6], Error> {
+    let mid = String::from_utf8_lossy(quote);
+    let start_index = mid.find(PEM_CERT_BEGIN).ok_or(Error::InvalidQuote)?;
+    let end_index = mid.find(PEM_CERT_END).ok_or(Error::InvalidQuote)? + PEM_CERT_END.len();
+
+    let pck_cert = mid[start_index..end_index].as_bytes();
+    let pck_der = crypto::pem_cert_to_der(pck_cert)
+        .map_err(|_| Error::InvalidQuote)?
+        .to_vec();
+
+    parse_fmspc_from_pck_cert(&pck_der)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InnerValue<'a> {
+    pub id: ObjectIdentifier,
+    pub value: Option<Any<'a>>,
+}
+
+impl<'a> Decodable<'a> for InnerValue<'a> {
+    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
+        decoder.sequence(|decoder| {
+            let id = decoder.decode()?;
+            let value = decoder.decode()?;
+
+            Ok(Self { id, value })
+        })
+    }
+}
+
+fn parse_fmspc_from_pck_cert(pck_der: &[u8]) -> Result<[u8; 6], Error> {
+    const PCK_FMSPC_EXTENSION_OID: ObjectIdentifier =
+        ObjectIdentifier::new("1.2.840.113741.1.13.1");
+    const PCK_FMSPC_OID: ObjectIdentifier = ObjectIdentifier::new("1.2.840.113741.1.13.1.4");
+
+    let x509 = x509::Certificate::from_der(pck_der).map_err(|_| Error::InvalidQuote)?;
+    let extensions = x509.tbs_certificate.extensions.ok_or(Error::InvalidQuote)?;
+    for ext in extensions.get() {
+        if ext.extn_id == PCK_FMSPC_EXTENSION_OID {
+            let vals =
+                Vec::<InnerValue>::from_der(ext.extn_value.ok_or(Error::InvalidQuote)?.as_bytes())
+                    .map_err(|_| Error::InvalidQuote)?;
+            for val in vals {
+                if val.id == PCK_FMSPC_OID {
+                    return val
+                        .value
+                        .ok_or(Error::InvalidQuote)?
+                        .octet_string()
+                        .map_err(|_| Error::InvalidQuote)?
+                        .as_bytes()
+                        .try_into()
+                        .map_err(|_| Error::InvalidQuote);
+                }
+            }
+        }
+    }
+    Err(Error::InvalidQuote)
 }
 
 // The verified report returned from `verify_quote_integrity` is not in the

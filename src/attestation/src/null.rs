@@ -15,3 +15,7 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
 pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(quote.to_vec())
 }
+
+pub fn get_fmspc_from_quote(_quote: &[u8]) -> Result<[u8; 6], Error> {
+    Err(Error::InvalidQuote)
+}

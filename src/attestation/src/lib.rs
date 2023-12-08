@@ -32,5 +32,6 @@ pub enum Error {
     GetQuote,
     VerifyQuote,
     InvalidOutput,
+    InvalidQuote,
     OutOfMemory,
 }
