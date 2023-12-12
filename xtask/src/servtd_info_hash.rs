@@ -16,7 +16,6 @@ lazy_static! {
         Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     static ref DEFAULT_OUTPUT: PathBuf = PROJECT_ROOT.join("migtd.servtd_info_hash");
     static ref DEFAULT_SERVTD_INFO: PathBuf = PROJECT_ROOT.join("config/servtd_info.json");
-    static ref SHIM_FOLDER: PathBuf = PROJECT_ROOT.join("deps/td-shim");
 }
 
 #[derive(Clone, Args)]
@@ -32,17 +31,12 @@ pub(crate) struct ServtdInfoHashArgs {
 impl ServtdInfoHashArgs {
     pub fn generate(&self) -> Result<()> {
         let sh = Shell::new()?;
-        sh.change_dir(SHIM_FOLDER.as_path());
-        let cmd = cmd!(
-            sh,
-            "cargo run -p td-shim-tools --bin td-shim-tee-info-hash --features tee -- "
-        )
-        .args(&["-l", "off"])
-        .args(&["--image", self.image()?.to_str().unwrap()])
-        .args(&["--manifest", self.servtd_info()?.to_str().unwrap()]);
+        let cmd = cmd!(sh, "cargo run -p migtd-hash  -- ")
+            .args(&["--image", self.image()?.to_str().unwrap()])
+            .args(&["--manifest", self.servtd_info()?.to_str().unwrap()]);
 
         let cmd = if self.output.is_some() {
-            cmd.args(&["--out_bin", self.output()?.to_str().unwrap()])
+            cmd.args(&["--output-file", self.output()?.to_str().unwrap()])
         } else {
             cmd
         };
