@@ -83,7 +83,7 @@ cargo image
 ```
 
 By default, MigTD uses the attestation root certificate at `config/intel_root_sbx.der` and
-migration policy at `config/policy.json`
+migration policy at `config/policy_with_fmspc.json`
 
 To specify the root certificate to be enrolled, you can use the `--root-ca` argument:
 ```
