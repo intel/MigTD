@@ -10,7 +10,6 @@ use crate::{PciCommand, PciError, Result};
 
 pub const PCI_CONFIGURATION_ADDRESS_PORT: u16 = 0xCF8;
 pub const PCI_CONFIGURATION_DATA_PORT: u16 = 0xCFC;
-const PCI_EX_BAR_BASE_ADDRESS: u64 = 0xE0000000u64;
 const PCI_MEM32_BASE_ADDRESS_MASK: u32 = 0xFFFF_FFF0;
 const PCI_MEM64_BASE_ADDRESS_MASK: u64 = 0xFFFF_FFFF_FFFF_FFF0;
 
@@ -480,8 +479,10 @@ impl PciDevice {
             ConfigSpace::get_device_details(self.bus, self.device, self.func);
         self.common_header.vendor_id = vendor_id;
         self.common_header.device_id = device_id;
-        let command = self.read_u16(0x4);
-        let status = self.read_u16(0x6);
+        // read command
+        let _ = self.read_u16(0x4);
+        // read status
+        let _ = self.read_u16(0x6);
 
         let mut current_bar_offset = 0x10;
         let mut current_bar = 0;
@@ -515,7 +516,7 @@ impl PciDevice {
                     2 => {
                         self.bars[current_bar].bar_type = PciBarType::MemorySpace64;
 
-                        let mut size = self.read_u64(current_bar_offset);
+                        let size = self.read_u64(current_bar_offset);
                         let addr = if size > 0 {
                             let addr = alloc_mmio64(size)?;
                             self.set_bar_addr(current_bar_offset, addr as u32);
@@ -547,19 +548,6 @@ impl PciDevice {
 
     fn set_bar_addr(&self, offset: u8, addr: u32) {
         self.write_u32(offset, addr);
-    }
-
-    fn get_bar_size(&self, offset: u8) -> u32 {
-        let restore = self.read_u32(offset);
-        self.write_u32(offset, u32::MAX);
-        let size = self.read_u32(offset);
-        self.write_u32(offset, restore);
-
-        if size == 0 {
-            size
-        } else {
-            !(size & 0xFFFF_FFF0) + 1
-        }
     }
 
     pub fn read_u64(&self, offset: u8) -> u64 {

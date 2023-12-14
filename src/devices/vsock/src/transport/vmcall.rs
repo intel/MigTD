@@ -16,10 +16,9 @@ use super::Result;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::arch::asm;
 use core::convert::TryInto;
 use core::sync::atomic::{AtomicBool, Ordering};
-use td_payload::{eoi, interrupt_handler_template};
+use td_payload::interrupt_handler_template;
 use td_uefi_pi::pi::guid;
 use tdx_tdcall::tdx;
 
