@@ -178,6 +178,7 @@ class MigtdTest:
         LOG.debug(f"Create a channel for MigTD_src and MigTD_dst")
         thread_connect.start()
         self._threads["connect"] = thread_connect
+        time.sleep(5)
     
     def pre_migration(self):
         """
