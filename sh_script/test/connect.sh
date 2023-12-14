@@ -55,8 +55,29 @@ error() {
 connect() {
     modprobe vhost_vsock
     if [[ ${TYPE} == "local" ]]; then
-        socat TCP4-LISTEN:9009,reuseaddr VSOCK-LISTEN:1235,fork &
-        socat TCP4-CONNECT:127.0.0.1:9009,reuseaddr VSOCK-LISTEN:1234,fork &
+        for i in {1..5}
+        do
+            socat=`ps aux | grep TCP4-LISTEN:9009 | grep -v grep | wc -l`
+            if [[ ${socat} == 0 ]]
+            then
+                socat TCP4-LISTEN:9009,reuseaddr VSOCK-LISTEN:1235,fork &
+                sleep 1
+            else
+                break
+            fi
+        done
+
+        for i in {1..5}
+        do
+            socat=`ps aux | grep TCP4-CONNECT:127.0.0.1:9009 | grep -v grep | wc -l`
+            if [[ ${socat} == 0 ]]
+            then
+                socat TCP4-CONNECT:127.0.0.1:9009,reuseaddr VSOCK-LISTEN:1234,fork &
+                sleep 1
+            else
+                break
+            fi
+        done
     else
         ssh root@"${DEST_IP}" -o ConnectTimeout=30 "modprobe vhost_vsock; nohup socat TCP4-LISTEN:9009,reuseaddr VSOCK-LISTEN:1235,fork > foo.out 2> foo.err < /dev/null &"
         sleep 3
