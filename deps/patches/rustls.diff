@@ -1,5 +1,5 @@
 diff --git a/rustls/Cargo.toml b/rustls/Cargo.toml
-index bc8b5e77..35f3bc86 100644
+index bc8b5e77..de05409d 100644
 --- a/rustls/Cargo.toml
 +++ b/rustls/Cargo.toml
 @@ -18,14 +18,18 @@ rustversion = { version = "1.0.6", optional = true }
@@ -7,7 +7,7 @@ index bc8b5e77..35f3bc86 100644
  aws-lc-rs = { version = "1.5", optional = true }
  log = { version = "0.4.4", optional = true }
 -ring = { version = "0.17", optional = true }
-+ring = { version = "0.17", features = ["alloc"], default-features = false, optional = true }
++ring = { version = "0.17", features = ["alloc", "less-safe-getrandom-custom-or-rdrand"], default-features = false, optional = true }
  subtle = { version = "2.5.0", default-features = false }
 -webpki = { package = "rustls-webpki", version = "0.102", features = ["std"], default-features = false }
 -pki-types = { package = "rustls-pki-types", version = "1", features = ["std"] }
