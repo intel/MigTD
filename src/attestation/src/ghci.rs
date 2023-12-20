@@ -18,7 +18,7 @@ const GET_QUOTE_MAX_SIZE: u64 = 32 * 0x1000;
 pub static NOTIFIER: AtomicU8 = AtomicU8::new(0);
 
 #[no_mangle]
-pub extern "C" fn migtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i32 {
+pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i32 {
     if tdquote_req_buf == null_mut() || len > GET_QUOTE_MAX_SIZE {
         return AttestLibError::MigtdAttestErrorInvalidParameter as i32;
     }

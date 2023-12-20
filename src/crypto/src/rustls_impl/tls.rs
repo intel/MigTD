@@ -134,7 +134,8 @@ impl TlsConfig {
     pub fn new(
         certs_der: Vec<Vec<u8>>,
         signing_key: EcdsaPk,
-        verify_callback: fn(&[u8]) -> Result<()>,
+        verify_callback: fn(&[u8], &[u8]) -> Result<()>,
+        verify_callback_data: Vec<u8>,
     ) -> Result<Self> {
         let mut certs = Vec::new();
         for cert in certs_der {
@@ -143,7 +144,7 @@ impl TlsConfig {
         }
 
         let resolver = Resolver::new(certs, signing_key);
-        let verifier = Verifier::new(verify_callback);
+        let verifier = Verifier::new(verify_callback, verify_callback_data);
 
         Ok(Self { resolver, verifier })
     }
@@ -160,8 +161,12 @@ impl TlsConfig {
         Ok(())
     }
 
-    pub fn set_verify_callback(&mut self, cb: fn(&[u8]) -> Result<()>) -> Result<()> {
-        self.verifier = Verifier::new(cb);
+    pub fn set_verify_callback(
+        &mut self,
+        cb: fn(&[u8], &[u8]) -> Result<()>,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        self.verifier = Verifier::new(cb, data);
 
         Ok(())
     }
@@ -169,7 +174,7 @@ impl TlsConfig {
     pub fn tls_client<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
         let client_config = ClientConfig::builder_with_provider(Arc::new(crypto_provider()))
             .with_protocol_versions(&[&TLS13])
-            .map_err(|e| Error::SetupTlsContext(e))?
+            .map_err(Error::SetupTlsContext)?
             // `dangerous()` method of `ClientConfig` allows setting inadvisable options, such as replacing the
             // certificate verification process.
             .dangerous()
@@ -191,7 +196,7 @@ impl TlsConfig {
     pub fn tls_server<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
         let server_config = ServerConfig::builder_with_provider(Arc::new(crypto_provider()))
             .with_protocol_versions(&[&TLS13])
-            .map_err(|e| Error::SetupTlsContext(e))?
+            .map_err(Error::SetupTlsContext)?
             .with_client_cert_verifier(Arc::new(self.verifier))
             .with_cert_resolver(Arc::new(self.resolver));
 
@@ -258,12 +263,16 @@ impl ResolvesClientCert for Resolver {
 
 #[derive(Debug)]
 struct Verifier {
-    cb: fn(&[u8]) -> Result<()>,
+    // Function `cb` takes peer's certificates as first parameter and
+    // additional data required by `cb` to verify the certs as second
+    // parameter.
+    cb: fn(&[u8], &[u8]) -> Result<()>,
+    data: Vec<u8>,
 }
 
 impl Verifier {
-    pub fn new(cb: fn(&[u8]) -> Result<()>) -> Self {
-        Self { cb }
+    pub fn new(cb: fn(&[u8], &[u8]) -> Result<()>, data: Vec<u8>) -> Self {
+        Self { cb, data }
     }
 }
 
@@ -276,7 +285,7 @@ impl ServerCertVerifier for Verifier {
         _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> core::result::Result<ServerCertVerified, rustls::Error> {
-        if let Err(e) = (self.cb)(end_entity.as_ref()) {
+        if let Err(e) = (self.cb)(end_entity.as_ref(), &self.data) {
             match e {
                 Error::TlsVerifyPeerCert(e) => Err(rustls::Error::General(format!(
                     "{}({})",
@@ -331,7 +340,7 @@ impl ClientCertVerifier for Verifier {
         _intermediates: &[CertificateDer<'_>],
         _now: UnixTime,
     ) -> core::result::Result<ClientCertVerified, rustls::Error> {
-        if let Err(e) = (self.cb)(end_entity.as_ref()) {
+        if let Err(e) = (self.cb)(end_entity.as_ref(), &self.data) {
             match e {
                 Error::TlsVerifyPeerCert(e) => Err(rustls::Error::General(format!(
                     "{}({})",

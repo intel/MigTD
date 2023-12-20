@@ -4,22 +4,15 @@
 
 use policy::verify_policy;
 pub use policy::PolicyError;
-use tdx_tdcall::tdreport;
 
 use crate::{config::get_policy, event_log::get_event_log};
 
 pub fn authenticate_policy(
     is_src: bool,
-    td_report_peer: &[u8],
+    verified_report_local: &[u8],
+    verified_report_peer: &[u8],
     event_log_peer: &[u8],
-    peer_fmspc: [u8; 6],
 ) -> Result<(), PolicyError> {
-    let td_report = if let Ok(td_report) = tdreport::tdcall_report(&[0u8; 64]) {
-        td_report
-    } else {
-        return Err(PolicyError::FailGetReport);
-    };
-
     let event_log = if let Some(event_log) = get_event_log() {
         event_log
     } else {
@@ -35,10 +28,9 @@ pub fn authenticate_policy(
     verify_policy(
         is_src,
         policy,
-        td_report.as_bytes(),
+        verified_report_local,
         event_log,
-        td_report_peer,
+        verified_report_peer,
         event_log_peer,
-        peer_fmspc,
     )
 }

@@ -23,28 +23,10 @@ fn main() {
     let _ = env::var("AR").ok().map(|_| env::remove_var("AR"));
 
     let crate_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let lib_path = crate_path
-        .join("../../deps/linux-sgx")
-        .display()
-        .to_string();
+    let lib_path = crate_path.display().to_string();
 
-    // make td_migration_preparation
-    Command::new("make")
-        .args(&["-C", &lib_path, "td_migration_preparation"])
-        .status()
-        .expect("failed to run make td_migration_preparation for attestation library!");
-
-    // make td_migration
-    Command::new("make")
-        .args(&["-C", &lib_path, "td_migration"])
-        .status()
-        .expect("failed to run make td_migration for attestation library!");
-
-    let search_dir = format!(
-        "{}/external/dcap_source/QuoteGeneration/quote_wrapper/td_migration/linux",
-        &lib_path
-    );
+    let search_dir = format!("{}", &lib_path);
 
     println!("cargo:rustc-link-search=native={}", search_dir);
-    println!("cargo:rustc-link-lib=static=migtd_attest");
+    println!("cargo:rustc-link-lib=static=servtd_attest");
 }

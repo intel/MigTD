@@ -1,51 +1,104 @@
 {
-    "id":"9D50F353-27B6-44FE-9EF4-2969F9533969",
-    "MigTd":{
-      "TEE_TCB_INFO":{
-            "TEE_TCB_SVN.SEAM":{
-                "operation":"greater-or-equal",
-                "reference":"self"
-            },
-            "MRSEAM": {
-                "operation":"equal",
-                "reference":"self"
-            },
-            "MRSIGNERSEAM":{
-                "operation":"equal",
-                "reference":"self"
-            },
-            "ATTRIBUTES":{
-                "operation":"equal",
-                "reference":"self"
+    "id":"FCC552CC-C138-49DA-AC52-E55E1F02CD11",
+    "policy": [
+        {
+            "fmspc": "self",
+            "Platform": {
+                "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-equal",
+                        "reference": "self"
+                    },
+                    "pcesvn": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-equal",
+                        "reference": "self"
+                    }
+                }
             }
         },
-      "TDINFO":{
-            "ATTRIBUTES":{
-                "operation":"equal",
-                "reference":"self"
-            },
-            "XFAM":{
-                "operation":"equal",
-                "reference":"self"
-            },
-            "MRCONFIGID":{
-                "operation":"equal",
-                "reference":"self"
-            },
-            "MROWNER":{
-                "operation":"equal",
-                "reference":"self"
-            },
-            "MROWNERCONFIG":{
-                "operation":"equal",
-                "reference":"self"
+        {
+            "QE": {
+                "QeIdentity": {
+                    "MISCSELECT": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MRSIGNER": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "ISVPRODID": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "ISVSVN": {
+                        "operation": "equal",
+                        "reference": "self"
+                    }
+                }
             }
         },
-        "EventLog": {
-            "Digest.MigTdCoreSvn": {
-                "operation": "in-range",
-                "reference": "13..18"
+        {
+            "TDXModule": {
+                "TDXModule_Identity": {
+                    "TDXModuleMajorVersion": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "TDXModuleSVN": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "self"
+                    }
+                }
+            }
+        },
+        {
+            "MigTD": {
+                "TDINFO": {
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "XFAM": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MRCONFIGID": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MROWNER": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MROWNERCONFIG": {
+                        "operation": "equal",
+                        "reference": "self"
+                    }
+                },
+                "EventLog": {
+                    "Digest.MigTdCoreSvn": {
+                        "operation": "in-range",
+                        "reference": "13..18"
+                    }
+                }
             }
         }
-    }
+    ]
 }
