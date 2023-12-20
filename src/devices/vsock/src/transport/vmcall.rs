@@ -137,7 +137,7 @@ impl VmcallVsock {
         tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout)
             .map_err(|e| VsockTransportError::Vmcall(e))?;
 
-        while !wait_for_event(&VMCALL_FLAG, self.timer.as_ref()) {
+        if !wait_for_event(&VMCALL_FLAG, self.timer.as_ref()) {
             return Err(VsockTransportError::Timeout);
         }
         self.timer.reset_timeout();
@@ -176,7 +176,7 @@ impl VmcallVsock {
         // TO DO:
         // Refactor the waiting logic
         loop {
-            while !wait_for_event(&VMCALL_FLAG, self.timer.as_ref()) {
+            if !wait_for_event(&VMCALL_FLAG, self.timer.as_ref()) {
                 return Err(VsockTransportError::Timeout);
             }
             self.timer.reset_timeout();
