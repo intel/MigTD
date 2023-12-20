@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
+use alloc::{collections::BTreeMap, fmt::Write, string::String, vec::Vec};
 use core::{mem::size_of, ops, str::FromStr};
 use lexical_core::parse;
 use serde::{
@@ -15,18 +15,101 @@ use td_uefi_pi::pi::guid::Guid;
 pub struct MigPolicy {
     #[serde(rename = "id", with = "guid_serde")]
     pub _id: Guid,
-    #[serde(rename = "MigTd")]
-    pub migtd: Policy,
+    #[serde(rename = "policy")]
+    pub blocks: Vec<Policy>,
+}
+
+impl MigPolicy {
+    pub fn get_platform_info_policy(&self) -> Vec<&PlatformInfo> {
+        self.blocks
+            .iter()
+            .filter_map(|p| match p {
+                Policy::Platform(p) => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn get_qe_info_policy(&self) -> Option<&QeInfo> {
+        self.blocks.iter().find_map(|p| match p {
+            Policy::Qe(q) => Some(q),
+            _ => None,
+        })
+    }
+
+    pub fn get_tdx_module_info_policy(&self) -> Option<&TdxModuleInfo> {
+        self.blocks.iter().find_map(|p| match p {
+            Policy::TdxModule(t) => Some(t),
+            _ => None,
+        })
+    }
+
+    pub fn get_migtd_info_policy(&self) -> Option<&MigTdInfo> {
+        self.blocks.iter().find_map(|p| match p {
+            Policy::Migtd(m) => Some(m),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Policy {
-    #[serde(rename = "TEE_TCB_INFO")]
-    pub tee_tcb_info: Option<BTreeMap<String, Property>>,
+#[serde(untagged)]
+pub enum Policy {
+    Platform(PlatformInfo),
+    Qe(QeInfo),
+    TdxModule(TdxModuleInfo),
+    Migtd(MigTdInfo),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlatformInfo {
+    pub(crate) fmspc: String,
+    #[serde(rename = "Platform")]
+    pub(crate) platform: Platform,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Platform {
+    #[serde(rename = "TcbInfo")]
+    pub(crate) tcb_info: BTreeMap<String, Property>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QeInfo {
+    #[serde(rename = "QE")]
+    pub(crate) qe_identity: QeIdentity,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct QeIdentity {
+    #[serde(rename = "QeIdentity")]
+    pub(crate) qe_identity: BTreeMap<String, Property>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TdxModuleInfo {
+    #[serde(rename = "TDXModule")]
+    pub(crate) tdx_module: TdxModule,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TdxModule {
+    #[serde(rename = "TDXModule_Identity")]
+    pub(crate) tdx_module_identity: BTreeMap<String, Property>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MigTdInfo {
+    #[serde(rename = "MigTD")]
+    pub(crate) migtd: TdInfo,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TdInfo {
     #[serde(rename = "TDINFO")]
-    pub td_info: Option<BTreeMap<String, Property>>,
+    pub(crate) td_info: BTreeMap<String, Property>,
     #[serde(rename = "EventLog")]
-    pub event_log: Option<BTreeMap<String, Property>>,
+    pub(crate) event_log: Option<BTreeMap<String, Property>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +132,7 @@ impl Property {
                 }
             }
             Reference::String(s) => {
-                let peer: String = peer.iter().map(|b| format!("{:02x}", b)).collect();
+                let peer = format_bytes_hex(peer);
                 s.verify(is_src, &self.operation, "", &peer)
             }
             Reference::Local(selfr) => selfr.verify(is_src, &self.operation, local, peer),
@@ -63,7 +146,7 @@ impl Property {
                     r.verify(is_src, &self.operation, 0, peer)
                 }
             }
-            _ => false,
+            Reference::Array(a) => a.verify(is_src, &self.operation, &[], peer),
         }
     }
 }
@@ -74,7 +157,7 @@ pub(crate) enum Reference {
     String(RefString),
     Local(RefLocal),
     IntegerRange(IntegerRange),
-    Custom(Vec<BTreeMap<String, String>>), // TimeRange(ops::Range<usize>),
+    Array(Array), // TimeRange(ops::Range<usize>),
 }
 
 impl<'de> Deserialize<'de> for Reference {
@@ -87,8 +170,6 @@ impl<'de> Deserialize<'de> for Reference {
         fn parse_str(s: &str) -> Option<Reference> {
             if s == "self" {
                 Some(Reference::Local(RefLocal))
-            } else if let Ok(num) = parse::<usize>(s.as_bytes()) {
-                Some(Reference::Integer(Integer(num)))
             } else if let Some(range) = parse_range(s) {
                 Some(Reference::IntegerRange(IntegerRange(range)))
             } else {
@@ -106,6 +187,13 @@ impl<'de> Deserialize<'de> for Reference {
                 parse_str(v).ok_or(E::custom("Invalid string value"))
             }
 
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(Reference::Integer(Integer(v as usize)))
+            }
+
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
             where
                 A: serde::de::SeqAccess<'de>,
@@ -114,7 +202,7 @@ impl<'de> Deserialize<'de> for Reference {
                 while let Some(val) = seq.next_element()? {
                     items.push(val);
                 }
-                Ok(Reference::Custom(items))
+                Ok(Reference::Array(Array(items)))
             }
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
@@ -133,6 +221,8 @@ pub(crate) enum Operation {
     Subset,
     InRange,
     InTimeRange,
+    ArrayEqual,
+    ArrayGreaterOrEqual,
 }
 
 impl<'de> Deserialize<'de> for Operation {
@@ -147,6 +237,8 @@ impl<'de> Deserialize<'de> for Operation {
             "subset" => Ok(Operation::Subset),
             "in-range" => Ok(Operation::InRange),
             "in-time-range" => Ok(Operation::InTimeRange),
+            "array-equal" => Ok(Operation::ArrayEqual),
+            "array-greater-or-equal" => Ok(Operation::ArrayGreaterOrEqual),
             _ => Err(D::Error::custom("Unknown operation")),
         }
     }
@@ -160,9 +252,7 @@ impl Integer {
         match op {
             Operation::Equal => peer == self.0,
             Operation::GreaterOrEqual => peer >= self.0,
-            Operation::Subset => false,
-            Operation::InRange => false,
-            Operation::InTimeRange => false,
+            _ => false,
         }
     }
 }
@@ -174,35 +264,8 @@ impl RefString {
     pub(crate) fn verify(&self, _is_src: bool, op: &Operation, _local: &str, peer: &str) -> bool {
         match op {
             Operation::Equal => *peer == self.0,
-            Operation::GreaterOrEqual => {
-                if peer.len() != self.0.len() {
-                    false
-                } else {
-                    compare_array_in_string(peer, self.0.as_str())
-                }
-            }
-            Operation::Subset => false,
-            Operation::InRange => false,
-            Operation::InTimeRange => false,
+            _ => false,
         }
-    }
-}
-
-fn compare_array_in_string(str1: &str, str2: &str) -> bool {
-    if str1.len() != str2.len() || str1.len() % 2 != 0 {
-        false
-    } else {
-        for idx in 0..str1.len() / 2 {
-            if let Ok(v1) = u8::from_str_radix(&str1[idx..idx + 2], 16) {
-                if let Ok(v2) = u8::from_str_radix(&str2[idx..idx + 2], 16) {
-                    if v1 >= v2 {
-                        continue;
-                    }
-                }
-            }
-            return false;
-        }
-        true
     }
 }
 
@@ -211,18 +274,27 @@ pub(crate) struct RefLocal;
 
 impl RefLocal {
     fn verify(&self, is_src: bool, op: &Operation, local: &[u8], peer: &[u8]) -> bool {
+        if local.len() != peer.len() {
+            return false;
+        }
         match op {
             Operation::Equal => peer == local,
             Operation::GreaterOrEqual => {
-                if is_src {
-                    peer >= local
-                } else {
-                    local >= peer
+                if let Some(l) = slice_to_u64(local) {
+                    if let Some(p) = slice_to_u64(peer) {
+                        return if is_src { p >= l } else { l >= p };
+                    }
                 }
+                false
             }
-            Operation::Subset => false,
-            Operation::InRange => false,
-            Operation::InTimeRange => false,
+            Operation::ArrayEqual => local == peer,
+            Operation::ArrayGreaterOrEqual => {
+                local
+                    .iter()
+                    .zip(peer.iter())
+                    .all(|(l, p)| if is_src { p >= l } else { l >= p })
+            }
+            _ => false,
         }
     }
 }
@@ -233,11 +305,9 @@ pub(crate) struct IntegerRange(ops::Range<usize>);
 impl IntegerRange {
     fn verify(&self, _is_src: bool, op: &Operation, _local: usize, peer: usize) -> bool {
         match op {
-            Operation::Equal => false,
-            Operation::GreaterOrEqual => false,
-            Operation::Subset => false,
             Operation::InRange => self.0.contains(&peer),
             Operation::InTimeRange => self.0.contains(&peer),
+            _ => false,
         }
     }
 }
@@ -264,6 +334,28 @@ fn parse_range(input: &str) -> Option<ops::Range<usize>> {
     Some(start..end)
 }
 
+#[derive(Debug)]
+pub(crate) struct Array(Vec<u8>);
+
+impl Array {
+    fn verify(&self, is_src: bool, op: &Operation, _local: &[u8], peer: &[u8]) -> bool {
+        if peer.len() != self.0.len() {
+            return false;
+        }
+
+        match op {
+            Operation::ArrayEqual => self.0.as_slice() == peer,
+            Operation::ArrayGreaterOrEqual => {
+                self.0
+                    .iter()
+                    .zip(peer.iter())
+                    .all(|(r, p)| if is_src { p >= r } else { r >= p })
+            }
+            _ => false,
+        }
+    }
+}
+
 mod guid_serde {
     use super::*;
 
@@ -276,9 +368,26 @@ mod guid_serde {
     }
 }
 
+pub(crate) fn slice_to_u64(input: &[u8]) -> Option<u64> {
+    if input.len() > size_of::<u64>() {
+        return None;
+    }
+    let mut bytes = [0u8; 8];
+    bytes[..input.len()].copy_from_slice(input);
+    Some(u64::from_le_bytes(bytes))
+}
+
+pub(crate) fn format_bytes_hex(input: &[u8]) -> String {
+    input.iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02X}");
+        acc
+    })
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_policy_data() {
@@ -346,23 +455,6 @@ mod test {
                 && !RefString(String::from("abc")).verify(true, &op, &local, &not_equal)
         );
     }
-    #[test]
-    fn test_string_greater_or_equal() {
-        let reference = String::from("02606a");
-        let local = String::from("");
-        let equal = String::from("02606a");
-        let greater = String::from("02616b");
-        let smaller = String::from("025a6a");
-        let invalid = String::from("02606a1");
-        let op = Operation::GreaterOrEqual;
-
-        assert!(
-            RefString(reference.clone()).verify(true, &op, &local, &equal)
-                && RefString(reference.clone()).verify(true, &op, &local, &greater)
-                && !RefString(reference.clone()).verify(true, &op, &local, &smaller)
-                && !RefString(reference.clone()).verify(true, &op, &local, &invalid)
-        );
-    }
 
     #[test]
     fn test_self_equal() {
@@ -381,9 +473,9 @@ mod test {
     #[test]
     fn test_self_greater_or_equal() {
         let src = [1, 2, 3, 4];
-        let less = [1, 2, 3];
+        let less = [1, 5, 3, 3];
         let equal = [1, 2, 3, 4];
-        let greater = [1, 2, 3, 4, 5];
+        let greater = [1, 1, 3, 5];
 
         let op = Operation::GreaterOrEqual;
 
@@ -396,6 +488,45 @@ mod test {
         let dst = src;
         assert!(
             RefLocal.verify(false, &op, &dst, &less)
+                && RefLocal.verify(false, &op, &dst, &equal)
+                && !RefLocal.verify(false, &op, &dst, &greater)
+        );
+    }
+
+    #[test]
+    fn test_self_array_equal() {
+        let src = [1, 2, 3, 4];
+        let equal = [1, 2, 3, 4];
+        let unequal = [1, 2, 3, 5];
+
+        let op = Operation::ArrayEqual;
+
+        assert!(
+            !RefLocal.verify(true, &op, &src, &unequal) && RefLocal.verify(true, &op, &src, &equal)
+        );
+    }
+
+    #[test]
+    fn test_self_array_greater_or_equal() {
+        let src = [1, 2, 3, 4];
+        let less1 = [1, 3, 3, 3];
+        let less2 = [1, 1, 3, 3];
+        let equal = [1, 2, 3, 4];
+        let greater = [1, 2, 3, 5];
+
+        let op = Operation::ArrayGreaterOrEqual;
+
+        assert!(
+            !RefLocal.verify(true, &op, &src, &less1)
+                && !RefLocal.verify(true, &op, &src, &less2)
+                && RefLocal.verify(true, &op, &src, &equal)
+                && RefLocal.verify(true, &op, &src, &greater)
+        );
+
+        let dst = src;
+        assert!(
+            !RefLocal.verify(false, &op, &dst, &less1)
+                && RefLocal.verify(false, &op, &dst, &less2)
                 && RefLocal.verify(false, &op, &dst, &equal)
                 && !RefLocal.verify(false, &op, &dst, &greater)
         );
@@ -415,11 +546,36 @@ mod test {
     }
 
     #[test]
-    fn test_complex_options() {
-        use super::*;
-        use serde_json;
+    fn test_array_equal() {
+        let reference = vec![0x2, 0x60, 0x6a];
+        let local = &[];
+        let equal = &[0x2, 0x60, 0x6a];
+        let greater = &[0x2, 0x60, 0x6c];
+        let smaller = &[0x2, 0x5f, 0x6a];
+        let invalid = &[0x2, 0x60, 0x6a, 0x1];
+        let op = Operation::ArrayEqual;
 
-        let result = serde_json::from_str::<MigPolicy>(include_str!("../test/policy.json"));
-        assert!(result.is_ok());
+        assert!(
+            Array(reference.clone()).verify(true, &op, local, equal)
+                && !Array(reference.clone()).verify(true, &op, local, greater)
+                && !Array(reference.clone()).verify(true, &op, local, smaller)
+                && !Array(reference.clone()).verify(true, &op, local, invalid)
+        );
+    }
+
+    #[test]
+    fn test_array_greater_or_equal() {
+        let reference = vec![0x2, 0x60, 0x6a];
+        let local = &[];
+        let equal = &[0x2, 0x60, 0x6a];
+        let greater = &[0x2, 0x61, 0x6a];
+        let smaller = &[0x3, 0x60, 0x60];
+        let op = Operation::ArrayGreaterOrEqual;
+
+        assert!(
+            Array(reference.clone()).verify(true, &op, local, equal)
+                && Array(reference.clone()).verify(true, &op, local, greater)
+                && !Array(reference.clone()).verify(true, &op, local, smaller)
+        );
     }
 }

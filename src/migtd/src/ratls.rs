@@ -80,23 +80,25 @@ const PUBLIC_KEY_HASH_SIZE: usize = 48;
 
 pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
-    let certs = vec![gen_cert(&signing_key)?];
+    let (certs, quote) = gen_cert(&signing_key)?;
+    let certs = vec![certs];
 
     // Server verifies certificate of client
-    let config = TlsConfig::new(certs, signing_key, verify_client_cert)?;
+    let config = TlsConfig::new(certs, signing_key, verify_client_cert, quote)?;
     config.tls_server(stream).map_err(|e| e.into())
 }
 
 pub fn client<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
-    let certs = vec![gen_cert(&signing_key)?];
+    let (certs, quote) = gen_cert(&signing_key)?;
+    let certs = vec![certs];
 
     // Client verifies certificate of server
-    let config = TlsConfig::new(certs, signing_key, verify_server_cert)?;
+    let config = TlsConfig::new(certs, signing_key, verify_server_cert, quote)?;
     config.tls_client(stream).map_err(|e| e.into())
 }
 
-fn gen_cert(signing_key: &EcdsaPk) -> Result<Vec<u8>> {
+fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
     let algorithm = AlgorithmIdentifier {
         algorithm: ID_EC_PUBKEY_OID,
         parameters: Some(Any::new(Tag::ObjectIdentifier, SECP384R1_OID.as_bytes())?),
@@ -141,7 +143,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<Vec<u8>> {
     let signature = signing_key.sign(&tbs)?;
     x509_certificate.set_signature(&signature)?;
 
-    x509_certificate.to_vec().map_err(|e| e.into())
+    Ok((x509_certificate.to_vec().map_err(CryptoError::from)?, quote))
 }
 
 fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
@@ -155,15 +157,21 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     attestation::get_quote(td_report.as_bytes()).map_err(|_| RatlsError::GetQuote)
 }
 
-fn verify_server_cert(cert: &[u8]) -> core::result::Result<(), CryptoError> {
-    verify_peer_cert(true, cert)
+fn verify_server_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), CryptoError> {
+    verify_peer_cert(true, cert, quote)
 }
 
-fn verify_client_cert(cert: &[u8]) -> core::result::Result<(), CryptoError> {
-    verify_peer_cert(false, cert)
+fn verify_client_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), CryptoError> {
+    verify_peer_cert(false, cert, quote)
 }
 
-fn verify_peer_cert(is_client: bool, cert: &[u8]) -> core::result::Result<(), CryptoError> {
+fn verify_peer_cert(
+    is_client: bool,
+    cert: &[u8],
+    quote_local: &[u8],
+) -> core::result::Result<(), CryptoError> {
+    let verified_report_local = attestation::verify_quote(quote_local)
+        .map_err(|_| CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string()))?;
     let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
 
     let extensions = cert
@@ -175,14 +183,17 @@ fn verify_peer_cert(is_client: bool, cert: &[u8]) -> core::result::Result<(), Cr
     let (quote_report, event_log) =
         parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
 
-    if let Ok(report) = attestation::verify_quote(quote_report) {
-        if let Ok(fmspc) = attestation::get_fmspc_from_quote(quote_report) {
-            verify_signature(&cert, report.as_slice())?;
+    if let Ok(verified_report_peer) = attestation::verify_quote(quote_report) {
+        verify_signature(&cert, verified_report_peer.as_slice())?;
 
-            // MigTD-src acts as TLS client
-            return mig_policy::authenticate_policy(is_client, report.as_slice(), event_log, fmspc)
-                .map_err(|_| CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()));
-        }
+        // MigTD-src acts as TLS client
+        return mig_policy::authenticate_policy(
+            is_client,
+            verified_report_local.as_slice(),
+            verified_report_peer.as_slice(),
+            event_log,
+        )
+        .map_err(|_| CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()));
     }
 
     Err(CryptoError::TlsVerifyPeerCert(
@@ -221,7 +232,7 @@ fn parse_extensions<'a>(extensions: &'a Extensions) -> Option<(&'a [u8], &'a [u8
     }
 }
 
-fn verify_signature(cert: &Certificate, td_report: &[u8]) -> CryptoResult<()> {
+fn verify_signature(cert: &Certificate, verified_report: &[u8]) -> CryptoResult<()> {
     let public_key = cert
         .tbs_certificate
         .subject_public_key_info
@@ -234,12 +245,12 @@ fn verify_signature(cert: &Certificate, td_report: &[u8]) -> CryptoResult<()> {
         .as_bytes()
         .ok_or(CryptoError::ParseCertificate)?;
 
-    verify_public_key(td_report, public_key)?;
+    verify_public_key(verified_report, public_key)?;
     ecdsa_verify(public_key, &tbs, signature)
 }
 
-fn verify_public_key(td_report: &[u8], public_key: &[u8]) -> CryptoResult<()> {
-    let report_data = &td_report[128..128 + PUBLIC_KEY_HASH_SIZE];
+fn verify_public_key(verified_report: &[u8], public_key: &[u8]) -> CryptoResult<()> {
+    let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];
     let digest = digest_sha384(public_key)?;
 
     if report_data == digest.as_slice() {

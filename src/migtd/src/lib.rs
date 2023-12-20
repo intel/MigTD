@@ -30,7 +30,7 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     use td_payload::mm::layout::*;
 
     const STACK_SIZE: usize = 0x1_0000;
-    const HEAP_SIZE: usize = 0x10_0000;
+    const HEAP_SIZE: usize = 0x20_0000;
     const PT_SIZE: usize = 0x8_0000;
 
     extern "C" {

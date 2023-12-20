@@ -1,0 +1,365 @@
+{
+    "id": "B87BFE45-9CC7-46F9-8F2C-A6CB55BF7101",
+    "policy": [
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 11
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "10C06F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 11
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[6, 6, 2, 2, 3, 1, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "50806F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 2, 255, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "10A06F010000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 11
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 3, 1, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "B0C06F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 11
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[6, 6, 2, 2, 3, 1, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "A0806F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[2, 2, 2, 2, 2, 255, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "20A06F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[62, 62, 0, 0, 1, 255, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "D0806F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 11
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "80806F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 11
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[6, 6, 2, 2, 3, 1, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "C0806F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 2, 255, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "30A06D050000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "60C06F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 11
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[6, 6, 2, 2, 3, 1, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "00806F050000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 3, 1, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "90C06F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[1, 1, 2, 2, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": "[3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]"
+                    }
+                }
+            },
+            "fmspc": "80C06F000000"
+        },
+        {
+            "QE": {
+                "QeIdentity": {
+                    "MISCSELECT": {
+                        "operation": "equal",
+                        "reference": "00000000"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "11000000000000000000000000000000"
+                    },
+                    "MRSIGNER": {
+                        "operation": "equal",
+                        "reference": "DC9E2A7C6F948F17474E34A7FC43ED030F7C1563F1BABDDF6340C82E0E54A8C5"
+                    },
+                    "ISVPRODID": {
+                        "operation": "equal",
+                        "reference": 2
+                    },
+                    "ISVSVN": {
+                        "operation": "equal",
+                        "reference": 4
+                    }
+                }
+            }
+        },
+        {
+            "TDXModule": {
+                "TDXModule_Identity": {
+                    "TDXModuleMajorVersion": {
+                        "operation": "equal",
+                        "reference": 1
+                    },
+                    "TDXModuleSVN": {
+                        "operation": "equal",
+                        "reference": 0
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
+                    }
+                }
+            }
+        },
+        {
+            "MigTD": {
+                "TDINFO": {
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "XFAM": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MRTD": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MRCONFIGID": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MROWNER": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MROWNERCONFIG": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "RTMR0": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "RTMR1": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "RTMR2": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "RTMR3": {
+                        "operation": "equal",
+                        "reference": "self"
+                    }
+                }
+            }
+        }
+    ]
+}
