@@ -97,12 +97,15 @@ fn fuzz_vsock(paddr: u64, packet: &[u8]) {
 
     let pci_device = pci::PciDevice::new(0, 1, 0);
     let virtio_transport = VirtioPciTransport::new(pci_device);
-    let vsock_transport = VirtioVsock::new(
+    let vsock_transport = if let Ok(vsock_transport) = VirtioVsock::new(
         Box::new(virtio_transport),
         Box::new(Allocator {}),
         Box::new(VsockTimer {}),
-    )
-    .unwrap();
+    ) {
+        vsock_transport
+    } else {
+        return;
+    };
 
     let _ = VsockTransport::get_cid(&vsock_transport);
     let _ = VsockTransport::can_send(&vsock_transport);
