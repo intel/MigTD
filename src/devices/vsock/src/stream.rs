@@ -80,7 +80,7 @@ pub struct VsockStream {
     state: State,
     listen_backlog: u32,
     addr: VsockAddrPair,
-
+    data_queue: VecDeque<Vec<u8>>,
     rx_cnt: u32,
 }
 
@@ -112,6 +112,7 @@ impl VsockStream {
                 },
                 remote: VsockAddr::default(),
             },
+            data_queue: VecDeque::new(),
             rx_cnt: 0,
         })
     }
@@ -188,6 +189,7 @@ impl VsockStream {
                 local: self.addr.local,
                 remote: peer_addr,
             },
+            data_queue: VecDeque::new(),
             rx_cnt: 0,
         };
 
@@ -313,38 +315,61 @@ impl VsockStream {
             return Err(VsockError::Illegal);
         }
 
-        let recv = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .unwrap()
-            .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
-        let packet = Packet::new_checked(recv.as_slice())?;
-
-        if packet.op() == field::OP_SHUTDOWN {
-            self.shutdown()?;
-            return Ok(0);
-        }
-        if packet.op() == field::OP_RST {
-            self.reset()?;
-            return Err(VsockError::Illegal);
-        }
-        if packet.op() != field::OP_RW {
-            return Err(VsockError::Illegal);
-        }
-
-        if packet.data_len() > 0 {
+        if self.data_queue.is_empty() {
             let recv = VSOCK_DEVICE
                 .lock()
                 .get_mut()
                 .unwrap()
                 .transport
                 .dequeue(self, DEFAULT_TIMEOUT)?;
-            self.rx_cnt += packet.data_len();
-            buf[..packet.data_len() as usize].copy_from_slice(&recv[..packet.data_len() as usize]);
+            let packet = Packet::new_checked(recv.as_slice())?;
+
+            if packet.op() == field::OP_SHUTDOWN {
+                self.shutdown()?;
+                return Ok(0);
+            }
+            if packet.op() == field::OP_RST {
+                self.reset()?;
+                return Err(VsockError::Illegal);
+            }
+            if packet.op() != field::OP_RW {
+                return Err(VsockError::Illegal);
+            }
+
+            if packet.data_len() > 0 {
+                let mut recv = VSOCK_DEVICE
+                    .lock()
+                    .get_mut()
+                    .unwrap()
+                    .transport
+                    .dequeue(self, DEFAULT_TIMEOUT)?;
+
+                self.rx_cnt += packet.data_len();
+                if packet.data_len() as usize <= recv.len() {
+                    recv.truncate(packet.data_len() as usize);
+                } else {
+                    return Err(VsockError::Illegal);
+                }
+
+                self.data_queue.push_back(recv);
+            }
         }
 
-        Ok(packet.data_len() as usize)
+        let mut recvd = 0;
+        if !self.data_queue.is_empty() {
+            let head = self.data_queue.front_mut().unwrap();
+            if head.len() <= buf.len() {
+                buf[..head.len()].copy_from_slice(head);
+                recvd = head.len();
+                self.data_queue.pop_front();
+            } else {
+                buf.copy_from_slice(&head[..buf.len()]);
+                recvd = buf.len();
+                head.drain(..buf.len());
+            }
+        }
+
+        Ok(recvd)
     }
 
     fn reset(&mut self) -> Result {
