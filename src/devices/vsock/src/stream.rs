@@ -4,7 +4,7 @@
 
 use crate::protocol::field::{FLAG_SHUTDOWN_READ, FLAG_SHUTDOWN_WRITE, HEADER_LEN};
 use crate::protocol::{field, Packet};
-use crate::{VsockAddr, VsockAddrPair, VsockError, VsockTransport, VSOCK_MAX_PKT_SIZE};
+use crate::{VsockAddr, VsockAddrPair, VsockError, VsockTransport, VSOCK_BUF_ALLOC};
 
 use alloc::{
     boxed::Box, collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec,
@@ -170,7 +170,7 @@ impl VsockStream {
         packet.set_data_len(0);
         packet.set_flags(0);
         packet.set_fwd_cnt(0);
-        packet.set_buf_alloc(VSOCK_MAX_PKT_SIZE as u32);
+        packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
         let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
             self,
@@ -215,7 +215,7 @@ impl VsockStream {
         packet.set_data_len(0);
         packet.set_flags(0);
         packet.set_fwd_cnt(0);
-        packet.set_buf_alloc(VSOCK_MAX_PKT_SIZE as u32);
+        packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
         let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
             self,
@@ -265,7 +265,7 @@ impl VsockStream {
             packet.set_data_len(0);
             packet.set_flags(FLAG_SHUTDOWN_READ | FLAG_SHUTDOWN_WRITE);
             packet.set_fwd_cnt(self.rx_cnt);
-            packet.set_buf_alloc(VSOCK_MAX_PKT_SIZE as u32);
+            packet.set_buf_alloc(VSOCK_BUF_ALLOC);
             let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
                 self,
                 packet.as_ref(),
@@ -296,7 +296,7 @@ impl VsockStream {
         packet.set_data_len(buf.len() as u32);
         packet.set_flags(0);
         packet.set_fwd_cnt(self.rx_cnt);
-        packet.set_buf_alloc(VSOCK_MAX_PKT_SIZE as u32);
+        packet.set_buf_alloc(VSOCK_BUF_ALLOC);
         let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
             self,
             packet.as_ref(),
@@ -368,7 +368,7 @@ impl VsockStream {
                 packet.set_data_len(0);
                 packet.set_flags(0);
                 packet.set_fwd_cnt(self.rx_cnt);
-                packet.set_buf_alloc(VSOCK_MAX_PKT_SIZE as u32);
+                packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
                 let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
                     self,
