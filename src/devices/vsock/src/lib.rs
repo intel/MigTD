@@ -20,7 +20,7 @@ pub(crate) mod virtio_dump;
 use transport::*;
 
 const PAGE_SIZE: usize = 0x1000;
-const VSOCK_MAX_PKT_SIZE: usize = 4 * PAGE_SIZE;
+const VSOCK_BUF_ALLOC: u32 = 0x40000;
 
 #[derive(Debug)]
 pub enum VsockError {
