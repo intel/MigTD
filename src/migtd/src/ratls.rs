@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{string::ToString, vec::Vec};
+use policy::PolicyError;
 use rust_std_stub::io::{Read, Write};
 use tdx_tdcall::TdCallError;
 
@@ -72,7 +73,8 @@ pub const SERVER_AUTH: ObjectIdentifier = ObjectIdentifier::new("1.3.6.1.5.5.7.3
 pub const CLIENT_AUTH: ObjectIdentifier = ObjectIdentifier::new("1.3.6.1.5.5.7.3.2");
 pub const ID_EC_SIG_OID: ObjectIdentifier = ObjectIdentifier::new("1.2.840.10045.4.3.3");
 
-pub const MIG_POLICY_ERROR: &str = "MigPolicyError";
+pub const MIG_POLICY_UNSATISFIED_ERROR: &str = "PolicyUnsatisfiedError";
+pub const INVALID_MIG_POLICY_ERROR: &str = "InvalidPolicyError";
 pub const MUTUAL_ATTESTATION_ERROR: &str = "MutualAttestationError";
 pub const MISMATCH_PUBLIC_KEY: &str = "MismatchPublicKeyError";
 
@@ -193,7 +195,12 @@ fn verify_peer_cert(
             verified_report_peer.as_slice(),
             event_log,
         )
-        .map_err(|_| CryptoError::TlsVerifyPeerCert(MIG_POLICY_ERROR.to_string()));
+        .map_err(|e| match e {
+            PolicyError::InvalidPolicy => {
+                CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string())
+            }
+            _ => CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string()),
+        });
     }
 
     Err(CryptoError::TlsVerifyPeerCert(
