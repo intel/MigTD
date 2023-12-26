@@ -8,8 +8,10 @@ pub mod event;
 pub mod session;
 
 use crate::ratls::RatlsError;
-use crate::ratls::MIG_POLICY_ERROR;
-use crate::ratls::MUTUAL_ATTESTATION_ERROR;
+use crate::ratls::{
+    INVALID_MIG_POLICY_ERROR, MIG_POLICY_UNSATISFIED_ERROR, MUTUAL_ATTESTATION_ERROR,
+};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use crypto::Error as CryptoError;
 use r_efi::efi::Guid;
@@ -137,7 +139,8 @@ pub enum MigrationResult {
     NetworkError = 5,
     SecureSessionError = 6,
     MutualAttestationError = 7,
-    MigPolicyError = 8,
+    PolicyUnsatisfiedError = 8,
+    InvalidPolicyError = 9,
 }
 
 impl From<VsockError> for MigrationResult {
@@ -171,8 +174,10 @@ impl From<CryptoError> for MigrationResult {
     fn from(e: CryptoError) -> Self {
         match e {
             CryptoError::TlsVerifyPeerCert(desc) => {
-                if desc.as_str() == MIG_POLICY_ERROR {
-                    MigrationResult::MigPolicyError
+                if desc.as_str() == MIG_POLICY_UNSATISFIED_ERROR {
+                    MigrationResult::PolicyUnsatisfiedError
+                } else if desc.as_str() == INVALID_MIG_POLICY_ERROR {
+                    MigrationResult::InvalidPolicyError
                 } else if desc.as_str() == MUTUAL_ATTESTATION_ERROR {
                     MigrationResult::MutualAttestationError
                 } else {
@@ -188,15 +193,17 @@ impl From<io::Error> for MigrationResult {
     fn from(e: io::Error) -> Self {
         match e.kind() {
             io::ErrorKind::InvalidData => {
-                // let desc = e.to_string();
+                let desc = e.to_string();
 
-                // if desc.contains(MIG_POLICY_ERROR) {
-                //     MigrationResult::MigPolicyError
-                // } else if desc.contains(MUTUAL_ATTESTATION_ERROR) {
-                //     MigrationResult::MutualAttestationError
-                // } else {
-                MigrationResult::SecureSessionError
-                // }
+                if desc.contains(MIG_POLICY_UNSATISFIED_ERROR) {
+                    MigrationResult::PolicyUnsatisfiedError
+                } else if desc.contains(INVALID_MIG_POLICY_ERROR) {
+                    MigrationResult::InvalidPolicyError
+                } else if desc.contains(MUTUAL_ATTESTATION_ERROR) {
+                    MigrationResult::MutualAttestationError
+                } else {
+                    MigrationResult::SecureSessionError
+                }
             }
             _ => MigrationResult::NetworkError,
         }
