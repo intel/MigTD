@@ -11,6 +11,7 @@ members = [
     "src/policy",
     "tests/test-td-payload",
     "tools/migtd-hash",
+    "tools/migtd-policy-generator",
     "xtask",
     ]
 
