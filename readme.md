@@ -83,7 +83,7 @@ cargo image
 ```
 
 By default, MigTD uses the attestation root certificate at `config/intel_root_sbx.der` and
-migration policy at `config/policy_with_fmspc.json`
+migration policy at `config/policy_production_fmspc.json`
 
 To specify the root certificate to be enrolled, you can use the `--root-ca` argument:
 ```
@@ -94,6 +94,10 @@ Note: SGX SBX Root CA can be downloaded at https://sbx-certificates.trustedservi
 To specify the policy file to be enrolled, you can use the `--policy` argument:
 ```
 cargo image --policy /path/to/policy
+```
+The default policy `config/policy_production_fmspc.json` is used for production platforms. For pre-production platforms, please use pre-production policy:
+```
+cargo image --policy config/policy_pre_production_fmspc.json
 ```
 
 To use virtio-serial instead of virtio-vsock for the guest-host communication:

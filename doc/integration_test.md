@@ -29,7 +29,7 @@ stress_test_cycles = 1
 ## Build & Test
 ### Build Migration TD binary - Vsock
 ```
-cargo image
+cargo image --policy config/policy_pre_production_fmspc.json
 ```
 ### Run Test
 Set stress_test_cycles to 1 in configration file.
@@ -50,7 +50,7 @@ popd
 ```
 ### Build Migration TD binary - Serial
 ```
-cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial
+cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json
 ```
 ### Run Test
 Set stress_test_cycles to 1 in configration file.
