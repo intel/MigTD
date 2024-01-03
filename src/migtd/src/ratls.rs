@@ -5,6 +5,7 @@
 use alloc::{string::ToString, vec::Vec};
 use policy::PolicyError;
 use rust_std_stub::io::{Read, Write};
+use td_payload::println;
 use tdx_tdcall::TdCallError;
 
 use crate::{event_log::get_event_log, mig_policy};
@@ -189,13 +190,19 @@ fn verify_peer_cert(
         verify_signature(&cert, verified_report_peer.as_slice())?;
 
         // MigTD-src acts as TLS client
-        return mig_policy::authenticate_policy(
+        let policy_check_result = mig_policy::authenticate_policy(
             is_client,
             verified_report_local.as_slice(),
             verified_report_peer.as_slice(),
             event_log,
-        )
-        .map_err(|e| match e {
+        );
+
+        if let Err(e) = &policy_check_result {
+            println!("Policy check failed, below is the detail information:");
+            println!("{:x?}", e);
+        }
+
+        return policy_check_result.map_err(|e| match e {
             PolicyError::InvalidPolicy => {
                 CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string())
             }

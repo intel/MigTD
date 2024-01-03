@@ -112,7 +112,7 @@ pub(crate) struct TdInfo {
     pub(crate) event_log: Option<BTreeMap<String, Property>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Property {
     pub(crate) operation: Operation,
     pub(crate) reference: Reference,
@@ -151,7 +151,7 @@ impl Property {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Reference {
     Integer(Integer),
     String(RefString),
@@ -214,7 +214,7 @@ impl<'de> Deserialize<'de> for Reference {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Operation {
     Equal,
     GreaterOrEqual,
@@ -244,7 +244,7 @@ impl<'de> Deserialize<'de> for Operation {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Integer(usize);
 
 impl Integer {
@@ -257,7 +257,7 @@ impl Integer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct RefString(pub(crate) String);
 
 impl RefString {
@@ -269,7 +269,7 @@ impl RefString {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct RefLocal;
 
 impl RefLocal {
@@ -299,7 +299,7 @@ impl RefLocal {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct IntegerRange(ops::Range<usize>);
 
 impl IntegerRange {
@@ -334,7 +334,7 @@ fn parse_range(input: &str) -> Option<ops::Range<usize>> {
     Some(start..end)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Array(Vec<u8>);
 
 impl Array {

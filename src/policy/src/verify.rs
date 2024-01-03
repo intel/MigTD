@@ -15,7 +15,8 @@ use td_shim::event_log::{
 
 use crate::{
     config::{MigPolicy, Property},
-    format_bytes_hex, MigTdInfo, PlatformInfo, PolicyError, QeInfo, TdxModuleInfo,
+    format_bytes_hex, MigTdInfo, PlatformInfo, PolicyError, PolicyErrorDetails, QeInfo,
+    TdxModuleInfo,
 };
 
 const REPORT_DATA_SIZE: usize = 734;
@@ -353,32 +354,33 @@ fn verify_platform_info(
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    let mut verify_result = true;
     let fmspc = peer_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?;
 
     let target_platform = if policy.len() == 1 && policy[0].fmspc.as_str() == "self" {
         &policy[0]
     } else {
+        let peer_fmspc = format_bytes_hex(fmspc);
         policy
             .iter()
-            .find(|p| p.fmspc == format_bytes_hex(fmspc))
-            .ok_or(PolicyError::UnqulifiedPlatformInfo)?
+            .find(|p| p.fmspc == peer_fmspc)
+            .ok_or(PolicyError::PlatformNotFound(peer_fmspc))?
     };
 
-    for (property, action) in &target_platform.platform.tcb_info {
-        let property = PlatformInfoProperty::from(property.as_str());
-        verify_result &= action.verify(
-            is_src,
-            local_report.get_platform_info_property(&property)?,
-            peer_report.get_platform_info_property(&property)?,
-        );
+    for (name, action) in &target_platform.platform.tcb_info {
+        let property = PlatformInfoProperty::from(name.as_str());
+        let local = local_report.get_platform_info_property(&property)?;
+        let remote = peer_report.get_platform_info_property(&property)?;
+
+        let verify_result = action.verify(is_src, local, remote);
+
+        if !verify_result {
+            return Err(PolicyError::UnqulifiedPlatformInfo(
+                PolicyErrorDetails::new(name.clone(), action.clone(), local, remote),
+            ));
+        }
     }
 
-    if verify_result {
-        Ok(())
-    } else {
-        Err(PolicyError::UnqulifiedPlatformInfo)
-    }
+    Ok(())
 }
 
 fn verify_qe_info(
@@ -387,23 +389,24 @@ fn verify_qe_info(
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    let mut verify_result = true;
+    for (name, action) in &policy.qe_identity.qe_identity {
+        let property = QeInfoProperty::from(name.as_str());
+        let local = local_report.get_qe_info_property(&property)?;
+        let remote = peer_report.get_qe_info_property(&property)?;
 
-    for (property, action) in &policy.qe_identity.qe_identity {
-        let property = QeInfoProperty::from(property.as_str());
+        let verify_result = action.verify(is_src, local, remote);
 
-        verify_result &= action.verify(
-            is_src,
-            local_report.get_qe_info_property(&property)?,
-            peer_report.get_qe_info_property(&property)?,
-        );
+        if !verify_result {
+            return Err(PolicyError::UnqulifiedQeInfo(PolicyErrorDetails::new(
+                name.clone(),
+                action.clone(),
+                local,
+                remote,
+            )));
+        }
     }
 
-    if verify_result {
-        Ok(())
-    } else {
-        Err(PolicyError::UnqulifiedQeInfo)
-    }
+    Ok(())
 }
 
 fn verify_tdx_module_info(
@@ -412,22 +415,21 @@ fn verify_tdx_module_info(
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    let mut verify_result = true;
+    for (name, action) in &policy.tdx_module.tdx_module_identity {
+        let property = TdxModuleInfoProperty::from(name.as_str());
+        let local = local_report.get_tdx_module_info_property(&property)?;
+        let remote = peer_report.get_tdx_module_info_property(&property)?;
 
-    for (property, action) in &policy.tdx_module.tdx_module_identity {
-        let property = TdxModuleInfoProperty::from(property.as_str());
-        verify_result &= action.verify(
-            is_src,
-            local_report.get_tdx_module_info_property(&property)?,
-            peer_report.get_tdx_module_info_property(&property)?,
-        );
+        let verify_result = action.verify(is_src, local, remote);
+
+        if !verify_result {
+            return Err(PolicyError::UnqulifiedTdxModuleInfo(
+                PolicyErrorDetails::new(name.clone(), action.clone(), local, remote),
+            ));
+        }
     }
 
-    if verify_result {
-        Ok(())
-    } else {
-        Err(PolicyError::UnqulifiedTdxModuleInfo)
-    }
+    Ok(())
 }
 
 fn verify_migtd_info(
@@ -438,15 +440,21 @@ fn verify_migtd_info(
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    let mut verify_result = true;
+    for (name, action) in &policy.migtd.td_info {
+        let property = MigTdInfoProperty::from(name.as_str());
+        let local = local_report.get_migtd_info_property(&property)?;
+        let remote = peer_report.get_migtd_info_property(&property)?;
 
-    for (property, action) in &policy.migtd.td_info {
-        let property = MigTdInfoProperty::from(property.as_str());
-        verify_result &= action.verify(
-            is_src,
-            local_report.get_migtd_info_property(&property)?,
-            peer_report.get_migtd_info_property(&property)?,
-        );
+        let verify_result = action.verify(is_src, local, remote);
+
+        if !verify_result {
+            return Err(PolicyError::UnqulifiedMigTdInfo(PolicyErrorDetails::new(
+                name.clone(),
+                action.clone(),
+                local,
+                remote,
+            )));
+        }
     }
 
     if let Some(event_log_policy) = &policy.migtd.event_log {
@@ -459,11 +467,7 @@ fn verify_migtd_info(
         )?;
     }
 
-    if verify_result {
-        Ok(())
-    } else {
-        Err(PolicyError::UnqulifiedMigTdInfo)
-    }
+    Ok(())
 }
 
 fn verify_event_log(
@@ -585,23 +589,27 @@ fn verify_events(
     local_event_log: &BTreeMap<EventName, CcEvent>,
     peer_event_log: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
-    let mut verify_result = true;
-
-    for (property, value) in policy {
-        let event_name = property.as_str().into();
+    for (name, value) in policy {
+        let event_name = name.as_str().into();
 
         if event_name == EventName::Unknown {
             return Err(PolicyError::InvalidEventLog);
         }
 
-        verify_result &= verify_event(is_src, &event_name, value, local_event_log, peer_event_log);
+        let verify_result =
+            verify_event(is_src, &event_name, value, local_event_log, peer_event_log);
+
+        if !verify_result {
+            return Err(PolicyError::UnqulifiedMigTdInfo(PolicyErrorDetails::new(
+                name.clone(),
+                value.clone(),
+                &[],
+                &[],
+            )));
+        }
     }
 
-    if verify_result {
-        Ok(())
-    } else {
-        Err(PolicyError::UnqulifiedMigTdInfo)
-    }
+    Ok(())
 }
 
 fn verify_event(
@@ -659,7 +667,7 @@ mod tests {
             &[0u8; REPORT_DATA_SIZE],
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::InvalidParameter));
+        assert!(matches!(verify_result, Err(PolicyError::InvalidParameter)));
 
         let verify_result = verify_policy(
             true,
@@ -669,7 +677,7 @@ mod tests {
             &[0u8; REPORT_DATA_SIZE - 1],
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::InvalidParameter));
+        assert!(matches!(verify_result, Err(PolicyError::InvalidParameter)));
     }
 
     #[test]
@@ -682,7 +690,7 @@ mod tests {
         assert!(verify_result.is_ok());
 
         let mut report_peer = template.to_vec();
-        report_peer[Report::R_FMSPC].copy_from_slice(&[0x30, 0x81, 0x6f, 0, 0, 0]);
+        report_peer[Report::R_FMSPC].copy_from_slice(&[0x30, 0x81, 0x6F, 0, 0, 0]);
 
         let verify_result = verify_policy(
             true,
@@ -692,7 +700,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedPlatformInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::PlatformNotFound(_))
+        ));
 
         // peer's tdx tcb level lower than reference
         let mut report_peer = template.to_vec();
@@ -707,7 +718,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedPlatformInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedPlatformInfo(_))
+        ));
 
         // dst's tdx tcb level is higher than reference
         let high_tdx_tcb = &[0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -752,7 +766,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedPlatformInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedPlatformInfo(_))
+        ));
     }
 
     // Different MRTD value, no MRTD policy in policy data
@@ -792,7 +809,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_ATTR_TD].copy_from_slice(&template[Report::R_ATTR_TD]);
 
         // different xfam, not equal
@@ -806,7 +826,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_XFAM].copy_from_slice(&template[Report::R_XFAM]);
 
         // different mrtd, not equal
@@ -820,7 +843,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_MRTD].copy_from_slice(&[0u8; 48]);
 
         // different mrconfig_id, not equal
@@ -834,7 +860,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_MRCONFIGID].copy_from_slice(&template[Report::R_MRCONFIGID]);
 
         // different mrowner, not equal
@@ -848,7 +877,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_MROWNER].copy_from_slice(&template[Report::R_MROWNER]);
 
         // different mrownerconfig, not equal
@@ -862,7 +894,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_MROWNERCONFIG].copy_from_slice(&template[Report::R_MROWNERCONFIG]);
 
         // different rtmr0, not equal
@@ -876,7 +911,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_RTMR0].copy_from_slice(&template[Report::R_RTMR0]);
 
         // different rtmr1, not equal
@@ -890,7 +928,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_RTMR1].copy_from_slice(&template[Report::R_RTMR1]);
 
         // different rtmr2, not equal
@@ -904,7 +945,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
         report_peer[Report::R_RTMR2].copy_from_slice(&template[Report::R_RTMR2]);
 
         // different rtmr3, not equal
@@ -918,7 +962,10 @@ mod tests {
             &report_peer,
             &[0u8; 8],
         );
-        assert_eq!(verify_result, Err(PolicyError::UnqulifiedMigTdInfo));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo(_))
+        ));
     }
 
     #[test]
@@ -929,7 +976,7 @@ mod tests {
         // Invalid event log
         let verify_result =
             verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
-        assert_eq!(verify_result, Err(PolicyError::InvalidEventLog));
+        assert!(matches!(verify_result, Err(PolicyError::InvalidEventLog)));
 
         let mut evt1 = vec![0u8; 0x1000];
         let payload = [0, 1, 2];
@@ -953,7 +1000,7 @@ mod tests {
             .unwrap();
 
         let verify_result = verify_policy(true, policy_bytes, template, &evt1, template, &evt1);
-        assert_eq!(verify_result, Err(PolicyError::InvalidEventLog));
+        assert!(matches!(verify_result, Err(PolicyError::InvalidEventLog)));
     }
 
     fn create_event_log(
