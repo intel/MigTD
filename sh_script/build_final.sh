@@ -110,7 +110,7 @@ function final_test_td_payload() {
     cargo run -p td-shim-tools --features="enroller" --bin td-shim-enroll \
             target/x86_64-unknown-none/release/final-test.bin \
             -f F10E684E-3ABD-20E4-5932-8F973C355E57 ../../tests/test-td-payload/src/test.json \
-            CA437832-4C51-4322-B13D-A21BD0C8FFF6 ../../config/intel_root_sbx.der \
+            CA437832-4C51-4322-B13D-A21BD0C8FFF6 ../../config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer \
             -o ../../target/release/final-test.bin
     popd
     unset_cc
@@ -290,7 +290,7 @@ function enroll() {
         cargo run -p td-shim-tools --features="enroller" --bin td-shim-enroll \
             ../../target/release/$1 \
             -f 0BE92DC3-6221-4C98-87C1-8EEFFD70DE5A ../../src/policy/test/$2 \
-            CA437832-4C51-4322-B13D-A21BD0C8FFF6 ../../config/intel_root_sbx.der \
+            CA437832-4C51-4322-B13D-A21BD0C8FFF6 ../../config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer \
             -H SHA384 \
             -k data/sample-keys/ecdsa-p384-public.der \
             -o ../../target/release/$3 
@@ -298,7 +298,7 @@ function enroll() {
         cargo run -p td-shim-tools --features="enroller" --bin td-shim-enroll \
             ../../target/release/$1 \
             -f 0BE92DC3-6221-4C98-87C1-8EEFFD70DE5A ../../src/policy/test/$2 \
-            CA437832-4C51-4322-B13D-A21BD0C8FFF6 ../../config/intel_root_sbx.der \
+            CA437832-4C51-4322-B13D-A21BD0C8FFF6 ../../config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer \
             -o ../../target/release/$3
     fi
     

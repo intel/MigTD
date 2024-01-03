@@ -21,7 +21,8 @@ lazy_static! {
     static ref SHIM_FOLDER: PathBuf = PROJECT_ROOT.join("deps/td-shim");
     static ref DEFAULT_OUTPUT: PathBuf = PROJECT_ROOT.join("target");
     static ref DEFAULT_POLICY: PathBuf = PROJECT_ROOT.join("config/policy_production_fmspc.json");
-    static ref DEFAULT_CA: PathBuf = PROJECT_ROOT.join("config/intel_root_sbx.der");
+    static ref DEFAULT_CA: PathBuf =
+        PROJECT_ROOT.join("config/Intel_SGX_Provisioning_Certification_RootCA.cer");
     static ref DEFAULT_METADATA: PathBuf = PROJECT_ROOT.join("config/metadata.json");
     static ref DEFAULT_SHIM_LAYOUT: PathBuf = PROJECT_ROOT.join("config/shim_layout.json");
     static ref DEFAULT_IMAGE_LAYOUT: PathBuf = PROJECT_ROOT.join("config/image_layout.json");
