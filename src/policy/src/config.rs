@@ -338,19 +338,14 @@ fn parse_range(input: &str) -> Option<ops::Range<usize>> {
 pub(crate) struct Array(Vec<u8>);
 
 impl Array {
-    fn verify(&self, is_src: bool, op: &Operation, _local: &[u8], peer: &[u8]) -> bool {
+    fn verify(&self, _is_src: bool, op: &Operation, _local: &[u8], peer: &[u8]) -> bool {
         if peer.len() != self.0.len() {
             return false;
         }
 
         match op {
             Operation::ArrayEqual => self.0.as_slice() == peer,
-            Operation::ArrayGreaterOrEqual => {
-                self.0
-                    .iter()
-                    .zip(peer.iter())
-                    .all(|(r, p)| if is_src { p >= r } else { r >= p })
-            }
+            Operation::ArrayGreaterOrEqual => self.0.iter().zip(peer.iter()).all(|(r, p)| p >= r),
             _ => false,
         }
     }
