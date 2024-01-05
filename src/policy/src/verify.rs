@@ -354,20 +354,21 @@ fn verify_platform_info(
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    let local_fmspc = local_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?;
-    let peer_fmspc = peer_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?;
+    let local_fmspc =
+        format_bytes_hex(local_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?);
+    let peer_fmspc =
+        format_bytes_hex(peer_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?);
 
     let target_platform = if policy.len() == 1 && policy[0].fmspc.as_str() == "self" {
         if local_fmspc != peer_fmspc {
-            return Err(PolicyError::PlatformNotMatch(format_bytes_hex(peer_fmspc)));
+            return Err(PolicyError::PlatformNotMatch(local_fmspc, peer_fmspc));
         }
         &policy[0]
     } else {
-        let peer_fmspc = format_bytes_hex(peer_fmspc);
         policy
             .iter()
             .find(|p| p.fmspc == peer_fmspc)
-            .ok_or(PolicyError::PlatformNotFound(peer_fmspc))?
+            .ok_or(PolicyError::PlatformNotFound(peer_fmspc.clone()))?
     };
 
     for (name, action) in &target_platform.platform.tcb_info {
@@ -379,7 +380,14 @@ fn verify_platform_info(
 
         if !verify_result {
             return Err(PolicyError::UnqulifiedPlatformInfo(
-                PolicyErrorDetails::new(name.clone(), action.clone(), local, remote),
+                PolicyErrorDetails::new(
+                    name.clone(),
+                    action.clone(),
+                    Some(local_fmspc),
+                    Some(peer_fmspc),
+                    local,
+                    remote,
+                ),
             ));
         }
     }
@@ -404,6 +412,8 @@ fn verify_qe_info(
             return Err(PolicyError::UnqulifiedQeInfo(PolicyErrorDetails::new(
                 name.clone(),
                 action.clone(),
+                None,
+                None,
                 local,
                 remote,
             )));
@@ -428,7 +438,7 @@ fn verify_tdx_module_info(
 
         if !verify_result {
             return Err(PolicyError::UnqulifiedTdxModuleInfo(
-                PolicyErrorDetails::new(name.clone(), action.clone(), local, remote),
+                PolicyErrorDetails::new(name.clone(), action.clone(), None, None, local, remote),
             ));
         }
     }
@@ -455,6 +465,8 @@ fn verify_migtd_info(
             return Err(PolicyError::UnqulifiedMigTdInfo(PolicyErrorDetails::new(
                 name.clone(),
                 action.clone(),
+                None,
+                None,
                 local,
                 remote,
             )));
@@ -607,6 +619,8 @@ fn verify_events(
             return Err(PolicyError::UnqulifiedMigTdInfo(PolicyErrorDetails::new(
                 name.clone(),
                 value.clone(),
+                None,
+                None,
                 &[],
                 &[],
             )));
