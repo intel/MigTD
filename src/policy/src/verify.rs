@@ -354,12 +354,16 @@ fn verify_platform_info(
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    let fmspc = peer_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?;
+    let local_fmspc = local_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?;
+    let peer_fmspc = peer_report.get_platform_info_property(&PlatformInfoProperty::Fmspc)?;
 
     let target_platform = if policy.len() == 1 && policy[0].fmspc.as_str() == "self" {
+        if local_fmspc != peer_fmspc {
+            return Err(PolicyError::PlatformNotMatch(format_bytes_hex(peer_fmspc)));
+        }
         &policy[0]
     } else {
-        let peer_fmspc = format_bytes_hex(fmspc);
+        let peer_fmspc = format_bytes_hex(peer_fmspc);
         policy
             .iter()
             .find(|p| p.fmspc == peer_fmspc)
