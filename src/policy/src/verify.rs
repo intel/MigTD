@@ -702,6 +702,29 @@ mod tests {
     fn test_verify_with_platform_info_comp() {
         let template = include_bytes!("../test/report.dat");
 
+        // Take `self` as reference
+        let policy_bytes = include_bytes!("../test/policy_001.json");
+        let verify_result =
+            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        assert!(verify_result.is_ok());
+
+        // Only same platform is allowed
+        let mut report_peer = template.to_vec();
+        report_peer[Report::R_FMSPC].copy_from_slice(&[0x20, 0xC0, 0x6F, 0, 0, 0]);
+
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::PlatformNotMatch(_, _))
+        ));
+
         let policy_bytes = include_bytes!("../test/policy_full1.json");
         let verify_result =
             verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
