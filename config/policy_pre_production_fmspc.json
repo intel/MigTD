@@ -10,11 +10,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [33, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -29,11 +63,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -48,11 +116,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -67,11 +169,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            2,
+                            2,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            3,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -86,11 +222,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -105,11 +275,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -124,11 +328,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -143,11 +381,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -162,11 +434,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -181,11 +487,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -200,11 +540,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -219,11 +593,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -238,11 +646,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -257,11 +699,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -276,11 +752,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -295,11 +805,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -314,11 +858,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -333,11 +911,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -352,11 +964,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -371,11 +1017,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -390,11 +1070,45 @@
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
-                        "reference": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
                     }
                 }
             },
@@ -403,17 +1117,9 @@
         {
             "QE": {
                 "QeIdentity": {
-                    "MISCSELECT": {
-                        "operation": "equal",
-                        "reference": "00000000"
-                    },
                     "ATTRIBUTES": {
                         "operation": "equal",
                         "reference": "11000000000000000000000000000000"
-                    },
-                    "MRSIGNER": {
-                        "operation": "equal",
-                        "reference": "DC9E2A7C6F948F17474E34A7FC43ED030F7C1563F1BABDDF6340C82E0E54A8C5"
                     },
                     "ISVPRODID": {
                         "operation": "equal",
@@ -422,6 +1128,14 @@
                     "ISVSVN": {
                         "operation": "equal",
                         "reference": 0
+                    },
+                    "MISCSELECT": {
+                        "operation": "equal",
+                        "reference": "00000000"
+                    },
+                    "MRSIGNER": {
+                        "operation": "equal",
+                        "reference": "DC9E2A7C6F948F17474E34A7FC43ED030F7C1563F1BABDDF6340C82E0E54A8C5"
                     }
                 }
             }
@@ -429,6 +1143,14 @@
         {
             "TDXModule": {
                 "TDXModule_Identity": {
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
                     "TDXModuleMajorVersion": {
                         "operation": "equal",
                         "reference": 1
@@ -436,30 +1158,24 @@
                     "TDXModuleSVN": {
                         "operation": "equal",
                         "reference": 0
-                    },
-                    "MRSIGNERSEAM": {
-                        "operation": "equal",
-                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-                    },
-                    "ATTRIBUTES": {
-                        "operation": "equal",
-                        "reference": "0000000000000000"
                     }
                 }
             }
         },
         {
             "MigTD": {
+                "EventLog": {
+                    "Digest.MigTdPolicy": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "Digest.MigTdSgxRootKey": {
+                        "operation": "equal",
+                        "reference": "self"
+                    }
+                },
                 "TDINFO": {
                     "ATTRIBUTES": {
-                        "operation": "equal",
-                        "reference": "self"
-                    },
-                    "XFAM": {
-                        "operation": "equal",
-                        "reference": "self"
-                    },
-                    "MRTD": {
                         "operation": "equal",
                         "reference": "self"
                     },
@@ -472,6 +1188,10 @@
                         "reference": "self"
                     },
                     "MROWNERCONFIG": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "MRTD": {
                         "operation": "equal",
                         "reference": "self"
                     },
@@ -488,6 +1208,10 @@
                         "reference": "self"
                     },
                     "RTMR3": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "XFAM": {
                         "operation": "equal",
                         "reference": "self"
                     }
