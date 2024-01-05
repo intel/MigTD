@@ -13,27 +13,44 @@ use crate::{
     qe_identity::get_qe_identity,
 };
 
+const PRODUCTION_POLICY_GUID: &str = "F65CD566-4D67-45EF-88E3-79963901B292";
+const PRE_PRODUCTION_POLICY_GUID: &str = "B87BFE45-9CC7-46F9-8F2C-A6CB55BF7101";
+
 pub fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
     let platform_tcb = get_platform_info(for_production)?;
     let qe_identity = get_qe_identity(for_production)?;
     let migtd = MigTdInfoPolicy::default();
     let tdx_module = TdxModulePolicy::new(for_production);
 
-    let mut policy: Vec<PolicyTypes> = platform_tcb
-        .into_iter()
-        .map(|p| PolicyTypes::Platform(p))
-        .collect();
-    policy.push(PolicyTypes::Qe(qe_identity));
-    policy.push(PolicyTypes::TdxModule(tdx_module));
-    policy.push(PolicyTypes::Migtd(migtd));
+    let mut mig_policy = MigPolicy {
+        id: if for_production {
+            PRODUCTION_POLICY_GUID.to_string()
+        } else {
+            PRE_PRODUCTION_POLICY_GUID.to_string()
+        },
+        policy: platform_tcb
+            .into_iter()
+            .map(|p| PolicyTypes::Platform(p))
+            .collect(),
+    };
+
+    mig_policy.policy.push(PolicyTypes::Qe(qe_identity));
+    mig_policy.policy.push(PolicyTypes::TdxModule(tdx_module));
+    mig_policy.policy.push(PolicyTypes::Migtd(migtd));
 
     let mut data = Vec::new();
     let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
     let mut ser = serde_json::Serializer::with_formatter(&mut data, formatter);
-    let obj = json!(policy);
+    let obj = json!(mig_policy);
     obj.serialize(&mut ser).unwrap();
 
     Ok(data)
+}
+
+#[derive(Debug, Serialize)]
+pub struct MigPolicy {
+    id: String,
+    policy: Vec<PolicyTypes>,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,7 +183,7 @@ pub struct QeIdentity {
 
 #[derive(Debug, Default, Serialize)]
 pub struct MigTdInfoPolicy {
-    #[serde(rename = "MIGTD")]
+    #[serde(rename = "MigTD")]
     migtd: TdInfo,
 }
 
