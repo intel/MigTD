@@ -20,6 +20,7 @@ pub enum PolicyError {
     InvalidPolicy,
     InvalidEventLog,
     PlatformNotFound(String),
+    PlatformNotMatch(String),
     UnqulifiedPlatformInfo(PolicyErrorDetails),
     UnqulifiedQeInfo(PolicyErrorDetails),
     UnqulifiedTdxModuleInfo(PolicyErrorDetails),
