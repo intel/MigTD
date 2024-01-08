@@ -7,6 +7,8 @@ use rust_std_stub::io::{self, Read, Write};
 
 use crate::{Result, VirtioSerialError, SERIAL_DEVICE};
 
+const DEFAULT_TIMEOUT: u64 = 8000;
+
 pub struct VirtioSerialPort {
     port_id: u32,
     cache: VecDeque<Vec<u8>>,
@@ -57,7 +59,7 @@ impl VirtioSerialPort {
             .lock()
             .get_mut()
             .ok_or(VirtioSerialError::InvalidParameter)?
-            .enqueue(data, self.port_id, 0x8_0000)
+            .enqueue(data, self.port_id, DEFAULT_TIMEOUT)
     }
 
     pub fn recv(&mut self, data: &mut [u8]) -> Result<usize> {
@@ -66,7 +68,7 @@ impl VirtioSerialPort {
                 .lock()
                 .get_mut()
                 .ok_or(VirtioSerialError::InvalidParameter)?
-                .dequeue(self.port_id, 10000)?;
+                .dequeue(self.port_id, DEFAULT_TIMEOUT)?;
             self.cache.push_back(recv_bytes);
         }
 
