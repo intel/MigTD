@@ -81,6 +81,7 @@ impl VirtioSerialPort {
             } else {
                 data[recvd..].copy_from_slice(&front[..expect]);
                 front.drain(..expect);
+                recvd = expect;
             }
         }
 
