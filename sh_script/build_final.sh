@@ -197,6 +197,22 @@ function final_test_migtd() {
     enroll "migtd_src_sb14.bin" "policy_006.json" "migtd_src_014.bin"
     enroll "migtd_dst_sb14.bin" "policy_006.json" "migtd_dst_014.bin"
 
+    echo "-- Build final binary for test case 015 of migration TD"
+    # Test operation "array-equal", sgxtcbcomponents is no equal with reference
+    enroll "migtd_sb1.bin" "policy_007.json" "migtd_015.bin"
+
+    echo "-- Build final binary for test case 016 of migration TD"
+    # Test operation "array-greater-or-equal", sgxtcbcomponents is smaller than reference
+    enroll "migtd_sb1.bin" "policy_008.json" "migtd_016.bin"
+
+    echo "-- Build final binary for test case 017 of migration TD"
+    # Test polciy content is not correct, "fmspcx" shall be "fmspc"
+    enroll "migtd_sb1.bin" "policy_009.json" "migtd_017.bin"
+
+    echo "-- Build final binary for test case 018 of migration TD"
+    # Test polciy file does not contain actual platforms' fmspc
+    enroll "migtd_sb1.bin" "policy_010.json" "migtd_018.bin"
+
     cleanup
     build_migtd
     build_tdshim

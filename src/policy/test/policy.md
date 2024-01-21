@@ -9,3 +9,7 @@
 | [policy_004.json](./policy_004.json) | Test secure boot, check svn whether in 13...                                                                  |
 | [policy_005.json](./policy_005.json) | Invalid json                                                                                                  |
 | [policy_006.json](./policy_006.json) | Test operator 'greater or equal' with Digest.MigTdCoreSvn                                                     |
+| [policy_007.json](./policy_007.json) | Test operator 'array-equal' with sgxtcbcomponents, not equal                                                  |
+| [policy_008.json](./policy_008.json) | Test operator 'array-greater-or-equal' with sgxtcbcomponents, smaller than refernce                           |
+| [policy_009.json](./policy_009.json) | Invalid section name "fmspcx", correct name is "fmspc"                                                        |
+| [policy_010.json](./policy_010.json) | Actual "fmspc" is no in policy fmspc list                                                                     |
