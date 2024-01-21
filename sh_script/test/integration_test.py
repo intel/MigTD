@@ -298,6 +298,86 @@ def test_negative_014(device_type):
         
         ctx.terminate_all_tds()
         ctx.terminate_socat()
+        
+"""
+Migration Policy Check:
+Test operation "array-equal", sgxtcbcomponents is no equal with reference
+""" 
+def test_negative_015(device_type):
+    migtd_src = "../../Bin/migtd_015.bin"
+    migtd_dst = "../../Bin/migtd_015.bin"
+    
+    with migtd_context() as ctx:
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_user_td(type="src")
+        ctx.start_user_td(type="dst")
+        ctx.connect()
+        ctx.pre_migration()
+        ctx.check_migration_result(negative=True)
+        
+        ctx.terminate_all_tds()
+        ctx.terminate_socat()
+
+"""
+Migration Policy Check:
+Test operation "array-greater-or-equal", sgxtcbcomponents is smaller than reference
+""" 
+def test_negative_016(device_type):
+    migtd_src = "../../Bin/migtd_016.bin"
+    migtd_dst = "../../Bin/migtd_016.bin"
+    
+    with migtd_context() as ctx:
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_user_td(type="src")
+        ctx.start_user_td(type="dst")
+        ctx.connect()
+        ctx.pre_migration()
+        ctx.check_migration_result(negative=True)
+        
+        ctx.terminate_all_tds()
+        ctx.terminate_socat()
+
+"""
+Migration Policy Check:
+# Test polciy content is not correct, "fmspcx" shall be "fmspc"
+""" 
+def test_negative_017(device_type):
+    migtd_src = "../../Bin/migtd_017.bin"
+    migtd_dst = "../../Bin/migtd_017.bin"
+    
+    with migtd_context() as ctx:
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_user_td(type="src")
+        ctx.start_user_td(type="dst")
+        ctx.connect()
+        ctx.pre_migration()
+        ctx.check_migration_result(negative=True)
+        
+        ctx.terminate_all_tds()
+        ctx.terminate_socat()
+
+"""
+Migration Policy Check:
+# Test polciy file does not contain actual platforms' fmspc
+""" 
+def test_negative_018(device_type):
+    migtd_src = "../../Bin/migtd_018.bin"
+    migtd_dst = "../../Bin/migtd_018.bin"
+    
+    with migtd_context() as ctx:
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_user_td(type="src")
+        ctx.start_user_td(type="dst")
+        ctx.connect()
+        ctx.pre_migration()
+        ctx.check_migration_result(negative=True)
+        
+        ctx.terminate_all_tds()
+        ctx.terminate_socat()
 
 """
 Test TD payload:
@@ -306,7 +386,7 @@ Test TD payload:
 - Quote Sevice Query
 - Quote Attestation
 """ 
-def test_function_015(device_type):
+def test_function_000(device_type):
     test_bin = "../../Bin/final-test.bin"
     
     with migtd_context() as ctx:
