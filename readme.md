@@ -121,8 +121,7 @@ cargo image --no-default-features --features remote-attestation,stack-guard,virt
 ### Generate SERVTD_INFO_HASH
 
 `SERVTD_HASH_INFO` can be calculated based on a given MigTD image and a TD configuration such as
-TD attributes, XFAM etc. An example configuration can be found in `config/servtd_info.json`. If a
-field is masked by VMM, then it should be set to zero in the configuration file.
+TD attributes, XFAM etc. An example configuration can be found in `config/servtd_info.json`.
 
 To generate the SERVTD_HASH_INFO of a MigTD binary with a default TD configuration at `config/servtd_info.json`:
 ```
@@ -136,6 +135,10 @@ cargo hash --image /path/to/migtd.bin --servtd-info /path/to/servtd_info.json
 
 The hash value in string will be ouput to `stdout`. You can also output the binary by specifing
 output file through `-o`.
+
+To use the hash generated above, bits 42:32 of `SERVTD_ATTR` (defined in [TDX Module ABI Specification](https://cdrdv2.intel.com/v1/dl/getContent/733579))
+shall be set to 0. For example, when launching a user TD with QEMU, `migtd-attr=0x0000000000000001`
+or `migtd-attr=0x0000000000000000` shall be set by `-object` subcommand.
 
 ## How to run
 
@@ -287,6 +290,84 @@ Ask migtd-src to start pre-migration:
 ```
 echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
 ```
+
+### MigTD binding and pre-binding
+
+Migration TD binding (using TDH.SERVTD.BIND) must happen before a migration session can start. This may happen 
+during TD build, before the measurement has been finalized (by TDH.MR.FINALIZE). Alternatively, pre-binding (using 
+TDH.SERVTD.PREBIND) can be done during TD build, and actual binding can happen later.
+
+Process ID of MigTD is used to bind a MigTD to a user TD during launch time (taking source user TD as example):
+
+```
+QEMU=/path/to/qemu-system-x86_64
+GUEST_KERNEL=bzImage
+IMAGE=QEMU=/path/to/guest-image
+TDVF=OVMF.fd
+qmp_sock_src="/tmp/qmp-sock-src"
+TARGET_PID=$(pgrep migtd-src)
+
+$QEMU -accel kvm \
+-cpu host,host-phys-bits,pmu=off \
+-smp 1 \
+-m 1G \
+-object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${TARGET_PID} \
+-object memory-backend-memfd-private,id=ram1,size=1G \
+-machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
+-bios ${TDVF} \
+-chardev stdio,id=mux,mux=on \
+-device virtio-serial,romfile= \
+-device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux \
+-drive file=$IMAGE,if=virtio,id=virtio-disk0,format=qcow2 \
+-kernel $GUEST_KERNEL \
+-append "root=/dev/vda1 rw console=hvc0 earlyprintk console=ttyS0,115200" \
+-name process=lm_src,debug-threads=on \
+-no-hpet -nodefaults \
+-monitor unix:$qmp_sock_src,server,nowait \
+-nographic -vga none \
+```
+
+MigTD SERVTD_INFO_HASH introduced in [Generate SERVTD_INFO_HASH](#Generate-SERVTD_INFO_HASH) can be used for pre-binding (taking source user TD as example):
+
+```
+QEMU=/path/to/qemu-system-x86_64
+GUEST_KERNEL=bzImage
+IMAGE=QEMU=/path/to/guest-image
+TDVF=OVMF.fd
+qmp_sock_src="/tmp/qmp-sock-src"
+TARGET_HASH="HASH_STRING"
+MIGTD_ATTR=0x0000000000000001
+
+$QEMU -accel kvm \
+-cpu host,host-phys-bits,pmu=off \
+-smp 1 \
+-m 1G \
+-object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-hash=${TARGET_HASH},migtd-attr=${MIGTD_ATTR} \
+-object memory-backend-memfd-private,id=ram1,size=1G \
+-machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
+-bios ${TDVF} \
+-chardev stdio,id=mux,mux=on \
+-device virtio-serial,romfile= \
+-device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux \
+-drive file=$IMAGE,if=virtio,id=virtio-disk0,format=qcow2 \
+-kernel $GUEST_KERNEL \
+-append "root=/dev/vda1 rw console=hvc0 earlyprintk console=ttyS0,115200" \
+-name process=lm_src,debug-threads=on \
+-no-hpet -nodefaults \
+-monitor unix:$qmp_sock_src,server,nowait \
+-nographic -vga none \
+```
+
+For pre-binding, process id of MigTD should be set for actual binding before triggering pre-migration:
+
+```
+# set source MigTD PID:
+echo "qom-set /objects/tdx0/ migtd-pid $(pgrep migtd-src)" | nc -U /tmp/qmp-sock-src
+
+# set destination MigTD PID:
+echo "qom-set /objects/tdx0/ migtd-pid $(pgrep migtd-dst)" | nc -U /tmp/qmp-sock-dst
+```
+
 
 ## Reproducible Build
 
