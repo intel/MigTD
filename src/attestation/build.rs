@@ -23,9 +23,27 @@ fn main() {
     let _ = env::var("AR").ok().map(|_| env::remove_var("AR"));
 
     let crate_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let lib_path = crate_path.display().to_string();
+    let lib_path = crate_path
+        .join("../../deps/linux-sgx")
+        .display()
+        .to_string();
 
-    let search_dir = format!("{}", &lib_path);
+    // make servtd_attest_preparation
+    Command::new("make")
+        .args(&["-C", &lib_path, "servtd_attest_preparation"])
+        .status()
+        .expect("failed to run make servtd_attest_preparation for attestation library!");
+
+    // make servtd_attest
+    Command::new("make")
+        .args(&["-C", &lib_path, "servtd_attest"])
+        .status()
+        .expect("failed to run make servtd_attest for attestation library!");
+
+    let search_dir = format!(
+        "{}/external/dcap_source/QuoteGeneration/quote_wrapper/servtd_attest/linux",
+        &lib_path
+    );
 
     println!("cargo:rustc-link-search=native={}", search_dir);
     println!("cargo:rustc-link-lib=static=servtd_attest");
