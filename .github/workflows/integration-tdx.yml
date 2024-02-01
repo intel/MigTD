@@ -47,11 +47,17 @@ jobs:
 
       - name: Build Migration TD binary
         run: cargo image --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
-
+      
       - name: Run Tests - Test Migration TD 20 Cycles
         run: |
           pushd sh_script/test
           sudo pytest -k "cycle"
+          popd
+      
+      - name: Run Tests - Test pre-binding
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "pre_binding" --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin)
           popd
       
       - name: Build all test binaries
@@ -82,11 +88,17 @@ jobs:
 
       - name: Build Migration TD binary
         run: cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
-
+      
       - name: Run Tests - Test Migration TD 20 Cycles
         run: |
           pushd sh_script/test
           sudo pytest -k "cycle" --device_type serial
+          popd
+      
+      - name: Run Tests - Test pre-binding
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "pre_binding" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin)
           popd
       
       - name: Build all test binaries

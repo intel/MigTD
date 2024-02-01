@@ -393,6 +393,25 @@ def test_function_000(device_type):
         ctx.start_test_payload(bios_img=test_bin, type="src", device=device_type)
         ctx.terminate_all_tds()
 
+def test_pre_binding(device_type, servtd_hash):
+    migtd_src = "../../target/release/migtd.bin"
+    migtd_dst = "../../target/release/migtd.bin"
+    
+    with migtd_context() as ctx:
+        ctx.start_user_td(type="src", is_pre_binding=True, hash=servtd_hash)
+        ctx.start_user_td(type="dst", is_pre_binding=True, hash=servtd_hash)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.connect()
+
+        ctx.pre_migration(is_pre_binding=True)
+        ctx.check_migration_result()
+        ctx.terminate_user_td(type="src")
+        ctx.terminate_user_td(type="dst")
+        
+        ctx.terminate_mig_td()
+        ctx.terminate_socat()
+
 def test_cycle(device_type):
     migtd_src = "../../target/release/migtd.bin"
     migtd_dst = "../../target/release/migtd.bin"
