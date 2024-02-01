@@ -18,6 +18,8 @@ QUOTE_TYPE=""
 GUEST_CID=3
 TELNET_PORT=9088
 INCOMING_PORT=6666
+PRE_BINDING="false"
+SERVTD_HASH=""
 
 
 usage() {
@@ -32,12 +34,14 @@ Usage: $(basename "$0") [OPTION]...
   -q [tdvmcall|vsock]       Support for TD quote using tdvmcall or vsock
   -r <root partition>       root partition for direct boot, default is /dev/vda1
   -t <src|dst>              Must set userTD type, src or dst
+  -g [true|false]           Use pre-binding or not, default is "false"
+  -m [MigTD hash]           Hash of MigTD SERVTD_INFO_HASH, shall be provided if "-g" is true
   -h                        Show this help
 EOM
 }
 
 process_args() {
-    while getopts "i:k:b:o:p:q:r:t:h" option; do
+    while getopts "i:k:b:o:p:q:r:t:g:m:h" option; do
         case "${option}" in
             i) GUEST_IMG=$OPTARG;;
             k) KERNEL=$OPTARG;;
@@ -48,6 +52,8 @@ process_args() {
             a) QUOTE_TYPE=$OPTARG;;
             r) ROOT_PARTITION=$OPTARG;;
             t) TD_TYPE=$OPTARG;;
+            g) PRE_BINDING=$OPTARG;;
+            m) SERVTD_HASH=$OPTARG;;
             h) usage
                exit 0
                ;;
@@ -68,12 +74,16 @@ process_args() {
         "src")
             GUEST_CID=3
             TELNET_PORT=9088
-            TARGET_PID=$(pgrep migtd-src)
+            if [[ ${PRE_BINDING} != "true" ]]; then
+                TARGET_PID=$(pgrep migtd-src)
+            fi
             ;;
         "dst")
             GUEST_CID=4
             TELNET_PORT=9089
-            TARGET_PID=$(pgrep migtd-dst)
+            if [[ ${PRE_BINDING} != "true" ]]; then
+                TARGET_PID=$(pgrep migtd-dst)
+            fi
             ;;
         *)
             error "Invalid ${TD_TYPE}, must be [src|dst]"
@@ -142,16 +152,24 @@ QEMU_CMD="${QEMU_EXEC} \
 -monitor telnet:127.0.0.1:${TELNET_PORT},server,nowait \
 -device virtio-serial,romfile= \
 -device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux"
+OBJ_SUBCOMMAND=" -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off"
+
+    if [[ ${PRE_BINDING} == "true" ]]; then
+        OBJ_SUBCOMMAND+=",migtd-hash=${SERVTD_HASH},migtd-attr=0x0000000000000001"
+    else
+        OBJ_SUBCOMMAND+=",migtd-pid=${TARGET_PID}"
+    fi
 
     if [[ -n ${QUOTE_TYPE} ]]; then
         if [[ ${QUOTE_TYPE} == "tdvmcall" ]]; then
-		    QEMU_CMD+=" -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${TARGET_PID},quote-generation-service=vsock:2:4050"
+            OBJ_SUBCOMMAND+=",quote-generation-service=vsock:2:4050"
+		    QEMU_CMD+=${OBJ_SUBCOMMAND}
         else
-		    QEMU_CMD+=" -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${TARGET_PID}"
+		    QEMU_CMD+=${OBJ_SUBCOMMAND}
             QEMU_CMD+=" -device vhost-vsock-pci,guest-cid=${GUEST_CID}"
         fi
     else
-		QEMU_CMD+=" -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off,migtd-pid=${TARGET_PID}"
+		QEMU_CMD+=${OBJ_SUBCOMMAND}
     fi
 
     if [[ ${BOOT_TYPE} == "direct" ]]; then

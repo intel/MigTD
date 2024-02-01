@@ -18,10 +18,15 @@ LOG = logging.getLogger(__name__)
 
 def pytest_addoption(parser):
     parser.addoption("--device_type", action="store", default="vsock", help="Device type vsock/serial")
+    parser.addoption("--servtd_hash", action="store", default="", help="SERVTD_INFO_HASH of MigTD image")
 
 @pytest.fixture()
 def device_type(request):
     return request.config.getoption("--device_type")
+
+@pytest.fixture()
+def servtd_hash(request):
+    return request.config.getoption("--servtd_hash")
 
 @contextmanager
 def migtd_context():
@@ -43,6 +48,7 @@ class MigtdTest:
     def __init__(self):
         # variable from the config file
         self.qemu: str = None
+        self.migtd_hash_script: str = None
         self.mig_td_script: str = None
         self.user_td_script: str = None
         self.connect_script: str = None
@@ -150,14 +156,16 @@ class MigtdTest:
         time.sleep(1)
         
     # type has src dst
-    def start_user_td(self, type=None):
+    def start_user_td(self, is_pre_binding=False, type=None, hash=None):
+        command = f"sudo bash {self.user_td_script} -q {self.qemu} -i {self.guest_img} -k {self.kernel_img} -o {self.user_td_bios_img} -t {type}"
+        if is_pre_binding:
+            command += f" -g true -m {hash}"
         """
         Start user td
         """
         thread_usertd = threading.Thread(
             target=self._exec_shell_cmd,
-            args=(f"sudo bash {self.user_td_script} -q {self.qemu} -i {self.guest_img} -k {self.kernel_img} -o {self.user_td_bios_img} -t {type}",
-                  f"user_td_{type}")
+            args=(command, f"user_td_{type}")
         )
         
         LOG.debug(f"Starting {type} user td")
@@ -180,12 +188,15 @@ class MigtdTest:
         self._threads["connect"] = thread_connect
         time.sleep(5)
     
-    def pre_migration(self):
+    def pre_migration(self, is_pre_binding=False):
         """
         Execute pre migration
         """
         LOG.debug(f"Start pre migration")
-        self._exec_shell_cmd(f"sudo bash {self.pre_mig_script}")
+        command = f"sudo bash {self.pre_mig_script}"
+        if is_pre_binding:
+            command += " -p true"
+        self._exec_shell_cmd(command)
     
     def check_migration_result(self, negative=False, wait_time=2):
         """

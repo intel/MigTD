@@ -217,20 +217,20 @@ function final_test_migtd() {
     build_migtd
     build_tdshim
     strip_info
-    link "migtd" "migtd.bin"
-    enroll "migtd.bin" "policy_no.json" "migtd_no.bin"
+    link "migtd" "migtd_test.bin"
+    enroll "migtd_test.bin" "policy_no.json" "migtd_no.bin"
 
     echo "-- Build final binary for test case 007 of migration TD"
     # Different policy file and check "Digest.MigTdPolicy"
-    enroll "migtd.bin" "policy_003.json" "migtd_007.bin"
+    enroll "migtd_test.bin" "policy_003.json" "migtd_007.bin"
     
     echo "-- Build final binary for test case 008 of migration TD"
     # Invalid json
-    enroll "migtd.bin" "policy_005.json" "migtd_008.bin"
+    enroll "migtd_test.bin" "policy_005.json" "migtd_008.bin"
     
     echo "-- Build final binary for test case 009 of migration TD"
     # Test without vsock deveice init
-    enroll "migtd.bin" "policy_no.json" "migtd_009.bin"
+    enroll "migtd_test.bin" "policy_no.json" "migtd_009.bin"
 }
 
 function final_migtd() {
