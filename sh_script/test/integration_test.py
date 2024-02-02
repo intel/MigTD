@@ -71,7 +71,7 @@ def test_function_002(device_type):
 Migration Policy Check:
 RTMR1 of src and dst are not equal and RTMR1 is in policy file
 """
-def test_negative_003(device_type):
+def test_function_negative_003(device_type):
     migtd_src = "../../Bin/migtd_003.bin"
     migtd_dst = "../../Bin/migtd_001.bin"
     
@@ -131,7 +131,7 @@ def test_function_005(device_type):
 Migration Policy Check:
 Secure boot and svn(18) out of range(13..18)
 """
-def test_negative_006(device_type):
+def test_function_negative_006(device_type):
     migtd_src = "../../Bin/migtd_006.bin"
     migtd_dst = "../../Bin/migtd_006.bin"
     
@@ -151,7 +151,7 @@ def test_negative_006(device_type):
 Migration Policy Check:
 Different policy file and check "Digest.MigTdPolicy"
 """       
-def test_negative_007(device_type):
+def test_function_negative_007(device_type):
     migtd_src = "../../Bin/migtd_007.bin"
     migtd_dst = "../../Bin/migtd_no.bin"
     
@@ -171,7 +171,7 @@ def test_negative_007(device_type):
 Migration Policy Check:
 Invalid json
 """   
-def test_negative_008(device_type):
+def test_function_negative_008(device_type):
     migtd_src = "../../Bin/migtd_008.bin"
     migtd_dst = "../../Bin/migtd_no.bin"
     
@@ -191,7 +191,7 @@ def test_negative_008(device_type):
 Migration Policy Check:
 Test without vsock device init
 """   
-def test_negative_009(device_type):
+def test_function_negative_009(device_type):
     migtd_src = "../../Bin/migtd_009.bin"
     migtd_dst = "../../Bin/migtd_009.bin"
     
@@ -283,7 +283,7 @@ def test_function_013(device_type):
 Migration Policy Check:
 Secure boot and dst svn(1) smaller than src svn(2)
 """ 
-def test_negative_014(device_type):
+def test_function_negative_014(device_type):
     migtd_src = "../../Bin/migtd_src_014.bin"
     migtd_dst = "../../Bin/migtd_dst_014.bin"
     
@@ -303,7 +303,7 @@ def test_negative_014(device_type):
 Migration Policy Check:
 Test operation "array-equal", sgxtcbcomponents is no equal with reference
 """ 
-def test_negative_015(device_type):
+def test_function_negative_015(device_type):
     migtd_src = "../../Bin/migtd_015.bin"
     migtd_dst = "../../Bin/migtd_015.bin"
     
@@ -323,7 +323,7 @@ def test_negative_015(device_type):
 Migration Policy Check:
 Test operation "array-greater-or-equal", sgxtcbcomponents is smaller than reference
 """ 
-def test_negative_016(device_type):
+def test_function_negative_016(device_type):
     migtd_src = "../../Bin/migtd_016.bin"
     migtd_dst = "../../Bin/migtd_016.bin"
     
@@ -343,7 +343,7 @@ def test_negative_016(device_type):
 Migration Policy Check:
 # Test polciy content is not correct, "fmspcx" shall be "fmspc"
 """ 
-def test_negative_017(device_type):
+def test_function_negative_017(device_type):
     migtd_src = "../../Bin/migtd_017.bin"
     migtd_dst = "../../Bin/migtd_017.bin"
     
@@ -363,7 +363,7 @@ def test_negative_017(device_type):
 Migration Policy Check:
 # Test polciy file does not contain actual platforms' fmspc
 """ 
-def test_negative_018(device_type):
+def test_function_negative_018(device_type):
     migtd_src = "../../Bin/migtd_018.bin"
     migtd_dst = "../../Bin/migtd_018.bin"
     
