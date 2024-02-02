@@ -60,7 +60,7 @@ jobs:
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "not cycle"
+          sudo pytest -k "function"
           popd
 
   virtio_serial:
@@ -95,7 +95,7 @@ jobs:
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "not cycle" --device_type serial
+          sudo pytest -k "function" --device_type serial
           popd
       
       
