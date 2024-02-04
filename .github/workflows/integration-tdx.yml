@@ -90,7 +90,7 @@ jobs:
         run: bash sh_script/preparation.sh
 
       - name: Build Migration TD binary
-        run: cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests - Test Migration TD 20 Cycles
         run: |

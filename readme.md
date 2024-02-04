@@ -115,7 +115,7 @@ The pre-production attestation policy is:
 
 To use virtio-serial instead of virtio-vsock for the guest-host communication:
 ```
-cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial
+cargo image --no-default-features --features stack-guard,virtio-serial
 ```
 
 ### Generate SERVTD_INFO_HASH

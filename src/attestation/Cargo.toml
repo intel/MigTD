@@ -14,6 +14,5 @@ tdx-tdcall = { path = "../../deps/td-shim/tdx-tdcall"}
 td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
 
 [features]
-default = ["remote-attestation"]
-remote-attestation = []
+default = []
 test = []
