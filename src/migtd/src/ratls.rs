@@ -156,7 +156,14 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
     let td_report = tdx_tdcall::tdreport::tdcall_report(&additional_data)?;
 
-    attestation::get_quote(td_report.as_bytes()).map_err(|_| RatlsError::GetQuote)
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
+    {
+        attestation::get_quote(td_report.as_bytes()).map_err(|_| RatlsError::GetQuote)
+    }
+
+    // Only for test purpose to bypass the remote attestation
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    Ok(td_report.as_bytes().to_vec())
 }
 
 fn verify_server_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), CryptoError> {
@@ -185,6 +192,7 @@ fn verify_peer_cert(
     let (quote_report, event_log) =
         parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
 
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     if let Ok(verified_report_peer) = attestation::verify_quote(quote_report) {
         verify_signature(&cert, verified_report_peer.as_slice())?;
 
@@ -207,11 +215,15 @@ fn verify_peer_cert(
             }
             _ => CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string()),
         });
+    } else {
+        Err(CryptoError::TlsVerifyPeerCert(
+            MUTUAL_ATTESTATION_ERROR.to_string(),
+        ))
     }
 
-    Err(CryptoError::TlsVerifyPeerCert(
-        MUTUAL_ATTESTATION_ERROR.to_string(),
-    ))
+    // Only for test to bypass the quote verification
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    Ok(())
 }
 
 fn parse_extensions<'a>(extensions: &'a Extensions) -> Option<(&'a [u8], &'a [u8])> {
