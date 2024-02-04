@@ -42,6 +42,11 @@ function proccess_args() {
 
     MIGTD_FEATURE="main,stack-guard"
 
+    if [[ ${attestation} != "on" ]];
+    then
+        MIGTD_FEATURE+=",test_disable_ra_and_accept_all"
+    fi
+
     case "${device}" in
         vmcall) MIGTD_FEATURE+=",vmcall-vsock";;
         serial) MIGTD_FEATURE+=",virtio-serial";;

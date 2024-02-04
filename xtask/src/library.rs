@@ -32,6 +32,15 @@ impl LibraryCrates {
                 cmd!(sh, "cargo test")
                     .args(["-p", name.as_str(), "--features", "test"])
                     .run()?;
+            } else if name.as_str() == "migtd" {
+                cmd!(sh, "cargo test")
+                    .args([
+                        "-p",
+                        name.as_str(),
+                        "--features",
+                        "test_disable_ra_and_accept_all",
+                    ])
+                    .run()?;
             } else {
                 cmd!(sh, "cargo test").args(["-p", name.as_str()]).run()?;
             }

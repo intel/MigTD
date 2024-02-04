@@ -54,3 +54,4 @@ vmcall-vsock = ["vsock/vmcall-vsock"]
 tdx = ["td-logger/tdx"]
 test_heap_size = ["td-benchmark", "td-payload/test_heap_size"]
 test_stack_size = ["td-benchmark"]
+test_disable_ra_and_accept_all = ["attestation/test"] # Dangerous: can only be used for test purpose to bypass the remote attestation
