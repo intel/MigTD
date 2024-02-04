@@ -7,21 +7,16 @@
 
 extern crate alloc;
 
-#[cfg(all(feature = "remote-attestation", not(test)))]
+#[cfg(not(test))]
 mod ghci;
 
-#[cfg(all(feature = "remote-attestation", not(test)))]
+#[cfg(not(test))]
 mod binding;
 
-#[cfg(all(feature = "remote-attestation", not(test)))]
+#[cfg(not(test))]
 mod attest;
-#[cfg(all(feature = "remote-attestation", not(test)))]
+#[cfg(not(test))]
 pub use attest::*;
-
-#[cfg(any(not(feature = "remote-attestation"), test))]
-mod null;
-#[cfg(any(not(feature = "remote-attestation"), test))]
-pub use null::*;
 
 pub mod root_ca;
 

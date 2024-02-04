@@ -41,10 +41,6 @@ function proccess_args() {
     fi
 
     MIGTD_FEATURE="main,stack-guard"
-    if [[ ${attestation} == "on" ]];
-    then
-        MIGTD_FEATURE+=",remote-attestation"
-    fi
 
     case "${device}" in
         vmcall) MIGTD_FEATURE+=",vmcall-vsock";;

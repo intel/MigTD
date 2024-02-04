@@ -21,7 +21,7 @@ td-layout = { path = "../../deps/td-shim/td-layout" }
 td-paging = { path = "../../deps/td-shim/td-paging"}
 td-shim = { path = "../../deps/td-shim/td-shim" }
 td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
-migtd = { path = "../../src/migtd", features = ["remote-attestation", "virtio-vsock"] }
+migtd = { path = "../../src/migtd", features = ["virtio-vsock"] }
 pci = { path = "../../src/devices/pci" }
 tdx-tdcall = { path = "../../deps/td-shim/tdx-tdcall" , optional = true }
 scroll = { version = "0.10.0", default-features = false, features = ["derive"]}

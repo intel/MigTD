@@ -50,7 +50,7 @@ popd
 ```
 ### Build Migration TD binary - Serial
 ```
-cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+cargo image --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 ```
 ### Run Test
 Set stress_test_cycles to 1 in configration file.
