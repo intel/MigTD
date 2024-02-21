@@ -18,6 +18,7 @@ use crate::ratls;
 const TDCS_FIELD_MIG_DEC_KEY: u64 = 0x9810_0003_0000_0010;
 const TDCS_FIELD_MIG_ENC_KEY: u64 = 0x9810_0003_0000_0018;
 const MSK_SIZE: usize = 32;
+const GHCI_PAGE_SIZE: usize = 4096;
 
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
@@ -89,7 +90,8 @@ impl MigrationSession {
         #[cfg(not(feature = "vmcall-interrupt"))]
         tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-        let private_mem = Self::copy_from_shared_memory(rsp_mem.as_bytes());
+        let mut private_mem = [0u8; GHCI_PAGE_SIZE];
+        private_mem.copy_from_slice(rsp_mem.as_bytes());
 
         // Parse the response data
         // Check the GUID of the reponse
@@ -148,7 +150,8 @@ impl MigrationSession {
                     #[cfg(not(feature = "vmcall-interrupt"))]
                     tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-                    let private_mem = Self::copy_from_shared_memory(rsp_mem.as_bytes());
+                    let mut private_mem = [0u8; GHCI_PAGE_SIZE];
+                    private_mem.copy_from_slice(rsp_mem.as_bytes());
 
                     // Parse out the response data
                     let rsp = VmcallServiceResponse::try_read(private_mem.as_bytes())
@@ -255,7 +258,8 @@ impl MigrationSession {
 
         tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-        let private_mem = Self::copy_from_shared_memory(rsp_mem.as_bytes());
+        let mut private_mem = [0u8; GHCI_PAGE_SIZE];
+        private_mem.copy_from_slice(rsp_mem.as_bytes());
 
         // Parse the response data
         // Check the GUID of the reponse
@@ -393,11 +397,5 @@ impl MigrationSession {
         };
 
         Some(mig_info)
-    }
-
-    fn copy_from_shared_memory(shared: &[u8]) -> Vec<u8> {
-        let mut private = Vec::new();
-        private.extend_from_slice(shared);
-        private
     }
 }
