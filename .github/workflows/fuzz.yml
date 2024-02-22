@@ -13,7 +13,7 @@ env:
   AS: nasm
   AR_x86_64_unknown_none: llvm-ar
   CC_x86_64_unknown_none: clang
-  RUST_TOOLCHAIN: nightly-2023-08-28
+  RUST_TOOLCHAIN: nightly-2023-12-31
   TOOLCHAIN_PROFILE: minimal
   AFL_NO_AFFINITY: 1
 
@@ -32,7 +32,7 @@ jobs:
           submodules: recursive
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly-2023-08-28
+          toolchain: nightly-2023-12-31
           profile: minimal
           override: true
           components: rust-src, llvm-tools-preview
