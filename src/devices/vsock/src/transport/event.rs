@@ -5,7 +5,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 pub use td_payload::arch::apic::*;
 use td_payload::arch::idt::register;
-pub use td_payload::{eoi, interrupt_handler_template};
+pub use td_payload::interrupt_handler_template;
 
 use crate::VsockTimeout;
 
