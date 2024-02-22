@@ -24,8 +24,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 * Install toolchain and components required by MigTD:
 ```
-rustup toolchain install nightly-2023-08-28
-rustup component add --toolchain nightly-2023-08-28 rust-src
+rustup toolchain install nightly-2023-12-31
+rustup component add --toolchain nightly-2023-12-31 rust-src
 cargo install cargo-xbuild
 ```
 
