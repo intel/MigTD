@@ -5,7 +5,7 @@
 use core::convert::TryInto;
 use core::{mem::size_of, slice::from_raw_parts, slice::from_raw_parts_mut};
 use r_efi::efi::Guid;
-use zerocopy::{AsBytes, FromBytes};
+use zerocopy::{AsBytes, FromBytes, FromZeroes};
 
 use super::MigrationResult;
 
@@ -148,7 +148,7 @@ impl<'a> VmcallServiceResponse<'a> {
 }
 
 #[repr(packed)]
-#[derive(Debug, FromBytes, AsBytes)]
+#[derive(Debug, FromZeroes, FromBytes, AsBytes)]
 pub struct ServiceQueryResponse {
     pub version: u8,
     pub command: u8,
@@ -158,7 +158,7 @@ pub struct ServiceQueryResponse {
 }
 
 #[repr(packed)]
-#[derive(FromBytes, AsBytes)]
+#[derive(FromZeroes, FromBytes, AsBytes)]
 pub struct ServiceMigWaitForReqResponse {
     pub version: u8,
     pub command: u8,
@@ -167,7 +167,7 @@ pub struct ServiceMigWaitForReqResponse {
 }
 
 #[repr(packed)]
-#[derive(FromBytes, AsBytes)]
+#[derive(FromZeroes, FromBytes, AsBytes)]
 pub struct ServiceMigWaitForReqShutdown {
     pub version: u8,
     pub command: u8,
@@ -175,7 +175,7 @@ pub struct ServiceMigWaitForReqShutdown {
 }
 
 #[repr(packed)]
-#[derive(FromBytes, AsBytes)]
+#[derive(FromZeroes, FromBytes, AsBytes)]
 pub struct ServiceMigReportStatusResponse {
     pub version: u8,
     pub command: u8,
