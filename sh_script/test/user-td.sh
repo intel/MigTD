@@ -140,7 +140,6 @@ QEMU_CMD="${QEMU_EXEC} \
 -cpu host,pmu=off,-kvm-steal-time,-shstk,tsc-freq=1000000000 \
 -smp 2,threads=1,sockets=1 \
 -m 8G \
--object memory-backend-memfd-private,id=ram1,size=8G \
 -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
 -bios ${OVMF} \
 -chardev stdio,id=mux,mux=on,logfile=lm-${TD_TYPE}.log \
@@ -153,6 +152,13 @@ QEMU_CMD="${QEMU_EXEC} \
 -device virtio-serial,romfile= \
 -device virtconsole,chardev=mux -serial chardev:mux -monitor chardev:mux"
 OBJ_SUBCOMMAND=" -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off"
+
+    QEMU_VERSION=`${QEMU_EXEC} --version | grep -oP 'version \K[^\s]+'`
+    if [ "$(printf '%s\n' "8.0.0" "${QEMU_VERSION}" | sort -V | head -n1)" == "8.0.0" ]; then
+        QEMU_CMD+=" -object memory-backend-ram,id=ram1,size=8G,private=on "
+    else
+        QEMU_CMD+=" -object memory-backend-memfd-private,id=ram1,size=8G "
+    fi
 
     if [[ ${PRE_BINDING} == "true" ]]; then
         OBJ_SUBCOMMAND+=",migtd-hash=${SERVTD_HASH},migtd-attr=0x0000000000000001"

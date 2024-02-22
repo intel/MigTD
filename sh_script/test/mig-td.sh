@@ -75,7 +75,6 @@ QEMU_CMD="${QEMU_EXEC} \
 -smp 1,threads=1,sockets=1 \
 -m 32M \
 -object tdx-guest,id=tdx0,sept-ve-disable=off,debug=off,quote-generation-service=vsock:1:4050 \
--object memory-backend-memfd-private,id=ram1,size=32M \
 -machine q35,memory-backend=ram1,confidential-guest-support=tdx0,kernel_irqchip=split \
 -bios ${MIGTD} \
 -name migtd-${MIGTD_TYPE},process=migtd-${MIGTD_TYPE},debug-threads=on \
@@ -83,6 +82,14 @@ QEMU_CMD="${QEMU_EXEC} \
 -nographic -vga none -nic none \
 -serial mon:stdio \
 -pidfile /var/run/migtd-${MIGTD_TYPE}.pid"
+
+    QEMU_VERSION=`${QEMU_EXEC} --version | grep -oP 'version \K[^\s]+'`
+    if [ "$(printf '%s\n' "8.0.0" "${QEMU_VERSION}" | sort -V | head -n1)" == "8.0.0" ]; then
+        QEMU_CMD+=" -object memory-backend-ram,id=ram1,size=32M,private=on "
+    else
+        QEMU_CMD+=" -object memory-backend-memfd-private,id=ram1,size=32M "
+    fi
+
     if [[ $NO_DEVICE != true ]]; then
         if [[ ${VIRTIO_SERIAL} == true ]]; then
             QEMU_CMD+=" -device virtio-serial-pci,id=virtio-serial0 "
