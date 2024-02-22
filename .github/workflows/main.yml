@@ -56,11 +56,8 @@ jobs:
       - name: Preparation Work
         run: bash sh_script/preparation.sh
 
-      - name: Build Migtd Final Binary
-        run: bash sh_script/build_final.sh -t migtd -c -a on
+      - name: Build MigTD binary with a default production migration policy(virtio-vsock)
+        run: cargo image
 
-      - name: Build Migtd Final Binary Using Vmcall-Vsock
-        run: bash sh_script/build_final.sh -t migtd -d vmcall -c -a on
-
-      - name: Build Migtd Final Binary Using virtio-serial
-        run: bash sh_script/build_final.sh -t migtd -d serial -c -a on
+      - name: Build MigTD binary with a default production migration policy(virtio-serial)
+        run: cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial
