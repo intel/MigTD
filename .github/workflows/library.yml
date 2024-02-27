@@ -16,6 +16,9 @@ env:
   NIGHTLY_RUST_TOOLCHAIN: nightly-2023-12-31
   TOOLCHAIN_PROFILE: minimal
 
+permissions:
+  contents: read
+
 jobs:
   lib-test:
     name: Build Library Crates

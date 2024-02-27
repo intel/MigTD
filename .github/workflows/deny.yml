@@ -1,5 +1,9 @@
 name: cargo-deny
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
 jobs:
   cargo-deny:
     runs-on: ubuntu-20.04
