@@ -14,6 +14,9 @@ env:
   RUST_TOOLCHAIN: nightly-2023-12-31
   TOOLCHAIN_PROFILE: minimal
 
+permissions:
+  contents: read
+
 jobs:
   virtio_vsock:
     name: Run TDX Integration Test (virtio-vsock)
@@ -33,12 +36,17 @@ jobs:
 
       # - name: Install tools for sgx lib
       #   run:  sudo dnf group install 'Development Tools' | sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgcon
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit
+
       - name: Clean test repository
         run: |
           sudo rm -rf sh_script/test/
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with: 
           submodules: recursive
       
@@ -74,12 +82,17 @@ jobs:
     runs-on: [self-hosted, tdx]
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.7.0
+        with:
+          egress-policy: audit
+
       - name: Clean test repository
         run: |
           sudo rm -rf sh_script/test/
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with: 
           submodules: recursive
       
