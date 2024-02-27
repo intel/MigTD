@@ -25,26 +25,26 @@ jobs:
     steps:
       # Install first since it's needed to build NASM
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v1
+        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e # v1
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
 
       - name: install NASM
-        uses: ilammy/setup-nasm@v1
+        uses: ilammy/setup-nasm@13cbeb366c45c4379d3478cdcbadd8295feb5028 # v1.5.1
 
       - name: Install tools for sgx lib
         run:  sudo apt-get install build-essential ocaml ocamlbuild automake autoconf libtool wget python-is-python3 libssl-dev git cmake perl
 
       - name: Install nightly toolchain
-        uses: actions-rs/toolchain@v1
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
         with:
           profile: ${{ env.TOOLCHAIN_PROFILE }}
           toolchain: ${{ env.NIGHTLY_RUST_TOOLCHAIN }}
           override: true
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with:
           submodules: recursive
 

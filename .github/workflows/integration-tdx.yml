@@ -14,6 +14,9 @@ env:
   RUST_TOOLCHAIN: nightly-2023-12-31
   TOOLCHAIN_PROFILE: minimal
 
+permissions:
+  contents: read
+
 jobs:
   virtio_vsock:
     name: Run TDX Integration Test (virtio-vsock)
@@ -38,7 +41,7 @@ jobs:
           sudo rm -rf sh_script/test/
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with: 
           submodules: recursive
       
@@ -79,7 +82,7 @@ jobs:
           sudo rm -rf sh_script/test/
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
         with: 
           submodules: recursive
       
