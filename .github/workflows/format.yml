@@ -7,6 +7,9 @@ env:
   AR: llvm-ar
   CC: clang
 
+permissions:
+  contents: read
+
 jobs:
   clippy:
     name: Clippy
