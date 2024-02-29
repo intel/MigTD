@@ -7,7 +7,7 @@
 #![feature(alloc_error_handler)]
 #![feature(naked_functions)]
 
-#[macro_use]
+#[cfg_attr(feature = "main", macro_use)]
 extern crate alloc;
 
 pub mod config;
