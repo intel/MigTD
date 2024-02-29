@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 crypto = { path = "../../src/crypto" }
-migtd = { path = "../../src/migtd" }
+migtd = { path = "../../src/migtd", default-features = false }
 serde_json = "1.0"
 td-shim-tools = { path = "../../deps/td-shim/td-shim-tools", default-feature = false, features = ["tee"] }
 td-uefi-pi = { path = "../../deps/td-shim/td-uefi-pi" }

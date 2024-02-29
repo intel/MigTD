@@ -232,6 +232,7 @@ impl MigrationSession {
         }
     }
 
+    #[cfg(feature = "main")]
     pub fn op(&mut self) -> Result<()> {
         match &self.state {
             MigrationState::Operate(operation) => match operation {
@@ -317,6 +318,7 @@ impl MigrationSession {
         Ok(())
     }
 
+    #[cfg(feature = "main")]
     fn migrate(info: &MigrationInformation) -> Result<()> {
         let mut msk = MigrationSessionKey::new();
 

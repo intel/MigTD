@@ -4,7 +4,6 @@
 
 pub mod data;
 pub mod event;
-// #[cfg(any(target_os = "none", target_os = "uefi"))]
 pub mod session;
 
 use crate::ratls::RatlsError;
