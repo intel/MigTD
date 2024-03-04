@@ -329,6 +329,59 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            1,
+                            255,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            3,
+                            0,
+                            2,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    }
+                }
+            },
+            "fmspc": "40A06F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
                             62,
                             62,
                             0,
@@ -490,12 +543,12 @@
                         "reference": [
                             1,
                             1,
-                            2,
-                            2,
-                            2,
+                            0,
+                            0,
+                            1,
                             255,
                             0,
-                            3,
+                            0,
                             0,
                             0,
                             0,
@@ -509,7 +562,7 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            0,
+                            3,
                             0,
                             1,
                             0,
