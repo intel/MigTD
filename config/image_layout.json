@@ -1,10 +1,10 @@
 {
-    "Config": "0x040000",
+    "Config": "0x020000",
     "Mailbox": "0x001000",
-    "TempStack": "0x020000",
-    "TempHeap": "0x020000",
+    "TempStack": "0x010000",
+    "TempHeap": "0x010000",
     "Metadata": "0x001000",
-    "Payload": "0xD76000",
-    "Ipl": "0x200000",
+    "Payload": "0xF56000",
+    "Ipl": "0x60000",
     "ResetVector": "0x008000"
 }
