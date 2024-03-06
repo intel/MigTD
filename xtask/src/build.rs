@@ -126,13 +126,10 @@ impl BuildArgs {
 
         let sh = Shell::new()?;
         sh.change_dir(SHIM_FOLDER.as_path());
-        cmd!(sh, "cargo xbuild -p td-shim --target x86_64-unknown-none --features=main,tdx --no-default-features")
-            .args(["--profile", self.profile()])
+        cmd!(sh, "cargo xbuild -p td-shim --target x86_64-unknown-none --features=main,tdx --no-default-features --release")
 			.run()?;
 
-        let shim_output = SHIM_FOLDER
-            .join("target/x86_64-unknown-none/")
-            .join(&self.profile_path());
+        let shim_output = SHIM_FOLDER.join("target/x86_64-unknown-none/release");
 
         Ok((
             shim_output.join("ResetVector.bin"),
