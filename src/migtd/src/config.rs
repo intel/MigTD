@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use r_efi::efi::Guid;
+use td_layout::build_time::{TD_SHIM_CONFIG_BASE, TD_SHIM_CONFIG_SIZE};
 use td_uefi_pi::{fv, pi};
 
-pub const CONFIG_VOLUME_BASE: usize = 0xFF000000;
-pub const CONFIG_VOLUME_SIZE: usize = 0x40000;
+pub const CONFIG_VOLUME_BASE: usize = TD_SHIM_CONFIG_BASE as usize;
+pub const CONFIG_VOLUME_SIZE: usize = TD_SHIM_CONFIG_SIZE as usize;
 
 pub const MIGTD_POLICY_FFS_GUID: Guid = Guid::from_fields(
     0x0BE92DC3,
