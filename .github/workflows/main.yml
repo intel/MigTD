@@ -18,8 +18,8 @@ permissions:
   contents: read
 
 jobs:
-  build_migtd:
-    name: Build final migtd
+  build_migtd_release:
+    name: Build final migtd - release
     runs-on: ubuntu-20.04
     timeout-minutes: 45
 
@@ -64,3 +64,50 @@ jobs:
 
       - name: Build MigTD binary with a default production migration policy(virtio-serial)
         run: cargo image --no-default-features --features remote-attestation,stack-guard,virtio-serial
+
+  build_migtd_debug:
+    name: Build final migtd - debug
+    runs-on: ubuntu-20.04
+    timeout-minutes: 45
+
+    steps:
+      # Install first since it's needed to build NASM
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e # v1
+        with:
+          version: "10.0"
+          directory: ${{ runner.temp }}/llvm
+
+      - name: Install NASM
+        uses: ilammy/setup-nasm@13cbeb366c45c4379d3478cdcbadd8295feb5028 # v1.5.1
+
+      - name: Install tools for sgx lib
+        run:  sudo apt-get install build-essential ocaml ocamlbuild automake autoconf libtool wget python-is-python3 libssl-dev git cmake perl
+
+      - name: Checkout sources
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          submodules: recursive
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
+        with:
+          profile: ${{ env.TOOLCHAIN_PROFILE }}
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          override: true
+          components: rust-src
+
+      - name: Run cargo install cargo-xbuild
+        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
+        with:
+          command: install
+          args: cargo-xbuild
+        
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+
+      - name: Build MigTD binary with a default production migration policy(virtio-vsock)
+        run: cargo image --debug
+
+      - name: Build MigTD binary with a default production migration policy(virtio-serial)
+        run: cargo image --debug --no-default-features --features remote-attestation,stack-guard,virtio-serial
