@@ -64,11 +64,51 @@ pub(crate) struct BuildArgs {
     /// Path of the configuration file for td-shim image layout
     #[clap(long)]
     image_layout: Option<PathBuf>,
+    /// Log level control in migtd, default value is `off` for release and `info` for debug
+    #[clap(short, long)]
+    log_level: Option<LogLevel>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum Platform {
     Kvm,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum LogLevel {
+    Off,
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    // Log levels can be statically set at compile time via Cargo features and they are
+    // configured separately for release and debug build.
+    // This function is used to output feature for `migtd` crate to control its log level.
+    fn debug_feature(&self) -> &str {
+        match self {
+            LogLevel::Off => "log/max_level_off",
+            LogLevel::Error => "log/max_level_error",
+            LogLevel::Warn => "log/max_level_warn",
+            LogLevel::Info => "log/max_level_info",
+            LogLevel::Debug => "log/max_level_debug",
+            LogLevel::Trace => "log/max_level_trace",
+        }
+    }
+
+    fn relase_feature(&self) -> &str {
+        match self {
+            LogLevel::Off => "log/release_max_level_off",
+            LogLevel::Error => "log/release_max_level_error",
+            LogLevel::Warn => "log/release_max_level_warn",
+            LogLevel::Info => "log/release_max_level_info",
+            LogLevel::Debug => "log/release_max_level_debug",
+            LogLevel::Trace => "log/release_max_level_trace",
+        }
+    }
 }
 
 impl BuildArgs {
@@ -223,6 +263,13 @@ impl BuildArgs {
         if let Some(selected) = &self.features {
             features.push_str(",");
             features.push_str(selected);
+        }
+
+        features.push_str(",");
+        if self.debug {
+            features.push_str(self.log_level.unwrap_or(LogLevel::Info).debug_feature());
+        } else {
+            features.push_str(self.log_level.unwrap_or(LogLevel::Off).relase_feature());
         }
 
         features
