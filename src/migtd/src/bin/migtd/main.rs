@@ -7,9 +7,9 @@
 
 extern crate alloc;
 
+use log::info;
 use migtd::migration::{session::MigrationSession, MigrationResult};
 use migtd::{config, event_log, migration};
-use td_payload::println;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -45,7 +45,7 @@ pub fn runtime_main() {
 }
 
 fn basic_info() {
-    println!("MigTD Version - {}", MIGTD_VERSION);
+    info!("MigTD Version - {}", MIGTD_VERSION);
 }
 
 fn get_policy_and_measure(event_log: &mut [u8]) {
@@ -74,7 +74,7 @@ fn handle_pre_mig() {
         panic!("Migration is not supported by VMM");
     }
     // Loop to wait for request
-    println!("Loop to wait for request");
+    info!("Loop to wait for request");
     loop {
         let mut session = MigrationSession::new();
         if session.wait_for_request().is_ok() {
@@ -103,7 +103,7 @@ fn handle_pre_mig() {
                 let coverage_len = minicov::get_coverage_data_size();
                 assert!(coverage_len < MAX_COVERAGE_DATA_PAGE_COUNT * td_paging::PAGE_SIZE);
                 minicov::capture_coverage_to_buffer(&mut buffer[0..coverage_len]);
-                println!(
+                td_payload::println!(
                     "coverage addr: {:x}, coverage len: {}",
                     buffer.as_ptr() as u64,
                     coverage_len
@@ -129,11 +129,11 @@ fn test_memory() {
     #[cfg(feature = "test_stack_size")]
     {
         let value = td_benchmark::StackProfiling::stack_usage().unwrap();
-        println!("max stack usage: {}", value);
+        td_payload::println!("max stack usage: {}", value);
     }
     #[cfg(feature = "test_heap_size")]
     {
         let value = td_benchmark::HeapProfiling::heap_usage().unwrap();
-        println!("max heap usage: {}", value);
+        td_payload::println!("max heap usage: {}", value);
     }
 }

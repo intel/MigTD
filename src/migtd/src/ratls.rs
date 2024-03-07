@@ -2,13 +2,8 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{string::ToString, vec::Vec};
-use policy::PolicyError;
-use rust_std_stub::io::{Read, Write};
-use td_payload::println;
-use tdx_tdcall::TdCallError;
-
 use crate::{event_log::get_event_log, mig_policy};
+use alloc::{string::ToString, vec::Vec};
 use crypto::{
     ecdsa::{ecdsa_verify, EcdsaPk},
     hash::digest_sha384,
@@ -19,6 +14,10 @@ use crypto::{
     },
     Error as CryptoError, Result as CryptoResult,
 };
+use log::error;
+use policy::PolicyError;
+use rust_std_stub::io::{Read, Write};
+use tdx_tdcall::TdCallError;
 
 type Result<T> = core::result::Result<T, RatlsError>;
 
@@ -198,8 +197,8 @@ fn verify_peer_cert(
         );
 
         if let Err(e) = &policy_check_result {
-            println!("Policy check failed, below is the detail information:");
-            println!("{:x?}", e);
+            error!("Policy check failed, below is the detail information:");
+            error!("{:x?}", e);
         }
 
         return policy_check_result.map_err(|e| match e {
