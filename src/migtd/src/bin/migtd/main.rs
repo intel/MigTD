@@ -15,6 +15,8 @@ const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
+#[cfg(feature = "test_disable_ra_and_accept_all")]
+const TAGGED_EVENT_ID_TEST: u32 = 0x32;
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -34,10 +36,15 @@ pub fn runtime_main() {
     // Get the event log recorded by firmware
     let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
 
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    measure_test_feature(event_log);
+
     // Get migration td policy from CFV and measure it into RMTR
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     get_policy_and_measure(event_log);
 
     // Get root certificate from CFV and measure it into RMTR
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     get_ca_and_measure(event_log);
 
     // Handle the migration request from VMM
@@ -46,6 +53,17 @@ pub fn runtime_main() {
 
 fn basic_info() {
     info!("MigTD Version - {}", MIGTD_VERSION);
+}
+
+#[cfg(feature = "test_disable_ra_and_accept_all")]
+fn measure_test_feature(event_log: &mut [u8]) {
+    // Measure and extend the migtd test feature to RTMR
+    event_log::write_tagged_event_log(
+        event_log,
+        TAGGED_EVENT_ID_TEST,
+        "test_disable_ra_and_accept_all",
+    )
+    .expect("Failed to log migtd test feature");
 }
 
 fn get_policy_and_measure(event_log: &mut [u8]) {
