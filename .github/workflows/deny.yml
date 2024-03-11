@@ -22,6 +22,6 @@ jobs:
       with:
         submodules: recursive
     - run: bash sh_script/preparation.sh
-    - uses: EmbarkStudios/cargo-deny-action@68cd9c5e3e16328a430a37c743167572e3243e7e # v1.5.15
+    - uses: EmbarkStudios/cargo-deny-action@64015a69ee7ee08f6c56455089cdaf6ad974fd15 # v1.6.1
       with:
         command: check ${{ matrix.checks }}
