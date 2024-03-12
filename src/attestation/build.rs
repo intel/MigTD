@@ -30,13 +30,13 @@ fn main() {
 
     // make servtd_attest_preparation
     Command::new("make")
-        .args(&["-C", &lib_path, "servtd_attest_preparation"])
+        .args(["-C", &lib_path, "servtd_attest_preparation"])
         .status()
         .expect("failed to run make servtd_attest_preparation for attestation library!");
 
     // make servtd_attest
     Command::new("make")
-        .args(&["-C", &lib_path, "servtd_attest"])
+        .args(["-C", &lib_path, "servtd_attest"])
         .status()
         .expect("failed to run make servtd_attest for attestation library!");
 
