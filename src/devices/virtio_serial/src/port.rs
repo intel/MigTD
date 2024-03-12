@@ -77,7 +77,7 @@ impl VirtioSerialPort {
             let front = self.cache.front_mut().unwrap();
             let expect = data.len() - recvd;
             if front.len() <= expect {
-                data[..front.len()].copy_from_slice(&front);
+                data[..front.len()].copy_from_slice(front);
                 recvd += front.len();
                 self.cache.pop_front();
             } else {

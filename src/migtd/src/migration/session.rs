@@ -402,7 +402,7 @@ impl MigrationSession {
         }
 
         let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
-        set_mig_version(&info, mig_ver)?;
+        set_mig_version(info, mig_ver)?;
 
         for idx in 0..remote_information.key.fields.len() {
             tdx::tdcall_servtd_wr(

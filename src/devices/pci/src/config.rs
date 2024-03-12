@@ -355,18 +355,13 @@ pub struct PciDevice {
     pub interrup_line: u8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PciBarType {
+    #[default]
     Unused,
     MemorySpace32,
     MemorySpace64,
     IoSpace,
-}
-
-impl Default for PciBarType {
-    fn default() -> Self {
-        PciBarType::Unused
-    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Copy)]

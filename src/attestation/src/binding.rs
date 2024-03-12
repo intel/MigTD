@@ -7,29 +7,29 @@
 #[derive(Debug, PartialEq)]
 pub(crate) enum AttestLibError {
     /// Success
-    MigtdAttestSuccess = 0x0000,
+    Success = 0x0000,
     /// Unexpected error
-    MigtdAttestErrorUnexpected = 0x0001,
+    Unexpected = 0x0001,
     /// The parameter is incorrect
-    MigtdAttestErrorInvalidParameter = 0x0002,
+    InvalidParameter = 0x0002,
     /// Not enough memory is available to complete this operation
-    MigtdAttestErrorOutOfMemory = 0x0003,
+    OutOfMemory = 0x0003,
     /// vsock related failure
-    MigtdAttestErrorVsockFailure = 0x0004,
+    VsockFailure = 0x0004,
     /// Failed to get the TD Report
-    MigtdAttestErrorReportFailure = 0x0005,
+    ReportFailure = 0x0005,
     /// Failed to extend rtmr
-    MigtdAttestErrorExtendFailure = 0x0006,
+    ExtendFailure = 0x0006,
     /// Request feature is not supported
-    MigtdAttestErrorNotSupported = 0x0007,
+    NotSupported = 0x0007,
     /// Failed to get the TD Quote
-    MigtdAttestErrorQuoteFailure = 0x0008,
+    QuoteFailure = 0x0008,
     /// The device driver return busy
-    MigtdAttestErrorBusy = 0x0009,
+    Busy = 0x0009,
     /// Failed to acess tdx attest device
-    MigtdAttestErrorDeviceFailure = 0x000a,
+    DeviceFailure = 0x000a,
     /// Only supported RTMR index is 2 and 3
-    MigtdAttestErrorInvalidRtmrIndex = 0x000b,
+    InvalidRtmrIndex = 0x000b,
 }
 
 extern "C" {

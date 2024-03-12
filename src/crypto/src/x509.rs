@@ -99,17 +99,17 @@ impl<'a> Certificate<'a> {
         let mut country_name = SetOfVec::new();
         country_name.add(DistinguishedName {
             attribute_type: ObjectIdentifier::new("2.5.4.6"),
-            value: PrintableString::new("XX")?.try_into().unwrap(),
+            value: PrintableString::new("XX")?.into(),
         })?;
         let mut locality_name = SetOfVec::new();
         locality_name.add(DistinguishedName {
             attribute_type: ObjectIdentifier::new("2.5.4.7"),
-            value: Utf8String::new("Default City")?.try_into().unwrap(),
+            value: Utf8String::new("Default City")?.into(),
         })?;
         let mut organization_name = SetOfVec::new();
         organization_name.add(DistinguishedName {
             attribute_type: ObjectIdentifier::new("2.5.4.10"),
-            value: Utf8String::new("Default Company Ltd")?.try_into().unwrap(),
+            value: Utf8String::new("Default Company Ltd")?.into(),
         })?;
 
         let issuer = vec![country_name, locality_name, organization_name];
