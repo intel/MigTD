@@ -45,7 +45,7 @@ td-benchmark = { path = "../../deps/td-shim/devtools/td-benchmark", default-feat
 default = ["tdx"]
 cet-shstk = ["td-payload/cet-shstk"]
 coverage = ["minicov"]
-main = ["tdx"]
+main = ["tdx", "policy/log"]
 stack-guard = ["td-payload/stack-guard"]
 virtio-vsock = ["vsock/virtio-vsock"]
 virtio-serial = ["virtio_serial"]
