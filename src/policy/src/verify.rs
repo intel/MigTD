@@ -15,8 +15,7 @@ use td_shim::event_log::{
 
 use crate::{
     config::{MigPolicy, Property},
-    format_bytes_hex, MigTdInfo, PlatformInfo, PolicyError, PolicyErrorDetails, QeInfo,
-    TdxModuleInfo,
+    format_bytes_hex, MigTdInfo, PlatformInfo, PolicyError, QeInfo, TdxModuleInfo,
 };
 
 const REPORT_DATA_SIZE: usize = 734;
@@ -379,16 +378,15 @@ fn verify_platform_info(
         let verify_result = action.verify(is_src, local, remote);
 
         if !verify_result {
-            return Err(PolicyError::UnqulifiedPlatformInfo(
-                PolicyErrorDetails::new(
-                    name.clone(),
-                    action.clone(),
-                    Some(local_fmspc),
-                    Some(peer_fmspc),
-                    local,
-                    remote,
-                ),
-            ));
+            log_error_status(
+                name.clone(),
+                action.clone(),
+                Some(local_fmspc),
+                Some(peer_fmspc),
+                local,
+                remote,
+            );
+            return Err(PolicyError::UnqulifiedPlatformInfo);
         }
     }
 
@@ -409,14 +407,8 @@ fn verify_qe_info(
         let verify_result = action.verify(is_src, local, remote);
 
         if !verify_result {
-            return Err(PolicyError::UnqulifiedQeInfo(PolicyErrorDetails::new(
-                name.clone(),
-                action.clone(),
-                None,
-                None,
-                local,
-                remote,
-            )));
+            log_error_status(name.clone(), action.clone(), None, None, local, remote);
+            return Err(PolicyError::UnqulifiedQeInfo);
         }
     }
 
@@ -437,9 +429,8 @@ fn verify_tdx_module_info(
         let verify_result = action.verify(is_src, local, remote);
 
         if !verify_result {
-            return Err(PolicyError::UnqulifiedTdxModuleInfo(
-                PolicyErrorDetails::new(name.clone(), action.clone(), None, None, local, remote),
-            ));
+            log_error_status(name.clone(), action.clone(), None, None, local, remote);
+            return Err(PolicyError::UnqulifiedTdxModuleInfo);
         }
     }
 
@@ -462,14 +453,8 @@ fn verify_migtd_info(
         let verify_result = action.verify(is_src, local, remote);
 
         if !verify_result {
-            return Err(PolicyError::UnqulifiedMigTdInfo(PolicyErrorDetails::new(
-                name.clone(),
-                action.clone(),
-                None,
-                None,
-                local,
-                remote,
-            )));
+            log_error_status(name.clone(), action.clone(), None, None, local, remote);
+            return Err(PolicyError::UnqulifiedMigTdInfo);
         }
     }
 
@@ -616,14 +601,8 @@ fn verify_events(
             verify_event(is_src, &event_name, value, local_event_log, peer_event_log);
 
         if !verify_result {
-            return Err(PolicyError::UnqulifiedMigTdInfo(PolicyErrorDetails::new(
-                name.clone(),
-                value.clone(),
-                None,
-                None,
-                &[],
-                &[],
-            )));
+            log_error_status(name.clone(), value.clone(), None, None, &[], &[]);
+            return Err(PolicyError::UnqulifiedMigTdInfo);
         }
     }
 
@@ -656,6 +635,29 @@ fn verify_event(
         }
     } else {
         false
+    }
+}
+
+#[allow(unused_variables)]
+fn log_error_status(
+    property: String,
+    policy: Property,
+    local_fmspc: Option<String>,
+    remote_fmspc: Option<String>,
+    local: &[u8],
+    remote: &[u8],
+) {
+    #[cfg(feature = "log")]
+    {
+        use alloc::format;
+        use log::error;
+
+        error!("Property: {:}\n", property);
+        error!("Policy: {:?}\n", policy);
+        error!("Local FMFPC: {:?}\n", local_fmspc);
+        error!("Remote FMFPC: {:?}\n", remote_fmspc);
+        error!("Local property value: {:?}\n", format!("{:x?}", local));
+        error!("Remote property value: {:?}\n", format!("{:x?}", remote));
     }
 }
 
@@ -761,7 +763,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedPlatformInfo(_))
+            Err(PolicyError::UnqulifiedPlatformInfo)
         ));
 
         // dst's tdx tcb level is higher than reference
@@ -809,7 +811,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedPlatformInfo(_))
+            Err(PolicyError::UnqulifiedPlatformInfo)
         ));
     }
 
@@ -852,7 +854,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_ATTR_TD].copy_from_slice(&template[Report::R_ATTR_TD]);
 
@@ -869,7 +871,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_XFAM].copy_from_slice(&template[Report::R_XFAM]);
 
@@ -886,7 +888,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_MRTD].copy_from_slice(&[0u8; 48]);
 
@@ -903,7 +905,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_MRCONFIGID].copy_from_slice(&template[Report::R_MRCONFIGID]);
 
@@ -920,7 +922,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_MROWNER].copy_from_slice(&template[Report::R_MROWNER]);
 
@@ -937,7 +939,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_MROWNERCONFIG].copy_from_slice(&template[Report::R_MROWNERCONFIG]);
 
@@ -954,7 +956,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_RTMR0].copy_from_slice(&template[Report::R_RTMR0]);
 
@@ -971,7 +973,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_RTMR1].copy_from_slice(&template[Report::R_RTMR1]);
 
@@ -988,7 +990,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
         report_peer[Report::R_RTMR2].copy_from_slice(&template[Report::R_RTMR2]);
 
@@ -1005,7 +1007,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo(_))
+            Err(PolicyError::UnqulifiedMigTdInfo)
         ));
     }
 
