@@ -131,11 +131,11 @@ impl MigrationSession {
         #[cfg(not(feature = "vmcall-interrupt"))]
         tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-        let private_mem = Self::copy_from_shared_memory(rsp_mem.as_bytes());
+        let private_mem = rsp_mem.copy_to_private_shadow();
 
         // Parse the response data
         // Check the GUID of the reponse
-        let rsp = VmcallServiceResponse::try_read(private_mem.as_bytes())
+        let rsp = VmcallServiceResponse::try_read(private_mem)
             .ok_or(MigrationResult::InvalidParameter)?;
         if rsp.read_guid() != VMCALL_SERVICE_COMMON_GUID.as_bytes() {
             return Err(MigrationResult::InvalidParameter);
@@ -190,10 +190,10 @@ impl MigrationSession {
                     #[cfg(not(feature = "vmcall-interrupt"))]
                     tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-                    let private_mem = Self::copy_from_shared_memory(rsp_mem.as_bytes());
+                    let private_mem = rsp_mem.copy_to_private_shadow();
 
                     // Parse out the response data
-                    let rsp = VmcallServiceResponse::try_read(private_mem.as_bytes())
+                    let rsp = VmcallServiceResponse::try_read(private_mem)
                         .ok_or(MigrationResult::InvalidParameter)?;
                     // Check the GUID of the reponse
                     if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
@@ -298,11 +298,11 @@ impl MigrationSession {
 
         tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-        let private_mem = Self::copy_from_shared_memory(rsp_mem.as_bytes());
+        let private_mem = rsp_mem.copy_to_private_shadow();
 
         // Parse the response data
         // Check the GUID of the reponse
-        let rsp = VmcallServiceResponse::try_read(private_mem.as_bytes())
+        let rsp = VmcallServiceResponse::try_read(private_mem)
             .ok_or(MigrationResult::InvalidParameter)?;
         if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
             return Err(MigrationResult::InvalidParameter);
@@ -461,12 +461,6 @@ impl MigrationSession {
         };
 
         Some(mig_info)
-    }
-
-    fn copy_from_shared_memory(shared: &[u8]) -> Vec<u8> {
-        let mut private = Vec::new();
-        private.extend_from_slice(shared);
-        private
     }
 }
 
