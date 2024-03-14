@@ -22,14 +22,13 @@ rust_std_stub = { path = "../std-support/rust-std-stub" }
 r-efi = "3.2.0"
 scroll = { version = "0.10", default-features = false, features = ["derive"]}
 spin = "0.9.2"
-td-uefi-pi = { path = "../../deps/td-shim/td-uefi-pi"}
 tdx-tdcall = { path = "../../deps/td-shim/tdx-tdcall"}
 td-logger = { path = "../../deps/td-shim/td-logger"}
 td-layout = { path = "../../deps/td-shim/td-layout"}
 td-loader = { path = "../../deps/td-shim/td-loader"}
 td-paging = { path = "../../deps/td-shim/td-paging"}
 td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
-td-shim = { path = "../../deps/td-shim/td-shim"}
+td-shim-interface = { path = "../../deps/td-shim/td-shim-interface"}
 virtio = { path="../devices/virtio" }
 vsock = { path="../devices/vsock" }
 virtio_serial = { path="../devices/virtio_serial", optional = true }

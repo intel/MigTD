@@ -9,7 +9,7 @@ use serde::{
     de::{Error, Visitor},
     Deserialize, Deserializer,
 };
-use td_uefi_pi::pi::guid::Guid;
+use td_shim_interface::td_uefi_pi::pi::guid::Guid;
 
 #[derive(Debug, Deserialize)]
 pub struct MigPolicy {

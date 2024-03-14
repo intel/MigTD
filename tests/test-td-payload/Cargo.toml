@@ -15,7 +15,7 @@ bitfield = "0.13.2"
 bitflags = "1.2.1"
 linked_list_allocator = "0.10.4"
 log = "0.4.13"
-td-uefi-pi =  { path = "../../deps/td-shim/td-uefi-pi" }
+td-shim-interface =  { path = "../../deps/td-shim/td-shim-interface" }
 td-logger =  { path = "../../deps/td-shim/td-logger" }
 td-layout = { path = "../../deps/td-shim/td-layout" }
 td-paging = { path = "../../deps/td-shim/td-paging"}

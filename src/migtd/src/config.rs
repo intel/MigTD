@@ -4,7 +4,7 @@
 
 use r_efi::efi::Guid;
 use td_layout::build_time::{TD_SHIM_CONFIG_BASE, TD_SHIM_CONFIG_SIZE};
-use td_uefi_pi::{fv, pi};
+use td_shim_interface::td_uefi_pi::{fv, pi};
 
 pub const CONFIG_VOLUME_BASE: usize = TD_SHIM_CONFIG_BASE as usize;
 pub const CONFIG_VOLUME_SIZE: usize = TD_SHIM_CONFIG_SIZE as usize;

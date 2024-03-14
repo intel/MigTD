@@ -14,7 +14,7 @@ use core::mem::size_of;
 use crypto::hash::digest_sha384;
 use spin::Once;
 use td_payload::acpi::get_acpi_tables;
-use td_shim::acpi::Ccel;
+use td_shim_interface::acpi::Ccel;
 use tdx_tdcall::tdx;
 use zerocopy::{AsBytes, FromBytes};
 

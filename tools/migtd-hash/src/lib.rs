@@ -10,8 +10,8 @@ use std::{
     io::{Read, Seek, SeekFrom},
     mem::size_of,
 };
+use td_shim_interface::td_uefi_pi::{fv, pi};
 use td_shim_tools::tee_info_hash::{Manifest, TdInfoStruct};
-use td_uefi_pi::{fv, pi};
 
 const MIGTD_IMAGE_SIZE: u64 = 0x100_0000;
 

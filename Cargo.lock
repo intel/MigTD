@@ -647,8 +647,7 @@ dependencies = [
  "td-logger",
  "td-paging",
  "td-payload",
- "td-shim",
- "td-uefi-pi",
+ "td-shim-interface",
  "tdx-tdcall",
  "virtio",
  "virtio_serial",
@@ -667,8 +666,8 @@ dependencies = [
  "crypto",
  "migtd",
  "serde_json",
+ "td-shim-interface",
  "td-shim-tools",
- "td-uefi-pi",
 ]
 
 [[package]]
@@ -764,7 +763,7 @@ dependencies = [
  "serde",
  "serde_json",
  "td-shim",
- "td-uefi-pi",
+ "td-shim-interface",
 ]
 
 [[package]]
@@ -1153,7 +1152,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "scroll",
- "td-uefi-pi",
+ "td-shim-interface",
 ]
 
 [[package]]
@@ -1204,7 +1203,7 @@ dependencies = [
  "td-logger",
  "td-paging",
  "td-shim",
- "td-uefi-pi",
+ "td-shim-interface",
  "tdx-tdcall",
  "x86",
  "x86_64",
@@ -1224,9 +1223,19 @@ dependencies = [
  "ring",
  "scroll",
  "td-layout",
- "td-uefi-pi",
+ "td-shim-interface",
  "tdx-tdcall",
  "which",
+ "zerocopy",
+]
+
+[[package]]
+name = "td-shim-interface"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "r-efi",
+ "scroll",
  "zerocopy",
 ]
 
@@ -1255,17 +1264,8 @@ dependencies = [
  "td-layout",
  "td-loader",
  "td-shim",
- "td-uefi-pi",
+ "td-shim-interface",
  "zeroize",
-]
-
-[[package]]
-name = "td-uefi-pi"
-version = "0.1.0"
-dependencies = [
- "log",
- "r-efi",
- "scroll",
 ]
 
 [[package]]
@@ -1311,7 +1311,7 @@ dependencies = [
  "td-paging",
  "td-payload",
  "td-shim",
- "td-uefi-pi",
+ "td-shim-interface",
  "tdx-tdcall",
  "zerocopy",
 ]
@@ -1425,7 +1425,7 @@ dependencies = [
  "rust_std_stub",
  "spin 0.9.8",
  "td-payload",
- "td-uefi-pi",
+ "td-shim-interface",
  "tdx-tdcall",
  "virtio",
 ]

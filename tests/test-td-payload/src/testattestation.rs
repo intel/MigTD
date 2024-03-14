@@ -12,9 +12,9 @@ use migtd::config;
 use serde::{Deserialize, Serialize};
 use td_layout::memslice;
 use td_payload::print;
-use td_uefi_pi::fv as fv_lib;
-use td_uefi_pi::hob as hob_lib;
-use td_uefi_pi::pi::fv;
+use td_shim_interface::td_uefi_pi::fv as fv_lib;
+use td_shim_interface::td_uefi_pi::hob as hob_lib;
+use td_shim_interface::td_uefi_pi::pi::fv;
 use test_td_payload::{TestCase, TestResult};
 
 pub const VIRTIO_PCI_VENDOR_ID: u16 = 0x1af4;
