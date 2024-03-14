@@ -20,7 +20,7 @@ use core::arch::asm;
 use core::convert::TryInto;
 use core::sync::atomic::{AtomicBool, Ordering};
 use td_payload::{eoi, interrupt_handler_template};
-use td_uefi_pi::pi::guid;
+use td_shim_interface::td_uefi_pi::pi::guid;
 use tdx_tdcall::tdx;
 
 const CURRENT_VERSION: u8 = 0;

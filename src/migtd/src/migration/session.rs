@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use core::mem::size_of;
 use scroll::Pread;
 use td_payload::mm::shared::SharedMemory;
-use td_uefi_pi::hob as hob_lib;
+use td_shim_interface::td_uefi_pi::hob as hob_lib;
 use tdx_tdcall::{
     td_call,
     tdx::{self, tdcall_servtd_wr},

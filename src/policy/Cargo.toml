@@ -14,7 +14,7 @@ log = { version = "0.4.13", optional = true }
 serde = { version = "1.0", default-features = false, features = ["derive"]}
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 td-shim = { path = "../../deps/td-shim/td-shim", default-features = false }
-td-uefi-pi = { path = "../../deps/td-shim/td-uefi-pi"}
+td-shim-interface = { path = "../../deps/td-shim/td-shim-interface"}
 
 [features]
 std = []
