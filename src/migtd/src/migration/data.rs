@@ -145,6 +145,10 @@ impl<'a> VmcallServiceResponse<'a> {
 
         T::read_from(&self.data[24 + offset..24 + offset + size_of::<T>()])
     }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data[24..]
+    }
 }
 
 #[repr(packed)]

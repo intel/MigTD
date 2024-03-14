@@ -8,8 +8,11 @@
 extern crate alloc;
 
 use log::info;
-use migtd::migration::{session::MigrationSession, MigrationResult};
-use migtd::{config, event_log, migration};
+use migtd::migration::{
+    session::{exchange_msk, query, report_status, wait_for_request_block},
+    MigrationResult,
+};
+use migtd::{config, event_log};
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -86,31 +89,33 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
 }
 
 fn handle_pre_mig() {
+    #[cfg(feature = "vmcall-interrupt")]
     migration::event::register_callback();
     // Query the capability of VMM
-    if MigrationSession::query().is_err() {
+    if query().is_err() {
         panic!("Migration is not supported by VMM");
     }
     // Loop to wait for request
     info!("Loop to wait for request");
+    pre_mig_loop();
+}
+
+fn pre_mig_loop() {
     loop {
-        let mut session = MigrationSession::new();
-        if session.wait_for_request().is_ok() {
+        if let Ok(info) = wait_for_request_block() {
             #[cfg(feature = "vmcall-vsock")]
             {
-                // Safe to unwrap because we have got the request information
-                let info = session.info().unwrap();
                 migtd::driver::vsock::vmcall_vsock_device_init(
                     info.mig_info.mig_request_id,
                     info.mig_socket_info.mig_td_cid,
                 );
             }
 
-            let status = session
-                .op()
+            let status = exchange_msk(&info)
                 .map(|_| MigrationResult::Success)
                 .unwrap_or_else(|e| e);
-            let _ = session.report_status(status as u8);
+            let _ = report_status(&info, status as u8);
+
             #[cfg(all(feature = "coverage", feature = "tdx"))]
             {
                 const MAX_COVERAGE_DATA_PAGE_COUNT: usize = 0x200;
@@ -131,10 +136,9 @@ fn handle_pre_mig() {
             }
             #[cfg(any(feature = "test_stack_size", feature = "test_heap_size"))]
             test_memory()
-        };
+        }
     }
 }
-
 #[cfg(test)]
 fn main() {}
 // FIXME: remove when https://github.com/Amanieu/minicov/issues/12 is fixed.
