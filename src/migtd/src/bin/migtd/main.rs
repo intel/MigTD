@@ -9,10 +9,13 @@ extern crate alloc;
 
 use log::info;
 use migtd::migration::{
-    session::{exchange_msk, query, report_status, wait_for_request_block},
+    session::{query, report_status, wait_for_request_block},
     MigrationResult,
 };
 use migtd::{config, event_log};
+use negotiate::exchange_msk;
+
+mod negotiate;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
