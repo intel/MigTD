@@ -15,7 +15,7 @@ use td_shim::event_log::{
 
 use crate::{
     config::{MigPolicy, Property},
-    format_bytes_hex, MigTdInfo, PlatformInfo, PolicyError, QeInfo, TdxModuleInfo,
+    format_bytes_hex, MigTdInfo, PlatformInfo, Policy, PolicyError, QeInfo,
 };
 
 const REPORT_DATA_SIZE: usize = 734;
@@ -326,13 +326,15 @@ pub fn verify_policy(
         .collect();
     verify_platform_info(is_src, platform_info, &report_local, &report_peer)?;
 
+    // There might be multiple supported TDX Modules, filter out all the
+    // TDX Modules info blocks.
+    verify_tdx_module_info(is_src, &policy, &report_local, &report_peer)?;
+
     for block in policy.blocks {
         match block {
             crate::Policy::Platform(_) => continue,
             crate::Policy::Qe(q) => verify_qe_info(is_src, &q, &report_local, &report_peer)?,
-            crate::Policy::TdxModule(t) => {
-                verify_tdx_module_info(is_src, &t, &report_local, &report_peer)?
-            }
+            crate::Policy::TdxModule(_) => continue,
             crate::Policy::Migtd(m) => verify_migtd_info(
                 is_src,
                 &m,
@@ -417,21 +419,52 @@ fn verify_qe_info(
 
 fn verify_tdx_module_info(
     is_src: bool,
-    policy: &TdxModuleInfo,
+    policy: &MigPolicy,
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
-    for (name, action) in &policy.tdx_module.tdx_module_identity {
-        let property = TdxModuleInfoProperty::from(name.as_str());
-        let local = local_report.get_tdx_module_info_property(&property)?;
-        let remote = peer_report.get_tdx_module_info_property(&property)?;
+    let mut verify_result = true;
 
-        let verify_result = action.verify(is_src, local, remote);
+    for block in &policy.blocks {
+        match block {
+            Policy::TdxModule(t) => {
+                verify_result = true;
+                for (name, action) in &t.tdx_module.tdx_module_identity {
+                    let property = TdxModuleInfoProperty::from(name.as_str());
+                    let local = local_report.get_tdx_module_info_property(&property)?;
+                    let remote = peer_report.get_tdx_module_info_property(&property)?;
 
-        if !verify_result {
-            log_error_status(name.clone(), action.clone(), None, None, local, remote);
-            return Err(PolicyError::UnqulifiedTdxModuleInfo);
+                    if !action.verify(is_src, local, remote) {
+                        verify_result = false;
+                        break;
+                    }
+                }
+            }
+            _ => continue,
         }
+
+        if verify_result {
+            break;
+        }
+    }
+
+    if !verify_result {
+        // Display the policy information and the actual report data.
+        #[cfg(feature = "log")]
+        for block in &policy.blocks {
+            match block {
+                Policy::TdxModule(t) => {
+                    for (name, action) in &t.tdx_module.tdx_module_identity {
+                        let property = TdxModuleInfoProperty::from(name.as_str());
+                        let local = local_report.get_tdx_module_info_property(&property)?;
+                        let remote = peer_report.get_tdx_module_info_property(&property)?;
+                        log_error_status(name.clone(), action.clone(), None, None, local, remote);
+                    }
+                }
+                _ => continue,
+            }
+        }
+        return Err(PolicyError::UnqulifiedTdxModuleInfo);
     }
 
     Ok(())
@@ -812,6 +845,117 @@ mod tests {
         assert!(matches!(
             verify_result,
             Err(PolicyError::UnqulifiedPlatformInfo)
+        ));
+    }
+
+    #[test]
+    fn test_verify_tdx_module_info_comp() {
+        let template = include_bytes!("../test/report.dat");
+
+        // Taking `self` as reference: pass
+        let policy_bytes = include_bytes!("../test/policy_001.json");
+        let verify_result =
+            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        assert!(verify_result.is_ok());
+
+        // Taking `self` as reference: mismatch tdx module major version
+        let mut report_peer = template.to_vec();
+        report_peer[Report::R_TDX_MODULE_MAJOR_VER].copy_from_slice(&[2]);
+
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedTdxModuleInfo)
+        ));
+
+        // Taking exact value as reference: pass
+        let policy_bytes = include_bytes!("../test/policy_full1.json");
+        let verify_result =
+            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        assert!(verify_result.is_ok());
+
+        // Taking exact value as reference: pass
+        let mut report_peer = template.to_vec();
+        report_peer[Report::R_TDX_MODULE_MAJOR_VER].copy_from_slice(&[2]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(verify_result.is_ok());
+
+        // Taking exact value as reference: mismatch tdx module major version
+        let mut report_peer = template.to_vec();
+        report_peer[Report::R_TDX_MODULE_MAJOR_VER].copy_from_slice(&[0]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedTdxModuleInfo)
+        ));
+
+        // Taking exact value as reference: mismatch tdx module svn
+        let mut report_peer = template.to_vec();
+        report_peer[Report::R_TDX_MODULE_SVN].copy_from_slice(&[1]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedTdxModuleInfo)
+        ));
+
+        // Taking exact value as reference: mismatch mrsignerseam
+        let mut report_peer = template.to_vec();
+        report_peer[Report::R_MRSEAMSIGNER].copy_from_slice(&[0xfeu8; 48]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedTdxModuleInfo)
+        ));
+
+        // Taking exact value as reference: mismatch attributes
+        let mut report_peer = template.to_vec();
+        report_peer[Report::R_ATTR_SEAM].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedTdxModuleInfo)
         ));
     }
 
