@@ -46,7 +46,28 @@ pub struct PlatformTcb {
 #[serde(rename_all = "camelCase")]
 pub struct TcbInfo {
     pub fmspc: String,
+    pub tdx_module_identities: Vec<TdxModuleIdentity>,
     pub tcb_levels: Vec<TcbLevel>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TdxModuleIdentity {
+    pub id: String,
+    pub mrsigner: String,
+    pub attributes: String,
+    pub tcb_levels: Vec<TdxMdouleTcbLevel>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TdxMdouleTcbLevel {
+    pub tcb: TdxModuleTcb,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TdxModuleTcb {
+    pub isvsvn: u64,
 }
 
 #[derive(Debug, Deserialize)]
