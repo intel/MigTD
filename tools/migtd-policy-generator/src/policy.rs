@@ -2,11 +2,10 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use std::collections::BTreeMap;
-
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::json;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     platform_tcb::{get_platform_info, tcb_info::PlatformTcb},
@@ -17,10 +16,10 @@ const PRODUCTION_POLICY_GUID: &str = "F65CD566-4D67-45EF-88E3-79963901B292";
 const PRE_PRODUCTION_POLICY_GUID: &str = "B87BFE45-9CC7-46F9-8F2C-A6CB55BF7101";
 
 pub fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
-    let platform_tcb = get_platform_info(for_production)?;
+    let (platform_policy, platform_tcb) = get_platform_info(for_production)?;
     let qe_identity = get_qe_identity(for_production)?;
     let migtd = MigTdInfoPolicy::default();
-    let tdx_module = TdxModulePolicy::new(for_production);
+    let tdx_module = TdxModulePolicy::new(&platform_tcb);
 
     let mut mig_policy = MigPolicy {
         id: if for_production {
@@ -28,14 +27,19 @@ pub fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
         } else {
             PRE_PRODUCTION_POLICY_GUID.to_string()
         },
-        policy: platform_tcb
+        policy: platform_policy
             .into_iter()
             .map(|p| PolicyTypes::Platform(p))
             .collect(),
     };
 
     mig_policy.policy.push(PolicyTypes::Qe(qe_identity));
-    mig_policy.policy.push(PolicyTypes::TdxModule(tdx_module));
+    mig_policy.policy.append(
+        &mut tdx_module
+            .into_iter()
+            .map(|t| PolicyTypes::TdxModule(t))
+            .collect(),
+    );
     mig_policy.policy.push(PolicyTypes::Migtd(migtd));
 
     let mut data = Vec::new();
@@ -242,28 +246,51 @@ pub struct TdxModuleIdentityPolicy {
 }
 
 impl TdxModulePolicy {
-    fn new(for_production: bool) -> Self {
-        Self {
-            tdx_module: TdxModuleInfo {
-                tdx_module_identity: TdxModuleIdentityPolicy {
-                    tdx_module_major_version: Property {
-                        operation: "equal".to_string(),
-                        reference: Reference::Integer(1),
-                    },
-                    tdx_module_svn: Property {
-                        operation: "equal".to_string(),
-                        reference: Reference::Integer(if for_production { 2 } else { 0 }),
-                    },
-                    mrsigner_seam: Property {
-                        operation: "equal".to_string(),
-                        reference: Reference::Str("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string()),
-                    },
-                    attributes: Property {
-                        operation: "equal".to_string(),
-                        reference: Reference::Str("0000000000000000".to_string()),
-                    },
-                },
-            },
+    fn new(platform_tcb: &[PlatformTcb]) -> Vec<Self> {
+        let mut tdx_module_policy = Vec::new();
+        let mut tdx_module_id = HashSet::new();
+        for tcb in platform_tcb {
+            for tdx_module in &tcb.tcb_info.tdx_module_identities {
+                let id = TdxModulePolicy::tdx_module_major_version_mapping(tdx_module.id.as_str());
+                if !tdx_module_id.contains(&id) {
+                    tdx_module_id.insert(id);
+                    tdx_module_policy.push(Self {
+                        tdx_module: TdxModuleInfo {
+                            tdx_module_identity: TdxModuleIdentityPolicy {
+                                tdx_module_major_version: Property {
+                                    operation: "equal".to_string(),
+                                    reference: Reference::Integer(id),
+                                },
+                                tdx_module_svn: Property {
+                                    operation: "equal".to_string(),
+                                    reference: Reference::Integer(
+                                        tdx_module.tcb_levels[0].tcb.isvsvn,
+                                    ),
+                                },
+                                mrsigner_seam: Property {
+                                    operation: "equal".to_string(),
+                                    reference: Reference::Str(tdx_module.mrsigner.clone()),
+                                },
+                                attributes: Property {
+                                    operation: "equal".to_string(),
+                                    reference: Reference::Str(tdx_module.attributes.clone()),
+                                },
+                            },
+                        },
+                    })
+                }
+            }
+        }
+        tdx_module_policy
+    }
+
+    fn tdx_module_major_version_mapping(id: &str) -> u64 {
+        match id {
+            "TDX_01" => 1,
+            "TDX_02" => 2,
+            _ => {
+                panic!("Unexpected TDX Module ID");
+            }
         }
     }
 }
