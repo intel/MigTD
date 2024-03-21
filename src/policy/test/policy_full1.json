@@ -53,6 +53,28 @@
             }
         },
         {
+            "TDXModule": {
+                "TDXModule_Identity": {
+                    "TDXModuleMajorVersion": {
+                        "operation": "equal",
+                        "reference": 2
+                    },
+                    "TDXModuleSVN": {
+                        "operation": "equal",
+                        "reference": 0
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
+                    }
+                }
+            }
+        },
+        {
             "MigTD": {
                 "TDINFO": {
                     "ATTRIBUTES": {

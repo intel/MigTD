@@ -37,13 +37,6 @@ impl MigPolicy {
         })
     }
 
-    pub fn get_tdx_module_info_policy(&self) -> Option<&TdxModuleInfo> {
-        self.blocks.iter().find_map(|p| match p {
-            Policy::TdxModule(t) => Some(t),
-            _ => None,
-        })
-    }
-
     pub fn get_migtd_info_policy(&self) -> Option<&MigTdInfo> {
         self.blocks.iter().find_map(|p| match p {
             Policy::Migtd(m) => Some(m),
