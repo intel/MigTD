@@ -10,7 +10,7 @@ use core::ffi::c_void;
 use td_payload::print;
 use test_td_payload::{TestCase, TestResult};
 
-use migtd::migration::session::MigrationSession;
+use migtd::migration::session::query;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +27,7 @@ pub struct Tdservice {
 impl Tdservice {
     fn test_query(&mut self) -> TestResult {
         // Query the capability of VMM
-        if MigrationSession::query().is_err() {
+        if query().is_err() {
             print!("Migration is not supported by VMM");
             return TestResult::Fail;
         }
