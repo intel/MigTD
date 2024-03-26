@@ -29,6 +29,9 @@ const GSM_FIELD_MAX_EXPORT_VERSION: u64 = 0x2000000100000002;
 const GSM_FIELD_MIN_IMPORT_VERSION: u64 = 0x2000000100000003;
 const GSM_FIELD_MAX_IMPORT_VERSION: u64 = 0x2000000100000004;
 
+const OPERATION_NO_OP: u8 = 0;
+const OPERATION_START_MIG: u8 = 1;
+
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
     pub mig_socket_info: MigtdStreamSocketInfo,
@@ -39,12 +42,6 @@ impl MigrationInformation {
     pub fn is_src(&self) -> bool {
         self.mig_info.migration_source == 1
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct RequestInformation {
-    request_id: u64,
-    operation: u8,
 }
 
 struct ExchangeInformation {
@@ -73,51 +70,79 @@ impl ExchangeInformation {
     }
 }
 
-enum MigrationState {
-    WaitForRequest,
-    Operate(MigrationOperation),
-    Complete(RequestInformation),
-}
+pub fn query() -> Result<()> {
+    // Allocate one shared page for command and response buffer
+    let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+    let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
-enum MigrationOperation {
-    Migrate(MigrationInformation),
-}
+    // Set Migration query command buffer
+    let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
+        .ok_or(MigrationResult::InvalidParameter)?;
+    let query = ServiceMigWaitForReqCommand {
+        version: 0,
+        command: QUERY_COMMAND,
+        reserved: [0; 2],
+    };
+    cmd.write(query.as_bytes())?;
+    cmd.write(VMCALL_SERVICE_MIGTD_GUID.as_bytes())?;
+    let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
+        .ok_or(MigrationResult::InvalidParameter)?;
 
-pub struct MigrationSession {
-    state: MigrationState,
-}
-
-impl Default for MigrationSession {
-    fn default() -> Self {
-        Self::new()
+    #[cfg(feature = "vmcall-interrupt")]
+    {
+        tdx::tdvmcall_service(
+            cmd_mem.as_bytes(),
+            rsp_mem.as_mut_bytes(),
+            event::VMCALL_SERVICE_VECTOR as u64,
+            0,
+        )?;
+        event::wait_for_event(&event::VMCALL_SERVICE_FLAG);
     }
-}
+    #[cfg(not(feature = "vmcall-interrupt"))]
+    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-impl MigrationSession {
-    pub fn new() -> Self {
-        MigrationSession {
-            state: MigrationState::WaitForRequest,
-        }
+    let private_mem = rsp_mem.copy_to_private_shadow();
+
+    // Parse the response data
+    // Check the GUID of the reponse
+    let rsp =
+        VmcallServiceResponse::try_read(private_mem).ok_or(MigrationResult::InvalidParameter)?;
+    if rsp.read_guid() != VMCALL_SERVICE_COMMON_GUID.as_bytes() {
+        return Err(MigrationResult::InvalidParameter);
+    }
+    let query = rsp
+        .read_data::<ServiceQueryResponse>(0)
+        .ok_or(MigrationResult::InvalidParameter)?;
+
+    if query.command != QUERY_COMMAND || &query.guid != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
+        return Err(MigrationResult::InvalidParameter);
+    }
+    if query.status != 0 {
+        return Err(MigrationResult::Unsupported);
     }
 
-    pub fn query() -> Result<()> {
-        // Allocate one shared page for command and response buffer
-        let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-        let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+    log::info!("Migration is supported by VMM\n");
+    Ok(())
+}
 
-        // Set Migration query command buffer
-        let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
-            .ok_or(MigrationResult::InvalidParameter)?;
-        let query = ServiceMigWaitForReqCommand {
-            version: 0,
-            command: QUERY_COMMAND,
-            reserved: [0; 2],
-        };
-        cmd.write(query.as_bytes())?;
-        cmd.write(VMCALL_SERVICE_MIGTD_GUID.as_bytes())?;
-        let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
-            .ok_or(MigrationResult::InvalidParameter)?;
+pub fn wait_for_request() -> Result<MigrationInformation> {
+    // Allocate shared page for command and response buffer
+    let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+    let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
+    // Set Migration wait for request command buffer
+    let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+        .ok_or(MigrationResult::InvalidParameter)?;
+    let wfr = ServiceMigWaitForReqCommand {
+        version: 0,
+        command: MIG_COMMAND_WAIT,
+        reserved: [0; 2],
+    };
+    cmd.write(wfr.as_bytes())?;
+    let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+        .ok_or(MigrationResult::InvalidParameter)?;
+
+    loop {
         #[cfg(feature = "vmcall-interrupt")]
         {
             tdx::tdvmcall_service(
@@ -133,335 +158,238 @@ impl MigrationSession {
 
         let private_mem = rsp_mem.copy_to_private_shadow();
 
-        // Parse the response data
-        // Check the GUID of the reponse
+        // Parse out the response data
         let rsp = VmcallServiceResponse::try_read(private_mem)
             .ok_or(MigrationResult::InvalidParameter)?;
-        if rsp.read_guid() != VMCALL_SERVICE_COMMON_GUID.as_bytes() {
-            return Err(MigrationResult::InvalidParameter);
-        }
-        let query = rsp
-            .read_data::<ServiceQueryResponse>(0)
-            .ok_or(MigrationResult::InvalidParameter)?;
-
-        if query.command != QUERY_COMMAND || &query.guid != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
-            return Err(MigrationResult::InvalidParameter);
-        }
-        if query.status != 0 {
-            return Err(MigrationResult::Unsupported);
-        }
-
-        log::info!("Migration is supported by VMM\n");
-        Ok(())
-    }
-
-    pub fn wait_for_request(&mut self) -> Result<()> {
-        match self.state {
-            MigrationState::WaitForRequest => {
-                // Allocate shared page for command and response buffer
-                let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-                let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-
-                // Set Migration wait for request command buffer
-                let mut cmd =
-                    VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                let wfr = ServiceMigWaitForReqCommand {
-                    version: 0,
-                    command: MIG_COMMAND_WAIT,
-                    reserved: [0; 2],
-                };
-                cmd.write(wfr.as_bytes())?;
-                let _ =
-                    VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-                        .ok_or(MigrationResult::InvalidParameter)?;
-
-                loop {
-                    #[cfg(feature = "vmcall-interrupt")]
-                    {
-                        tdx::tdvmcall_service(
-                            cmd_mem.as_bytes(),
-                            rsp_mem.as_mut_bytes(),
-                            event::VMCALL_SERVICE_VECTOR as u64,
-                            0,
-                        )?;
-                        event::wait_for_event(&event::VMCALL_SERVICE_FLAG);
-                    }
-                    #[cfg(not(feature = "vmcall-interrupt"))]
-                    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
-
-                    let private_mem = rsp_mem.copy_to_private_shadow();
-
-                    // Parse out the response data
-                    let rsp = VmcallServiceResponse::try_read(private_mem)
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                    // Check the GUID of the reponse
-                    if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
-                        return Err(MigrationResult::InvalidParameter);
-                    }
-                    let wfr = rsp
-                        .read_data::<ServiceMigWaitForReqResponse>(0)
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                    if wfr.command != MIG_COMMAND_WAIT {
-                        return Err(MigrationResult::InvalidParameter);
-                    }
-                    if wfr.operation == 1 {
-                        let mig_info = Self::read_mig_info(
-                            &private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..],
-                        )
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                        self.state = MigrationState::Operate(MigrationOperation::Migrate(mig_info));
-
-                        return Ok(());
-                    } else if wfr.operation != 0 {
-                        break;
-                    }
-                }
-                Err(MigrationResult::InvalidParameter)
-            }
-            _ => Err(MigrationResult::InvalidParameter),
-        }
-    }
-
-    pub fn info(&self) -> Option<&MigrationInformation> {
-        match &self.state {
-            MigrationState::Operate(operation) => match operation {
-                MigrationOperation::Migrate(info) => Some(info),
-            },
-            _ => None,
-        }
-    }
-
-    #[cfg(feature = "main")]
-    pub fn op(&mut self) -> Result<()> {
-        match &self.state {
-            MigrationState::Operate(operation) => match operation {
-                MigrationOperation::Migrate(info) => {
-                    let state = Self::migrate(info);
-                    self.state = MigrationState::Complete(RequestInformation {
-                        request_id: info.mig_info.mig_request_id,
-                        operation: 1,
-                    });
-
-                    state
-                }
-            },
-            _ => Err(MigrationResult::InvalidParameter),
-        }
-    }
-
-    pub fn shutdown() -> Result<()> {
-        // Allocate shared page for command and response buffer
-        let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-        let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-
-        // Set Command
-        let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-            .ok_or(MigrationResult::InvalidParameter)?;
-
-        let sd = ServiceMigWaitForReqShutdown {
-            version: 0,
-            command: MIG_COMMAND_SHUT_DOWN,
-            reserved: [0; 2],
-        };
-        cmd.write(sd.as_bytes())?;
-        tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
-        Ok(())
-    }
-
-    pub fn report_status(&self, status: u8) -> Result<()> {
-        let request = match &self.state {
-            MigrationState::Complete(request) => *request,
-            _ => return Err(MigrationResult::InvalidParameter),
-        };
-
-        // Allocate shared page for command and response buffer
-        let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-        let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-
-        // Set Command
-        let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-            .ok_or(MigrationResult::InvalidParameter)?;
-
-        let rs = ServiceMigReportStatusCommand {
-            version: 0,
-            command: MIG_COMMAND_REPORT_STATUS,
-            operation: request.operation,
-            status,
-            mig_request_id: request.request_id,
-        };
-
-        cmd.write(rs.as_bytes())?;
-
-        let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-            .ok_or(MigrationResult::InvalidParameter)?;
-
-        tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
-
-        let private_mem = rsp_mem.copy_to_private_shadow();
-
-        // Parse the response data
         // Check the GUID of the reponse
-        let rsp = VmcallServiceResponse::try_read(private_mem)
-            .ok_or(MigrationResult::InvalidParameter)?;
         if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
             return Err(MigrationResult::InvalidParameter);
         }
-        let query = rsp
-            .read_data::<ServiceMigReportStatusResponse>(0)
+        let wfr = rsp
+            .read_data::<ServiceMigWaitForReqResponse>(0)
             .ok_or(MigrationResult::InvalidParameter)?;
-
-        // Ensure the response matches the command
-        if query.command != MIG_COMMAND_REPORT_STATUS {
+        if wfr.command != MIG_COMMAND_WAIT {
             return Err(MigrationResult::InvalidParameter);
         }
-        Ok(())
+        if wfr.operation == OPERATION_START_MIG {
+            let mig_info =
+                read_mig_info(&private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..])
+                    .ok_or(MigrationResult::InvalidParameter)?;
+
+            return Ok(mig_info);
+        } else if wfr.operation != OPERATION_NO_OP {
+            break;
+        }
+    }
+    Err(MigrationResult::InvalidParameter)
+}
+
+pub fn shutdown() -> Result<()> {
+    // Allocate shared page for command and response buffer
+    let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+    let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+
+    // Set Command
+    let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+        .ok_or(MigrationResult::InvalidParameter)?;
+
+    let sd = ServiceMigWaitForReqShutdown {
+        version: 0,
+        command: MIG_COMMAND_SHUT_DOWN,
+        reserved: [0; 2],
+    };
+    cmd.write(sd.as_bytes())?;
+    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+    Ok(())
+}
+
+pub fn report_status(request: &MigrationInformation, status: u8) -> Result<()> {
+    // Allocate shared page for command and response buffer
+    let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+    let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+
+    // Set Command
+    let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+        .ok_or(MigrationResult::InvalidParameter)?;
+
+    let rs = ServiceMigReportStatusCommand {
+        version: 0,
+        command: MIG_COMMAND_REPORT_STATUS,
+        operation: OPERATION_START_MIG,
+        status,
+        mig_request_id: request.mig_info.mig_request_id,
+    };
+
+    cmd.write(rs.as_bytes())?;
+
+    let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+        .ok_or(MigrationResult::InvalidParameter)?;
+
+    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+
+    let private_mem = rsp_mem.copy_to_private_shadow();
+
+    // Parse the response data
+    // Check the GUID of the reponse
+    let rsp =
+        VmcallServiceResponse::try_read(private_mem).ok_or(MigrationResult::InvalidParameter)?;
+    if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
+        return Err(MigrationResult::InvalidParameter);
+    }
+    let query = rsp
+        .read_data::<ServiceMigReportStatusResponse>(0)
+        .ok_or(MigrationResult::InvalidParameter)?;
+
+    // Ensure the response matches the command
+    if query.command != MIG_COMMAND_REPORT_STATUS {
+        return Err(MigrationResult::InvalidParameter);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "main")]
+pub fn migrate(info: &MigrationInformation) -> Result<()> {
+    let mut msk = MigrationSessionKey::new();
+
+    for idx in 0..msk.fields.len() {
+        let ret = tdx::tdcall_servtd_rd(
+            info.mig_info.binding_handle,
+            TDCS_FIELD_MIG_ENC_KEY + idx as u64,
+            &info.mig_info.target_td_uuid,
+        )?;
+        msk.fields[idx] = ret.content;
     }
 
-    #[cfg(feature = "main")]
-    fn migrate(info: &MigrationInformation) -> Result<()> {
-        let mut msk = MigrationSessionKey::new();
+    let transport;
+    #[cfg(feature = "virtio-serial")]
+    {
+        use virtio_serial::VirtioSerialPort;
+        const VIRTIO_SERIAL_PORT_ID: u32 = 1;
 
-        for idx in 0..msk.fields.len() {
-            let ret = tdx::tdcall_servtd_rd(
-                info.mig_info.binding_handle,
-                TDCS_FIELD_MIG_ENC_KEY + idx as u64,
-                &info.mig_info.target_td_uuid,
-            )?;
-            msk.fields[idx] = ret.content;
+        let port = VirtioSerialPort::new(VIRTIO_SERIAL_PORT_ID);
+        port.open()?;
+        transport = port;
+    };
+
+    #[cfg(not(feature = "virtio-serial"))]
+    {
+        use vsock::{stream::VsockStream, VsockAddr};
+        // Establish the vsock connection with host
+        let mut vsock = VsockStream::new()?;
+        vsock.connect(&VsockAddr::new(
+            info.mig_socket_info.mig_td_cid as u32,
+            info.mig_socket_info.mig_channel_port,
+        ))?;
+
+        transport = vsock;
+    };
+
+    let mut remote_information = ExchangeInformation::default();
+    let mut exchange_information = ExchangeInformation {
+        key: msk,
+        ..Default::default()
+    };
+
+    // Establish TLS layer connection and negotiate the MSK
+    if info.is_src() {
+        let min_export_version = tdcall_sys_rd(GSM_FIELD_MIN_EXPORT_VERSION)?.1;
+        let max_export_version = tdcall_sys_rd(GSM_FIELD_MAX_EXPORT_VERSION)?.1;
+        if min_export_version > u16::MAX as u64 || max_export_version > u16::MAX as u64 {
+            return Err(MigrationResult::InvalidParameter);
         }
+        exchange_information.min_ver = min_export_version as u16;
+        exchange_information.max_ver = max_export_version as u16;
 
-        let transport;
-        #[cfg(feature = "virtio-serial")]
-        {
-            use virtio_serial::VirtioSerialPort;
-            const VIRTIO_SERIAL_PORT_ID: u32 = 1;
+        // TLS client
+        let mut ratls_client =
+            ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-            let port = VirtioSerialPort::new(VIRTIO_SERIAL_PORT_ID);
-            port.open()?;
-            transport = port;
-        };
-
-        #[cfg(not(feature = "virtio-serial"))]
-        {
-            use vsock::{stream::VsockStream, VsockAddr};
-            // Establish the vsock connection with host
-            let mut vsock = VsockStream::new()?;
-            vsock.connect(&VsockAddr::new(
-                info.mig_socket_info.mig_td_cid as u32,
-                info.mig_socket_info.mig_channel_port,
-            ))?;
-
-            transport = vsock;
-        };
-
-        let mut remote_information = ExchangeInformation::default();
-        let mut exchange_information = ExchangeInformation {
-            key: msk,
-            ..Default::default()
-        };
-
-        // Establish TLS layer connection and negotiate the MSK
-        if info.is_src() {
-            let min_export_version = tdcall_sys_rd(GSM_FIELD_MIN_EXPORT_VERSION)?.1;
-            let max_export_version = tdcall_sys_rd(GSM_FIELD_MAX_EXPORT_VERSION)?.1;
-            if min_export_version > u16::MAX as u64 || max_export_version > u16::MAX as u64 {
-                return Err(MigrationResult::InvalidParameter);
-            }
-            exchange_information.min_ver = min_export_version as u16;
-            exchange_information.max_ver = max_export_version as u16;
-
-            // TLS client
-            let mut ratls_client =
-                ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
-
-            // MigTD-S send Migration Session Forward key to peer
-            ratls_client.write(exchange_information.as_bytes())?;
-            let size = ratls_client.read(remote_information.as_bytes_mut())?;
-            if size < size_of::<ExchangeInformation>() {
-                return Err(MigrationResult::NetworkError);
-            }
-        } else {
-            let min_import_version = tdcall_sys_rd(GSM_FIELD_MIN_IMPORT_VERSION)?.1;
-            let max_import_version = tdcall_sys_rd(GSM_FIELD_MAX_IMPORT_VERSION)?.1;
-            if min_import_version > u16::MAX as u64 || max_import_version > u16::MAX as u64 {
-                return Err(MigrationResult::InvalidParameter);
-            }
-            exchange_information.min_ver = min_import_version as u16;
-            exchange_information.max_ver = max_import_version as u16;
-
-            // TLS server
-            let mut ratls_server =
-                ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
-
-            ratls_server.write(exchange_information.as_bytes())?;
-            let size = ratls_server.read(remote_information.as_bytes_mut())?;
-            if size < size_of::<ExchangeInformation>() {
-                return Err(MigrationResult::NetworkError);
-            }
+        // MigTD-S send Migration Session Forward key to peer
+        ratls_client.write(exchange_information.as_bytes())?;
+        let size = ratls_client.read(remote_information.as_bytes_mut())?;
+        if size < size_of::<ExchangeInformation>() {
+            return Err(MigrationResult::NetworkError);
         }
-
-        let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
-        set_mig_version(info, mig_ver)?;
-
-        for idx in 0..remote_information.key.fields.len() {
-            tdx::tdcall_servtd_wr(
-                info.mig_info.binding_handle,
-                TDCS_FIELD_MIG_DEC_KEY + idx as u64,
-                remote_information.key.fields[idx],
-                &info.mig_info.target_td_uuid,
-            )
-            .map_err(|_| MigrationResult::TdxModuleError)?;
+    } else {
+        let min_import_version = tdcall_sys_rd(GSM_FIELD_MIN_IMPORT_VERSION)?.1;
+        let max_import_version = tdcall_sys_rd(GSM_FIELD_MAX_IMPORT_VERSION)?.1;
+        if min_import_version > u16::MAX as u64 || max_import_version > u16::MAX as u64 {
+            return Err(MigrationResult::InvalidParameter);
         }
-        log::info!("Set MSK and report status\n");
-        exchange_information.key.clear();
-        remote_information.key.clear();
+        exchange_information.min_ver = min_import_version as u16;
+        exchange_information.max_ver = max_import_version as u16;
 
-        Ok(())
+        // TLS server
+        let mut ratls_server =
+            ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
+
+        ratls_server.write(exchange_information.as_bytes())?;
+        let size = ratls_server.read(remote_information.as_bytes_mut())?;
+        if size < size_of::<ExchangeInformation>() {
+            return Err(MigrationResult::NetworkError);
+        }
     }
 
-    fn read_mig_info(hob: &[u8]) -> Option<MigrationInformation> {
-        let mig_info_hob =
-            hob_lib::get_next_extension_guid_hob(hob, MIGRATION_INFORMATION_HOB_GUID.as_bytes())?;
+    let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
+    set_mig_version(info, mig_ver)?;
 
-        let mig_info = hob_lib::get_guid_data(mig_info_hob)?
-            .pread::<MigtdMigrationInformation>(0)
-            .ok()?;
-
-        let mig_socket_hob =
-            hob_lib::get_next_extension_guid_hob(hob, STREAM_SOCKET_INFO_HOB_GUID.as_bytes())?;
-
-        let mig_socket_info = hob_lib::get_guid_data(mig_socket_hob)?
-            .pread::<MigtdStreamSocketInfo>(0)
-            .ok()?;
-
-        // Migration Information is optional here
-        let mut mig_policy = None;
-        if let Some(policy_info_hob) =
-            hob_lib::get_next_extension_guid_hob(hob, MIGPOLICY_HOB_GUID.as_bytes())
-        {
-            if let Some(policy_raw) = hob_lib::get_guid_data(policy_info_hob) {
-                let policy_header = policy_raw.pread::<MigtdMigpolicyInfo>(0).ok()?;
-                let mut policy_data: Vec<u8> = Vec::new();
-                let offset = size_of::<MigtdMigpolicyInfo>();
-                policy_data.extend_from_slice(
-                    &policy_raw[offset..offset + policy_header.mig_policy_size as usize],
-                );
-                mig_policy = Some(MigtdMigpolicy {
-                    header: policy_header,
-                    mig_policy: policy_data,
-                });
-            }
-        }
-
-        let mig_info = MigrationInformation {
-            mig_info,
-            mig_socket_info,
-            mig_policy,
-        };
-
-        Some(mig_info)
+    for idx in 0..remote_information.key.fields.len() {
+        tdx::tdcall_servtd_wr(
+            info.mig_info.binding_handle,
+            TDCS_FIELD_MIG_DEC_KEY + idx as u64,
+            remote_information.key.fields[idx],
+            &info.mig_info.target_td_uuid,
+        )
+        .map_err(|_| MigrationResult::TdxModuleError)?;
     }
+    log::info!("Set MSK and report status\n");
+    exchange_information.key.clear();
+    remote_information.key.clear();
+
+    Ok(())
+}
+
+fn read_mig_info(hob: &[u8]) -> Option<MigrationInformation> {
+    let mig_info_hob =
+        hob_lib::get_next_extension_guid_hob(hob, MIGRATION_INFORMATION_HOB_GUID.as_bytes())?;
+
+    let mig_info = hob_lib::get_guid_data(mig_info_hob)?
+        .pread::<MigtdMigrationInformation>(0)
+        .ok()?;
+
+    let mig_socket_hob =
+        hob_lib::get_next_extension_guid_hob(hob, STREAM_SOCKET_INFO_HOB_GUID.as_bytes())?;
+
+    let mig_socket_info = hob_lib::get_guid_data(mig_socket_hob)?
+        .pread::<MigtdStreamSocketInfo>(0)
+        .ok()?;
+
+    // Migration Information is optional here
+    let mut mig_policy = None;
+    if let Some(policy_info_hob) =
+        hob_lib::get_next_extension_guid_hob(hob, MIGPOLICY_HOB_GUID.as_bytes())
+    {
+        if let Some(policy_raw) = hob_lib::get_guid_data(policy_info_hob) {
+            let policy_header = policy_raw.pread::<MigtdMigpolicyInfo>(0).ok()?;
+            let mut policy_data: Vec<u8> = Vec::new();
+            let offset = size_of::<MigtdMigpolicyInfo>();
+            policy_data.extend_from_slice(
+                &policy_raw[offset..offset + policy_header.mig_policy_size as usize],
+            );
+            mig_policy = Some(MigtdMigpolicy {
+                header: policy_header,
+                mig_policy: policy_data,
+            });
+        }
+    }
+
+    let mig_info = MigrationInformation {
+        mig_info,
+        mig_socket_info,
+        mig_policy,
+    };
+
+    Some(mig_info)
 }
 
 /// Used to read a TDX Module global-scope metadata field.
