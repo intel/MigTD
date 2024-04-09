@@ -24,6 +24,40 @@ const EV_EVENT_TAG: u32 = 0x00000006;
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
 
+// Attributes Mask:
+// Bits     Feature             Masked or Not   Notes
+// 3:0      TD Under Debug      Not masked      Always 0
+// 15:4     TD Under Profiling  Not masked      Always 0
+// 26:16    Reserved            Masked          Always 0
+// 27       LASS                Masked          Feature not required
+// 28       SEPT_VE_DISABLE     Not masked      Always 0
+// 29       MIGRATABLE          Not masked      Always 0
+// 30       PKS                 Masked          Feature not required
+// 31       KL (Key Locker)     Masked          Feature not required
+// 61:32    Reserved            Masked          Always 0
+// 62       TPA                 Not masked      Always 0
+// 63       PERFMON             Masked          Feature not required
+const MIGTD_ATTRIBUTES_MASK: [u8; 8] = [0xff, 0xff, 0x00, 0x30, 0x00, 0x00, 0x00, 0x40];
+
+// XFAM Mask:
+// Bits     Feature             Masked or Not   Notes
+// 0        FP                  Not masked      Always enabled
+// 1        SSE                 Not masked      Always enabled
+// 2        AVX                 Masked          Feature not required
+// 4:3      MPX                 Masked          Feature not required (MPX is being deprecated.)
+// 7:5      AVX512              Masked          Feature not required
+// 8        PT (RTIT)           Masked          Feature not required
+// 9        PK                  Masked          Feature not required
+// 10       ENQCMD              Masked          Feature not required
+// 12:11    CET                 Not masked      Feature required
+// 13       HDC                 Masked          Feature not required
+// 14       ULI                 Masked          Feature not required
+// 15       LBR                 Masked          Feature not required
+// 16       HWP                 Masked          Feature not required
+// 18:17    AMX                 Masked          Feature not required
+// 19       APX                 Masked          Feature not required
+const MIGTD_XFAM_MASK: [u8; 8] = [0x03, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
 struct Report<'a> {
     platform_info: BTreeMap<PlatformInfoProperty, &'a [u8]>,
     qe_info: BTreeMap<QeInfoProperty, &'a [u8]>,
@@ -478,10 +512,32 @@ fn verify_migtd_info(
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
+    let mut masked_local = [0u8; 8];
+    let mut masked_remote = [0u8; 8];
+
     for (name, action) in &policy.migtd.td_info {
         let property = MigTdInfoProperty::from(name.as_str());
         let local = local_report.get_migtd_info_property(&property)?;
         let remote = peer_report.get_migtd_info_property(&property)?;
+
+        let (local, remote) = match property {
+            // Mask the Attributes and XFAM
+            MigTdInfoProperty::Attributes => {
+                masked_local[..8].copy_from_slice(local);
+                masked_remote[..8].copy_from_slice(remote);
+                mask_bytes_array(&mut masked_local, &MIGTD_ATTRIBUTES_MASK);
+                mask_bytes_array(&mut masked_remote, &MIGTD_ATTRIBUTES_MASK);
+                (masked_local.as_slice(), masked_remote.as_slice())
+            }
+            MigTdInfoProperty::Xfam => {
+                masked_local[..8].copy_from_slice(local);
+                masked_remote[..8].copy_from_slice(remote);
+                mask_bytes_array(&mut masked_local, &MIGTD_XFAM_MASK);
+                mask_bytes_array(&mut masked_remote, &MIGTD_XFAM_MASK);
+                (masked_local.as_slice(), masked_remote.as_slice())
+            }
+            _ => (local, remote),
+        };
 
         let verify_result = action.verify(is_src, local, remote);
 
@@ -502,6 +558,12 @@ fn verify_migtd_info(
     }
 
     Ok(())
+}
+
+fn mask_bytes_array(data: &mut [u8], mask: &[u8]) {
+    for (x, mask) in data.iter_mut().zip(mask.iter()) {
+        *x &= mask;
+    }
 }
 
 fn verify_event_log(
@@ -1000,10 +1062,64 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
+
+        // verify the attributes mask, set masked bits
+        report_peer[Report::R_ATTR_TD].copy_from_slice(&[0, 0, 0, 0x8, 0x1, 0, 0, 0]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(verify_result.is_ok());
+
+        // verify the attributes mask, set bits that will not be masked but must be zero
+        report_peer[Report::R_ATTR_TD].copy_from_slice(&[0, 0x1, 0, 0x3, 0, 0, 0, 0]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo)
+        ));
         report_peer[Report::R_ATTR_TD].copy_from_slice(&template[Report::R_ATTR_TD]);
 
         // different xfam, not equal
         report_peer[Report::R_XFAM].copy_from_slice(&[1u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqulifiedMigTdInfo)
+        ));
+
+        // verify xfam mask, set masked bits and required bits
+        report_peer[Report::R_XFAM].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &[0u8; 8],
+            &report_peer,
+            &[0u8; 8],
+        );
+        assert!(verify_result.is_ok());
+
+        // verify xfam mask, unset bits that is not masked but required
+        report_peer[Report::R_XFAM].copy_from_slice(&[0x3, 0x08, 0, 0, 0, 0, 0, 0]);
 
         let verify_result = verify_policy(
             true,
@@ -1483,5 +1599,45 @@ mod tests {
             &parse_events(&peer_events).unwrap(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn test_xfam_mask() {
+        let mut xfam = [0u8; 8];
+
+        xfam.copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+        mask_bytes_array(&mut xfam, &MIGTD_XFAM_MASK);
+        assert_eq!(&xfam, &[0x3, 0x18, 0x0, 0, 0, 0, 0, 0]);
+
+        xfam.copy_from_slice(&[0x3, 0x18, 0x0, 0, 0, 0, 0, 0]);
+        mask_bytes_array(&mut xfam, &MIGTD_XFAM_MASK);
+        assert_eq!(&xfam, &[0x3, 0x18, 0x0, 0, 0, 0, 0, 0]);
+
+        xfam.copy_from_slice(&[0xe7, 0x1a, 0x6, 0, 0, 0, 0, 0]);
+        mask_bytes_array(&mut xfam, &MIGTD_XFAM_MASK);
+        assert_eq!(&xfam, &[0x3, 0x18, 0x0, 0, 0, 0, 0, 0])
+    }
+
+    #[test]
+    fn test_attribute_mask() {
+        let mut attributes = [0u8; 8];
+
+        attributes.copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+        mask_bytes_array(&mut attributes, &MIGTD_ATTRIBUTES_MASK);
+        assert_eq!(
+            &attributes,
+            &[0xff, 0xff, 0x00, 0x30, 0x00, 0x00, 0x00, 0x40]
+        );
+
+        attributes.copy_from_slice(&[0xff, 0xff, 0x00, 0x30, 0x00, 0x00, 0x00, 0x40]);
+        mask_bytes_array(&mut attributes, &MIGTD_ATTRIBUTES_MASK);
+        assert_eq!(
+            &attributes,
+            &[0xff, 0xff, 0x00, 0x30, 0x00, 0x00, 0x00, 0x40]
+        );
+
+        attributes.copy_from_slice(&[0, 0, 0, 0x8, 0, 0, 0, 0]);
+        mask_bytes_array(&mut attributes, &MIGTD_ATTRIBUTES_MASK);
+        assert_eq!(&attributes, &[0, 0, 0, 0, 0, 0, 0, 0]);
     }
 }
