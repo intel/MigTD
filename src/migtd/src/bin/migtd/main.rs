@@ -52,7 +52,7 @@ pub fn runtime_main() {
 }
 
 fn basic_info() {
-    info!("MigTD Version - {}", MIGTD_VERSION);
+    info!("MigTD Version - {}\n", MIGTD_VERSION);
 }
 
 #[cfg(feature = "test_disable_ra_and_accept_all")]
@@ -92,7 +92,7 @@ fn handle_pre_mig() {
         panic!("Migration is not supported by VMM");
     }
     // Loop to wait for request
-    info!("Loop to wait for request");
+    info!("Loop to wait for request\n");
     loop {
         let mut session = MigrationSession::new();
         if session.wait_for_request().is_ok() {

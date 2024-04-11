@@ -149,8 +149,8 @@ fn verify_peer_cert(
         );
 
         if let Err(e) = &policy_check_result {
-            error!("Policy check failed, below is the detail information:");
-            error!("{:x?}", e);
+            error!("Policy check failed, below is the detail information:\n");
+            error!("{:x?}\n", e);
         }
 
         return policy_check_result.map_err(|e| match e {
