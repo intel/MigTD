@@ -81,7 +81,7 @@ struct CheckRegionOverlap {
 
 impl CheckRegionOverlap {
     fn set_region(&mut self, index: usize, base: u64, length: u64) -> Result<()> {
-        if index > 6 {
+        if index > MAX_BARS_INDEX.into() {
             return Err(VirtioError::InvalidParameter);
         }
 
