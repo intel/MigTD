@@ -64,7 +64,7 @@ impl<'a> CertificateBuilder<'a> {
         signature: &'a mut Vec<u8>,
         mut signer: impl FnMut(&[u8], &mut Vec<u8>),
     ) -> Result<Self, DerError> {
-        let tbs = self.0.tbs_certificate.to_vec().unwrap();
+        let tbs = self.0.tbs_certificate.to_vec()?;
         signer(tbs.as_slice(), signature);
         self.0.signature_value = BitString::new(0, signature)?;
         Ok(self)
