@@ -329,7 +329,7 @@ impl VirtioSerial {
         queue_address += queue_layout.size() as u64;
         let port0_transmitq = Self::create_queue(
             self.virtio.as_ref(),
-            PORT0_RECEIVEQ,
+            PORT0_TRANSMITQ,
             queue_address,
             QUEUE_SIZE as u16,
         )?;
