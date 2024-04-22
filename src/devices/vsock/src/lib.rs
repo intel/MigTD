@@ -24,6 +24,8 @@ const VSOCK_BUF_ALLOC: u32 = 0x40000;
 
 #[derive(Debug)]
 pub enum VsockError {
+    /// Device not available
+    DeviceNotAvailable,
     /// Cannot allocate unused port
     NoAvailablePort,
     /// Port has been already used
@@ -44,6 +46,7 @@ pub enum VsockError {
 impl Display for VsockError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            VsockError::DeviceNotAvailable => write!(f, "DeviceNotAvailable"),
             VsockError::Transport(e) => write!(f, "Transport: {}", e),
             VsockError::Truncated => write!(f, "Truncated"),
             VsockError::Malformed => write!(f, "Malformed"),

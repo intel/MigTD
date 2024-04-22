@@ -107,7 +107,12 @@ impl VsockStream {
             listen_backlog: 0,
             addr: VsockAddrPair {
                 local: VsockAddr {
-                    cid: VSOCK_DEVICE.lock().get_mut().unwrap().transport.get_cid()?,
+                    cid: VSOCK_DEVICE
+                        .lock()
+                        .get_mut()
+                        .ok_or(VsockError::DeviceNotAvailable)?
+                        .transport
+                        .get_cid()?,
                     port: get_unused_port().ok_or(VsockError::NoAvailablePort)?,
                 },
                 remote: VsockAddr::default(),
@@ -148,7 +153,7 @@ impl VsockStream {
         let recv = VSOCK_DEVICE
             .lock()
             .get_mut()
-            .unwrap()
+            .ok_or(VsockError::DeviceNotAvailable)?
             .transport
             .dequeue(self, DEFAULT_TIMEOUT)?;
 
@@ -173,12 +178,12 @@ impl VsockStream {
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-        let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
-            self,
-            packet.as_ref(),
-            &[],
-            DEFAULT_TIMEOUT,
-        )?;
+        let _ = VSOCK_DEVICE
+            .lock()
+            .get_mut()
+            .ok_or(VsockError::DeviceNotAvailable)?
+            .transport
+            .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
 
         let peer_addr = VsockAddr::new(request.src_cid() as u32, request.src_port());
 
@@ -219,18 +224,18 @@ impl VsockStream {
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-        let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
-            self,
-            packet.as_ref(),
-            &[],
-            DEFAULT_TIMEOUT,
-        )?;
+        let _ = VSOCK_DEVICE
+            .lock()
+            .get_mut()
+            .ok_or(VsockError::DeviceNotAvailable)?
+            .transport
+            .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
 
         self.state = State::RequestSend;
         let recv = VSOCK_DEVICE
             .lock()
             .get_mut()
-            .unwrap()
+            .ok_or(VsockError::DeviceNotAvailable)?
             .transport
             .dequeue(self, DEFAULT_TIMEOUT)?;
 
@@ -268,12 +273,12 @@ impl VsockStream {
             packet.set_flags(FLAG_SHUTDOWN_READ | FLAG_SHUTDOWN_WRITE);
             packet.set_fwd_cnt(self.rx_cnt);
             packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-            let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
-                self,
-                packet.as_ref(),
-                &[],
-                DEFAULT_TIMEOUT,
-            )?;
+            let _ = VSOCK_DEVICE
+                .lock()
+                .get_mut()
+                .ok_or(VsockError::DeviceNotAvailable)?
+                .transport
+                .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
 
             self.state = State::Closing;
             self.reset()
@@ -299,12 +304,12 @@ impl VsockStream {
         packet.set_flags(0);
         packet.set_fwd_cnt(self.rx_cnt);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-        let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
-            self,
-            packet.as_ref(),
-            buf,
-            DEFAULT_TIMEOUT,
-        )?;
+        let _ = VSOCK_DEVICE
+            .lock()
+            .get_mut()
+            .ok_or(VsockError::DeviceNotAvailable)?
+            .transport
+            .enqueue(self, packet.as_ref(), buf, DEFAULT_TIMEOUT)?;
 
         Ok(buf.len())
     }
@@ -319,7 +324,7 @@ impl VsockStream {
             let recv = VSOCK_DEVICE
                 .lock()
                 .get_mut()
-                .unwrap()
+                .ok_or(VsockError::DeviceNotAvailable)?
                 .transport
                 .dequeue(self, DEFAULT_TIMEOUT)?;
             let packet = Packet::new_checked(recv.as_slice())?;
@@ -340,7 +345,7 @@ impl VsockStream {
                 let mut recv = VSOCK_DEVICE
                     .lock()
                     .get_mut()
-                    .unwrap()
+                    .ok_or(VsockError::DeviceNotAvailable)?
                     .transport
                     .dequeue(self, DEFAULT_TIMEOUT)?;
 
@@ -377,7 +382,7 @@ impl VsockStream {
             let recv = VSOCK_DEVICE
                 .lock()
                 .get_mut()
-                .unwrap()
+                .ok_or(VsockError::DeviceNotAvailable)?
                 .transport
                 .dequeue(self, DEFAULT_TIMEOUT)?;
             let packet = Packet::new_checked(recv.as_slice())?;
@@ -395,12 +400,12 @@ impl VsockStream {
                 packet.set_fwd_cnt(self.rx_cnt);
                 packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-                let _ = VSOCK_DEVICE.lock().get_mut().unwrap().transport.enqueue(
-                    self,
-                    packet.as_ref(),
-                    &[],
-                    DEFAULT_TIMEOUT,
-                )?;
+                let _ = VSOCK_DEVICE
+                    .lock()
+                    .get_mut()
+                    .ok_or(VsockError::DeviceNotAvailable)?
+                    .transport
+                    .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
                 self.state = State::Closed;
 
                 remove_stream_from_connection_map(self);
