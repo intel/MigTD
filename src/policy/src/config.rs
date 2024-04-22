@@ -118,7 +118,7 @@ impl Property {
                 if peer.len() > size_of::<usize>() {
                     false
                 } else {
-                    let mut bytes = [0u8; 8];
+                    let mut bytes = [0u8; size_of::<usize>()];
                     bytes[..peer.len()].copy_from_slice(peer);
                     let peer = usize::from_le_bytes(bytes);
                     i.verify(is_src, &self.operation, 0, peer)
@@ -133,7 +133,7 @@ impl Property {
                 if peer.len() > size_of::<usize>() {
                     false
                 } else {
-                    let mut bytes = [0u8; 8];
+                    let mut bytes = [0u8; size_of::<usize>()];
                     bytes[..peer.len()].copy_from_slice(peer);
                     let peer = usize::from_le_bytes(bytes);
                     r.verify(is_src, &self.operation, 0, peer)
