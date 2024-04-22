@@ -77,7 +77,7 @@ pub fn ecdsa_verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<
 // See https://github.com/briansmith/ring/issues/15
 fn sensitive_data_cleanup<T: Sized>(t: &mut T) {
     let bytes = unsafe {
-        core::slice::from_raw_parts_mut(t as *mut T as u64 as *mut u8, core::mem::size_of::<T>())
+        core::slice::from_raw_parts_mut(t as *mut T as *mut u8, core::mem::size_of::<T>())
     };
     bytes.zeroize();
 }
