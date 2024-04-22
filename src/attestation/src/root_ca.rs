@@ -17,7 +17,7 @@ pub fn set_ca(cert: &'static [u8]) -> Result<(), Error> {
 
     if ROOT_CA
         .get()
-        .unwrap()
+        .ok_or(Error::InvalidRootCa)?
         .tbs_certificate
         .subject_public_key_info
         .subject_public_key
