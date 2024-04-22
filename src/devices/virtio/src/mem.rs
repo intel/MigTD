@@ -45,13 +45,33 @@ impl MemoryRegion {
     }
 
     // Expose the entire region as a byte slice
-    pub fn as_bytes(&mut self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.base as *const u8, self.length as usize) }
+    pub fn as_bytes(&self) -> Result<&[u8], MemoryRegionError> {
+        if self.base.checked_add(self.length).is_some() {
+            Ok(
+                unsafe {
+                    core::slice::from_raw_parts(self.base as *const u8, self.length as usize)
+                },
+            )
+        } else {
+            Err(MemoryRegionError {
+                region: *self,
+                offset: self.length,
+            })
+        }
     }
 
     // Expose the entire region as a byte slice
-    pub fn as_mut_bytes(&mut self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.base as *mut u8, self.length as usize) }
+    pub fn as_mut_bytes(&mut self) -> Result<&mut [u8], MemoryRegionError> {
+        if self.base.checked_add(self.length).is_some() {
+            Ok(unsafe {
+                core::slice::from_raw_parts_mut(self.base as *mut u8, self.length as usize)
+            })
+        } else {
+            Err(MemoryRegionError {
+                region: *self,
+                offset: self.length,
+            })
+        }
     }
 
     /// Expose a section of the memory region as a slice
