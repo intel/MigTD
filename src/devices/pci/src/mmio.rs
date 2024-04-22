@@ -52,7 +52,9 @@ pub fn alloc_mmio32(size: u32) -> Result<u32> {
         return Err(PciError::MmioOutofResource);
     }
 
-    *MMIO32.lock() = addr as u32 + size;
+    *MMIO32.lock() = (addr as u32)
+        .checked_add(size)
+        .ok_or(PciError::InvalidParameter)?;
     Ok(addr as u32)
 }
 
