@@ -47,8 +47,13 @@ fn remove_stream_from_binding_map(stream: &VsockStream) {
 }
 
 pub fn register_vsock_device(dev: VsockDevice) -> Result {
-    VSOCK_DEVICE.lock().call_once(|| dev);
-    VSOCK_DEVICE.lock().get_mut().unwrap().transport.init()?;
+    let mut vsock_device = VSOCK_DEVICE.lock();
+    vsock_device.call_once(|| dev);
+    vsock_device
+        .get_mut()
+        .ok_or(VsockError::Initialization)?
+        .transport
+        .init()?;
     Ok(())
 }
 
