@@ -49,6 +49,8 @@ pub static IRQ_FLAG: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub enum VirtioSerialError {
+    /// Initialization error
+    Initialization,
     /// Virtio/virtqueue error
     Virtio(VirtioError),
     /// Invalid parameter
@@ -68,6 +70,7 @@ pub enum VirtioSerialError {
 impl Display for VirtioSerialError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            VirtioSerialError::Initialization => write!(f, "Initialization"),
             VirtioSerialError::Virtio(e) => write!(f, "Virtio: {}", e),
             VirtioSerialError::InvalidParameter => write!(f, "InvalidParameter"),
             VirtioSerialError::OutOfResource => write!(f, "OutOfResource"),
@@ -100,8 +103,12 @@ lazy_static! {
 }
 
 pub fn register_serial_device(dev: VirtioSerial) -> Result<()> {
-    SERIAL_DEVICE.lock().call_once(|| dev);
-    SERIAL_DEVICE.lock().get_mut().unwrap().init()?;
+    let mut serial_device = SERIAL_DEVICE.lock();
+    serial_device.call_once(|| dev);
+    serial_device
+        .get_mut()
+        .ok_or(VirtioSerialError::Initialization)?
+        .init()?;
     Ok(())
 }
 
