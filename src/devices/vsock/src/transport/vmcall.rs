@@ -101,7 +101,7 @@ impl VmcallVsock {
         header.extend_from_slice(&pkt[..HEADER_LEN]);
 
         // Parse the data length from the packet header and copy it out from DMA buffer
-        let packet_hdr = Packet::new_unchecked(&header[..]);
+        let packet_hdr = Packet::new_checked(&header[..]);
         let data_len = packet_hdr.data_len();
         if data_len != 0 {
             if data_len as usize > pkt.len() - HEADER_LEN {
