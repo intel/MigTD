@@ -62,6 +62,8 @@ use crate::mem;
 use crate::{Result, VirtioError, VirtioTransport};
 use pci::PciDevice;
 
+const VIRTIO_PCI_MAX_CAP_TYPE: usize = 6;
+
 #[allow(clippy::enum_variant_names)]
 enum VirtioPciCapabilityType {
     CommonConfig = 1,
@@ -75,13 +77,13 @@ enum VirtioPciCapabilityType {
 
 #[derive(Default)]
 struct CheckRegionOverlap {
-    flag: [bool; 6],         // VirtioPciCapabilityType max value
-    interval: [[u64; 2]; 6], // VirtioPciCapabilityType max value
+    flag: [bool; VIRTIO_PCI_MAX_CAP_TYPE], // VirtioPciCapabilityType max value
+    interval: [[u64; 2]; VIRTIO_PCI_MAX_CAP_TYPE], // VirtioPciCapabilityType max value
 }
 
 impl CheckRegionOverlap {
     fn set_region(&mut self, index: usize, base: u64, length: u64) -> Result<()> {
-        if index > 6 {
+        if index >= VIRTIO_PCI_MAX_CAP_TYPE {
             return Err(VirtioError::InvalidParameter);
         }
 
