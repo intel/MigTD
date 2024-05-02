@@ -762,7 +762,12 @@ impl VirtioSerial {
             .borrow_mut()
             .pop_used(&mut g2h, &mut h2g)?;
 
-        *self.receive_queues_prefill.index_mut(queue_idx / 2) -= h2g.len();
+        let prefill_num = self.receive_queues_prefill.index_mut(queue_idx / 2);
+        if *prefill_num < h2g.len() {
+            return Err(VirtioSerialError::Device);
+        }
+        *prefill_num -= h2g.len();
+
         self.receive_data(port_id, &h2g, len)?;
         self.fill_port_queue(port_id)?;
 
