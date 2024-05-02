@@ -10,7 +10,7 @@ pub const UNIX_EPOCH: SystemTime = SystemTime(0);
 
 impl SystemTime {
     pub fn duration_since(&self, time: SystemTime) -> Result<Duration, SystemTimeError> {
-        if self.0 - time.0 > 0 {
+        if self.0 >= time.0 {
             Ok(Duration::new(self.0 - time.0, 0))
         } else {
             Err(SystemTimeError)
