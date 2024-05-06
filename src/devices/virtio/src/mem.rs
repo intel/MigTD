@@ -137,7 +137,7 @@ impl MemoryRegion {
     }
 
     /// Write a value at the given offset
-    pub fn write<T>(&self, offset: u64, value: T) -> Result<(), MemoryRegionError> {
+    pub fn write<T>(&mut self, offset: u64, value: T) -> Result<(), MemoryRegionError> {
         if self.base.checked_add(offset).is_none()
             || offset
                 .checked_add(size_of::<T>() as u64)
@@ -158,22 +158,22 @@ impl MemoryRegion {
     }
 
     /// Write a single byte at given offset
-    pub fn write_u8(&self, offset: u64, value: u8) -> Result<(), MemoryRegionError> {
+    pub fn write_u8(&mut self, offset: u64, value: u8) -> Result<(), MemoryRegionError> {
         self.write(offset, value)
     }
 
     /// Write a single word at given offset
-    pub fn write_u16(&self, offset: u64, value: u16) -> Result<(), MemoryRegionError> {
+    pub fn write_u16(&mut self, offset: u64, value: u16) -> Result<(), MemoryRegionError> {
         self.write(offset, value)
     }
 
     /// Write a single dword at given offset
-    pub fn write_u32(&self, offset: u64, value: u32) -> Result<(), MemoryRegionError> {
+    pub fn write_u32(&mut self, offset: u64, value: u32) -> Result<(), MemoryRegionError> {
         self.write(offset, value)
     }
 
     /// Write a single qword at given offset
-    pub fn write_u64(&self, offset: u64, value: u64) -> Result<(), MemoryRegionError> {
+    pub fn write_u64(&mut self, offset: u64, value: u64) -> Result<(), MemoryRegionError> {
         self.write(offset, value)
     }
 
