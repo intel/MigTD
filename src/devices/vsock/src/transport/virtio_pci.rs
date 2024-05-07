@@ -374,7 +374,7 @@ impl VsockTransport for VirtioVsock {
             .set_timeout(timeout)
             .ok_or(VsockTransportError::InvalidParameter)?;
 
-        while !self.tx.borrow_mut().can_pop() {
+        while !self.tx.borrow_mut().can_pop() && !self.timer.is_timeout() {
             if !wait_for_event(&TX_FLAG, self.timer.as_ref()) && !self.tx.borrow_mut().can_pop() {
                 return Err(VsockTransportError::Timeout);
             }
@@ -407,7 +407,7 @@ impl VsockTransport for VirtioVsock {
             .ok_or(VsockTransportError::InvalidParameter)?;
 
         loop {
-            while !self.rx.borrow_mut().can_pop() {
+            while !self.rx.borrow_mut().can_pop() && !self.timer.is_timeout() {
                 if !wait_for_event(&RX_FLAG, self.timer.as_ref()) && !self.rx.borrow_mut().can_pop()
                 {
                     return Err(VsockTransportError::Timeout);
