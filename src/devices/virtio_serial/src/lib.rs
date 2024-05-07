@@ -468,7 +468,7 @@ impl VirtioSerial {
             .set_timeout(DEFAULT_TIMEOUT)
             .ok_or(VirtioSerialError::InvalidParameter)?;
 
-        while !vq.borrow_mut().can_pop() {
+        while !vq.borrow_mut().can_pop() && !self.timer.is_timeout() {
             if !wait_for_event(&IRQ_FLAG, self.timer.as_ref()) && !vq.borrow_mut().can_pop() {
                 return Err(VirtioSerialError::Timeout);
             }
@@ -563,7 +563,7 @@ impl VirtioSerial {
             .set_timeout(DEFAULT_TIMEOUT)
             .ok_or(VirtioSerialError::InvalidParameter)?;
 
-        while !vq.borrow_mut().can_pop() {
+        while !vq.borrow_mut().can_pop() && !self.timer.is_timeout() {
             if !wait_for_event(&IRQ_FLAG, self.timer.as_ref()) && !vq.borrow_mut().can_pop() {
                 return Err(VirtioSerialError::Timeout);
             }
@@ -606,7 +606,7 @@ impl VirtioSerial {
             .set_timeout(timeout)
             .ok_or(VirtioSerialError::InvalidParameter)?;
 
-        while !vq.borrow_mut().can_pop() {
+        while !vq.borrow_mut().can_pop() && !self.timer.is_timeout() {
             if !wait_for_event(&IRQ_FLAG, self.timer.as_ref()) && !vq.borrow_mut().can_pop() {
                 return Err(VirtioSerialError::Timeout);
             }
@@ -705,7 +705,7 @@ impl VirtioSerial {
         loop {
             let vq = self.queues.index(Self::port_queue_index(port_id) as usize);
 
-            while !vq.borrow_mut().can_pop() {
+            while !vq.borrow_mut().can_pop() && !self.timer.is_timeout() {
                 if !wait_for_event(&IRQ_FLAG, self.timer.as_ref()) && !vq.borrow_mut().can_pop() {
                     return Err(VirtioSerialError::Timeout);
                 }
