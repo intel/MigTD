@@ -368,6 +368,12 @@ echo "qom-set /objects/tdx0/ migtd-pid $(pgrep migtd-src)" | nc -U /tmp/qmp-sock
 echo "qom-set /objects/tdx0/ migtd-pid $(pgrep migtd-dst)" | nc -U /tmp/qmp-sock-dst
 ```
 
+### Network connection timeout
+
+Communication channel between two MigTDs relies on the network connection built by host. MigTD 
+sets a timeout for network connection, which requires the connection needs to be setup within 8 
+seconds after triggering the pre-migration. Please note that the timeout duration is not
+configurable.
 
 ## Reproducible Build
 
