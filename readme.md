@@ -106,6 +106,8 @@ To build a MigTD binary with a pre-production migration policy:
 cargo image --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --policy config/policy_pre_production_fmspc.json
 ```
 
+Note: The pre-migration between MigTD built with pre-production certificate and MigTD built with production certificate is not suppported.
+
 The pre-production attestation policy is:
  * Root certificate at `config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer`.
    * It can be downloaded from https://sbx-certificates.trustedservices.intel.com/Intel_SGX_Provisioning_Certification_RootCA.cer.
