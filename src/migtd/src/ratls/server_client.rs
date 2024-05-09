@@ -118,6 +118,7 @@ fn verify_client_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), Cry
     verify_peer_cert(false, cert, quote)
 }
 
+#[cfg(not(feature = "test_disable_ra_and_accept_all"))]
 fn verify_peer_cert(
     is_client: bool,
     cert: &[u8],
@@ -136,7 +137,6 @@ fn verify_peer_cert(
     let (quote_report, event_log) =
         parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
 
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     if let Ok(verified_report_peer) = attestation::verify_quote(quote_report) {
         verify_signature(&cert, verified_report_peer.as_slice())?;
 
@@ -164,9 +164,26 @@ fn verify_peer_cert(
             MUTUAL_ATTESTATION_ERROR.to_string(),
         ))
     }
+}
 
-    // Only for test to bypass the quote verification
-    #[cfg(feature = "test_disable_ra_and_accept_all")]
+// Only for test to bypass the quote verification
+#[cfg(feature = "test_disable_ra_and_accept_all")]
+fn verify_peer_cert(
+    _is_client: bool,
+    cert: &[u8],
+    _quote_local: &[u8],
+) -> core::result::Result<(), CryptoError> {
+    let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
+
+    let extensions = cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .ok_or(CryptoError::ParseCertificate)?;
+    let _ = parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
+
+    // As the remote attestation is disabled, the certificate can't be verified. Aways return
+    // success for test purpose.
     Ok(())
 }
 

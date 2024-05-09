@@ -61,7 +61,7 @@ fn measure_test_feature(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(
         event_log,
         TAGGED_EVENT_ID_TEST,
-        "test_disable_ra_and_accept_all",
+        b"test_disable_ra_and_accept_all",
     )
     .expect("Failed to log migtd test feature");
 }
