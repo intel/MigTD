@@ -49,6 +49,7 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     arch::init::pre_init(hob as u64, &layout);
 
     // Init internal heap
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     attestation::attest_init_heap();
 
     // Run the global constructors
