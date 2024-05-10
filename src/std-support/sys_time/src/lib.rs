@@ -13,7 +13,7 @@ use time::{Date, Month, PrimitiveDateTime, Time};
 pub mod rtc;
 
 pub fn get_sys_time() -> Option<i64> {
-    let data_time = read_rtc();
+    let data_time = read_rtc()?;
 
     let date_time = PrimitiveDateTime::new(
         Date::from_calendar_date(

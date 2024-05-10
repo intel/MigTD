@@ -49,27 +49,35 @@ pub struct DateTime {
     pub year: u16,
 }
 
-pub fn read_rtc() -> DateTime {
+pub fn read_rtc() -> Option<DateTime> {
     // It is possible to read the time and date while an update is in progress and get inconsistent
     // values, for example, at 9:00 o'clock we might get 8:59, or 8:60, or 8:00, or 9:00.
     // The solution here is to read all the values we need twice, and make sure the update_in_progress
     // flag is clear before each reading. If the two values are the same, then we get a correct value.
-    loop {
+
+    // Retry for up to 500 times for the RTC to be ready, it takes about 100ms.
+    let mut retries = 500;
+    while retries > 0 {
         // Wait until RTC finishes its update
         while get_update_in_progress_flag() > 0 {}
         let first_read = read_date_time();
 
         // If the flag is set before our second reading, we can't get the same value
         if get_update_in_progress_flag() > 0 {
+            retries -= 1;
             continue;
         }
         let second_read = read_date_time();
 
         // Compare the values read out twice. If they are equal, then we get a correct value
         if first_read == second_read {
-            return first_read;
+            return Some(first_read);
+        } else {
+            retries -= 1;
         }
     }
+
+    None
 }
 
 /// Convert a value in BCD format into binary mode
