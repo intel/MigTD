@@ -65,6 +65,9 @@ jobs:
       - name: Build MigTD binary with a default production migration policy(virtio-serial)
         run: cargo image --no-default-features --features main,stack-guard,virtio-serial
 
+      - name: Build MigTD binary with feature `test_disable_ra_and_accept_all`
+        run: cargo image --features test_disable_ra_and_accept_all
+
   build_migtd_debug:
     name: Build final migtd - debug
     runs-on: ubuntu-20.04
