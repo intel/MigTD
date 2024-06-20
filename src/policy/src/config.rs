@@ -4,7 +4,6 @@
 
 use alloc::{collections::BTreeMap, fmt::Write, string::String, vec::Vec};
 use core::{mem::size_of, ops, str::FromStr};
-use lexical_core::parse;
 use serde::{
     de::{Error, Visitor},
     Deserialize, Deserializer,
@@ -315,13 +314,13 @@ fn parse_range(input: &str) -> Option<ops::Range<usize>> {
     let start = if parts[0].is_empty() {
         usize::MIN
     } else {
-        parse::<usize>(parts[0].as_bytes()).ok()?
+        usize::from_str(parts[0]).ok()?
     };
 
     let end: usize = if parts[1].is_empty() {
         usize::MAX
     } else {
-        parse::<usize>(parts[1].as_bytes()).ok()?
+        usize::from_str(parts[1]).ok()?
     };
 
     Some(start..end)
