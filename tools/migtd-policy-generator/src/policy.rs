@@ -288,6 +288,7 @@ impl TdxModulePolicy {
         match id {
             "TDX_01" => 1,
             "TDX_02" => 2,
+            "TDX_03" => 3,
             _ => {
                 panic!("Unexpected TDX Module ID");
             }
