@@ -1013,6 +1013,59 @@
                 "TcbInfo": {
                     "pcesvn": {
                         "operation": "greater-or-equal",
+                        "reference": 0
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            0,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    }
+                }
+            },
+            "fmspc": "10D06D000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
                         "reference": 11
                     },
                     "sgxtcbcomponents": {
@@ -1207,6 +1260,28 @@
                     "TDXModuleMajorVersion": {
                         "operation": "equal",
                         "reference": 2
+                    },
+                    "TDXModuleSVN": {
+                        "operation": "equal",
+                        "reference": 0
+                    }
+                }
+            }
+        },
+        {
+            "TDXModule": {
+                "TDXModule_Identity": {
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "TDXModuleMajorVersion": {
+                        "operation": "equal",
+                        "reference": 3
                     },
                     "TDXModuleSVN": {
                         "operation": "equal",

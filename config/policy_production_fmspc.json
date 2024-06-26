@@ -170,8 +170,8 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            1,
-                            1,
+                            2,
+                            2,
                             2,
                             2,
                             3,
@@ -193,7 +193,7 @@
                         "reference": [
                             4,
                             0,
-                            1,
+                            2,
                             0,
                             0,
                             0,
@@ -371,6 +371,59 @@
                 }
             },
             "fmspc": "40A06F000000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            2,
+                            2,
+                            2,
+                            2,
+                            2,
+                            255,
+                            0,
+                            2,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            3,
+                            0,
+                            2,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    }
+                }
+            },
+            "fmspc": "60A06F000000"
         },
         {
             "Platform": {
@@ -753,8 +806,8 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            1,
-                            1,
+                            2,
+                            2,
                             2,
                             2,
                             3,
@@ -776,7 +829,7 @@
                         "reference": [
                             4,
                             0,
-                            1,
+                            2,
                             0,
                             0,
                             0,
