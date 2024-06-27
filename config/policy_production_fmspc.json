@@ -941,6 +941,28 @@
                     },
                     "TDXModuleMajorVersion": {
                         "operation": "equal",
+                        "reference": 3
+                    },
+                    "TDXModuleSVN": {
+                        "operation": "equal",
+                        "reference": 2
+                    }
+                }
+            }
+        },
+        {
+            "TDXModule": {
+                "TDXModule_Identity": {
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "TDXModuleMajorVersion": {
+                        "operation": "equal",
                         "reference": 1
                     },
                     "TDXModuleSVN": {
