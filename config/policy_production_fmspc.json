@@ -59,6 +59,59 @@
                 "TcbInfo": {
                     "pcesvn": {
                         "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            1,
+                            255,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            4,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    }
+                }
+            },
+            "fmspc": "10A06D070000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
                         "reference": 11
                     },
                     "sgxtcbcomponents": {
@@ -924,6 +977,28 @@
                     "MRSIGNER": {
                         "operation": "equal",
                         "reference": "DC9E2A7C6F948F17474E34A7FC43ED030F7C1563F1BABDDF6340C82E0E54A8C5"
+                    }
+                }
+            }
+        },
+        {
+            "TDXModule": {
+                "TDXModule_Identity": {
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "TDXModuleMajorVersion": {
+                        "operation": "equal",
+                        "reference": 3
+                    },
+                    "TDXModuleSVN": {
+                        "operation": "equal",
+                        "reference": 2
                     }
                 }
             }
