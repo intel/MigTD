@@ -1,5 +1,5 @@
 diff --git a/rustls/Cargo.toml b/rustls/Cargo.toml
-index bc8b5e77..de05409d 100644
+index 4ec52f86..1962fb28 100644
 --- a/rustls/Cargo.toml
 +++ b/rustls/Cargo.toml
 @@ -18,14 +18,18 @@ rustversion = { version = "1.0.6", optional = true }
@@ -9,7 +9,7 @@ index bc8b5e77..de05409d 100644
 -ring = { version = "0.17", optional = true }
 +ring = { version = "0.17", features = ["alloc", "less-safe-getrandom-custom-or-rdrand"], default-features = false, optional = true }
  subtle = { version = "2.5.0", default-features = false }
--webpki = { package = "rustls-webpki", version = "0.102", features = ["std"], default-features = false }
+-webpki = { package = "rustls-webpki", version = "0.102.1", features = ["std"], default-features = false }
 -pki-types = { package = "rustls-pki-types", version = "1", features = ["std"] }
 +webpki = { package = "rustls-webpki", version = "0.102", features = ["alloc", "ring"], default-features = false }
 +pki-types = { package = "rustls-pki-types", version = "1" }
@@ -73,7 +73,7 @@ index fdd53b95..e8926b47 100644
              nst.age_add,
              nst.get_max_early_data_size()
 diff --git a/rustls/src/error.rs b/rustls/src/error.rs
-index 062b54ec..de0a5383 100644
+index 7d692b7f..4c7c3eb2 100644
 --- a/rustls/src/error.rs
 +++ b/rustls/src/error.rs
 @@ -550,7 +550,7 @@ impl From<rand::GetRandomFailed> for Error {
@@ -99,10 +99,10 @@ index 062b54ec..de0a5383 100644
  mod tests {
      use super::{Error, InvalidMessage};
 diff --git a/rustls/src/lib.rs b/rustls/src/lib.rs
-index 0c03a438..b7089921 100644
+index 8988f31c..2ba40be4 100644
 --- a/rustls/src/lib.rs
 +++ b/rustls/src/lib.rs
-@@ -272,7 +272,9 @@
+@@ -273,7 +273,9 @@
  
  // Require docs for public APIs, deny unsafe code, etc.
  #![forbid(unsafe_code, unused_must_use)]
@@ -113,7 +113,7 @@ index 0c03a438..b7089921 100644
  #![deny(
      clippy::alloc_instead_of_core,
      clippy::clone_on_ref_ptr,
-@@ -284,8 +286,7 @@
+@@ -285,8 +287,7 @@
      missing_docs,
      unreachable_pub,
      unused_import_braces,
@@ -123,7 +123,7 @@ index 0c03a438..b7089921 100644
  )]
  // Relax these clippy lints:
  // - ptr_arg: this triggers on references to type aliases that are Vec
-@@ -304,6 +305,8 @@
+@@ -305,6 +306,8 @@
      clippy::single_component_path_imports,
      clippy::new_without_default
  )]
@@ -132,11 +132,10 @@ index 0c03a438..b7089921 100644
  // Enable documentation for all features on docs.rs
  #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
  // XXX: Because of https://github.com/rust-lang/rust/issues/54726, we cannot
-@@ -325,9 +328,20 @@ extern crate alloc;
+@@ -326,8 +329,20 @@ extern crate alloc;
  // is in `std::prelude` but not in `core::prelude`. This helps maintain no-std support as even
  // developers that are not interested in, or aware of, no-std support and / or that never run
  // `cargo build --no-default-features` locally will get errors when they rely on `std::prelude` API.
--#[cfg(not(test))]
 +#[cfg(all(not(test), feature = "std"))]
  extern crate std;
  
@@ -154,7 +153,7 @@ index 0c03a438..b7089921 100644
  // Import `test` sysroot crate for `Bencher` definitions.
  #[cfg(bench)]
  #[allow(unused_extern_crates)]
-@@ -371,6 +385,7 @@ mod bs_debug;
+@@ -374,6 +389,7 @@ mod bs_debug;
  mod builder;
  mod enums;
  mod key_log;
@@ -162,7 +161,7 @@ index 0c03a438..b7089921 100644
  mod key_log_file;
  mod suites;
  mod versions;
-@@ -438,7 +453,10 @@ pub use crate::error::{
+@@ -441,7 +457,10 @@ pub use crate::error::{
      CertRevocationListError, CertificateError, Error, InvalidMessage, OtherError, PeerIncompatible,
      PeerMisbehaved,
  };
@@ -174,7 +173,7 @@ index 0c03a438..b7089921 100644
  pub use crate::msgs::enums::NamedGroup;
  pub use crate::msgs::handshake::DistinguishedName;
 diff --git a/rustls/src/server/tls13.rs b/rustls/src/server/tls13.rs
-index 5e672908..5dccbb5b 100644
+index 290fb3db..45121a2d 100644
 --- a/rustls/src/server/tls13.rs
 +++ b/rustls/src/server/tls13.rs
 @@ -312,10 +312,16 @@ mod client_hello {
