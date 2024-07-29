@@ -165,59 +165,6 @@
                 "TcbInfo": {
                     "pcesvn": {
                         "operation": "greater-or-equal",
-                        "reference": 10
-                    },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            2,
-                            2,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
-                    "tdxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            0,
-                            0,
-                            3,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    }
-                }
-            },
-            "fmspc": "10806F000000"
-        },
-        {
-            "Platform": {
-                "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
                         "reference": 0
                     },
                     "sgxtcbcomponents": {
