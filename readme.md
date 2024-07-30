@@ -1,6 +1,6 @@
 # rust-migtd
 
-A rust version of Migration TD.
+A Rust version of Migration TD.
 
 Migration TD (MigTD) is used to evaluate potential migration sources and targets for adherence to the TD Migration Policy, then securely transfer a Migration Session Key from the source platform to the destination platform to migrate assets of a specific TD.
 
