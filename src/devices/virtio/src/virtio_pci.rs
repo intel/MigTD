@@ -320,7 +320,7 @@ impl VirtioTransport for VirtioPciTransport {
                     return Err(VirtioError::InvalidParameter);
                 }
 
-                let table_offset = self.device.read_u32(cap_next + MSIX_BIR_OFFSET) >> 3;
+                let table_offset = self.device.read_u32(cap_next + MSIX_BIR_OFFSET) & 0xffff_fff8;
                 // Message Control:
                 // Bit 15 	Bit 14 	Bits 13-11 	Bits 10-0
                 // Enable 	Function Mask 	Reserved 	Table Size
@@ -328,7 +328,7 @@ impl VirtioTransport for VirtioPciTransport {
 
                 // Table Offset is an offset into that BAR where the Message Table lives.
                 // Note that it is 8-byte aligned - so simply mask BIR.
-                if table_offset & 8 != 0 || table_size > MSIX_MAX_VECTORS {
+                if table_offset & 0x7 != 0 || table_size > MSIX_MAX_VECTORS {
                     return Err(VirtioError::InvalidParameter);
                 }
 
