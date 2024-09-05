@@ -10,8 +10,7 @@ The specification of MigTD is at [Intel TDX Migration TD Design Guide](https://c
 
 The full TD Migration architecture and flow is discussed in [TD Migration Architecture Specification](https://cdrdv2.intel.com/v1/dl/getContent/733578).
 
-## Known limitation
-This package is only the sample code to show the concept. It does not have a full validation such as robustness functional test and fuzzing test. It does not meet the production quality yet. Any codes including the API definition, the library and the drivers are subject to change.
+This package is the sample code to show the concept of Migration TD in TDX Migration Architecture. It also includes unit tests and fuzzing tests.
 
 ## How to build
 
