@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 cfg-if = "1.0"
-der = {version = "0.5.1", features = ["oid", "alloc", "derive"]}
+der = {version = "0.7.9", features = ["oid", "alloc", "derive"]}
 pki-types = { package = "rustls-pki-types", version = "1" }
 rust_std_stub = { path = "../std-support/rust-std-stub" }
 rustls = { path = "../../deps/rustls/rustls", default-features = false, features = ["no_std"], optional = true }

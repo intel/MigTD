@@ -8,8 +8,10 @@ use crate::{
 };
 use alloc::{string::String, vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void, ops::Range};
-use crypto::x509;
-use der::{asn1::ObjectIdentifier, Any, Decodable, Decoder};
+use crypto::{
+    x509,
+    x509::{Decode, ObjectIdentifier, OctetStringRef, Reader},
+};
 use tdx_tdcall::tdreport::*;
 
 const TD_QUOTE_SIZE: usize = 0x2000;
@@ -101,11 +103,11 @@ pub fn get_fmspc_from_quote(quote: &[u8]) -> Result<[u8; 6], Error> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InnerValue<'a> {
     pub id: ObjectIdentifier,
-    pub value: Option<Any<'a>>,
+    pub value: Option<OctetStringRef<'a>>,
 }
 
-impl<'a> Decodable<'a> for InnerValue<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
+impl<'a> Decode<'a> for InnerValue<'a> {
+    fn decode<R: der::Reader<'a>>(decoder: &mut R) -> der::Result<Self> {
         decoder.sequence(|decoder| {
             let id = decoder.decode()?;
             let value = decoder.decode()?;
@@ -117,8 +119,8 @@ impl<'a> Decodable<'a> for InnerValue<'a> {
 
 fn parse_fmspc_from_pck_cert(pck_der: &[u8]) -> Result<[u8; 6], Error> {
     const PCK_FMSPC_EXTENSION_OID: ObjectIdentifier =
-        ObjectIdentifier::new("1.2.840.113741.1.13.1");
-    const PCK_FMSPC_OID: ObjectIdentifier = ObjectIdentifier::new("1.2.840.113741.1.13.1.4");
+        ObjectIdentifier::new_unwrap("1.2.840.113741.1.13.1");
+    const PCK_FMSPC_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113741.1.13.1.4");
 
     let x509 = x509::Certificate::from_der(pck_der).map_err(|_| Error::InvalidQuote)?;
     let extensions = x509.tbs_certificate.extensions.ok_or(Error::InvalidQuote)?;
@@ -132,8 +134,6 @@ fn parse_fmspc_from_pck_cert(pck_der: &[u8]) -> Result<[u8; 6], Error> {
                     return val
                         .value
                         .ok_or(Error::InvalidQuote)?
-                        .octet_string()
-                        .map_err(|_| Error::InvalidQuote)?
                         .as_bytes()
                         .try_into()
                         .map_err(|_| Error::InvalidQuote);

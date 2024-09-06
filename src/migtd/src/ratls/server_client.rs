@@ -8,7 +8,7 @@ use crypto::{
     hash::digest_sha384,
     tls::{SecureChannel, TlsConfig},
     x509::{
-        AlgorithmIdentifier, Any, BitString, Certificate, CertificateBuilder, Decodable, Encodable,
+        AlgorithmIdentifier, AnyRef, BitStringRef, Certificate, CertificateBuilder, Decode, Encode,
         ExtendedKeyUsage, Extension, Extensions, Tag,
     },
     Error as CryptoError, Result as CryptoResult,
@@ -47,16 +47,19 @@ pub fn client<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
 fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
     let algorithm = AlgorithmIdentifier {
         algorithm: ID_EC_PUBKEY_OID,
-        parameters: Some(Any::new(Tag::ObjectIdentifier, SECP384R1_OID.as_bytes())?),
+        parameters: Some(AnyRef::new(
+            Tag::ObjectIdentifier,
+            SECP384R1_OID.as_bytes(),
+        )?),
     };
-    let eku = vec![SERVER_AUTH, CLIENT_AUTH, MIGTD_EXTENDED_KEY_USAGE].to_vec()?;
+    let eku = vec![SERVER_AUTH, CLIENT_AUTH, MIGTD_EXTENDED_KEY_USAGE].to_der()?;
 
     let pub_key = signing_key.public_key()?;
     let sig_alg = AlgorithmIdentifier {
         algorithm: ID_EC_SIG_OID,
         parameters: None,
     };
-    let key_usage = BitString::from_bytes(&[0x80])?.to_vec()?;
+    let key_usage = BitStringRef::from_bytes(&[0x80])?.to_der()?;
     let quote = gen_quote(&pub_key)?;
     let event_log = get_event_log().ok_or(RatlsError::InvalidEventlog)?;
     let mut x509_certificate = CertificateBuilder::new(sig_alg, algorithm, &pub_key)?
@@ -85,11 +88,11 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
             Some(event_log),
         )?)?
         .build();
-    let tbs = x509_certificate.tbs_certificate.to_vec()?;
+    let tbs = x509_certificate.tbs_certificate.to_der()?;
     let signature = signing_key.sign(&tbs)?;
     x509_certificate.set_signature(&signature)?;
 
-    Ok((x509_certificate.to_vec().map_err(CryptoError::from)?, quote))
+    Ok((x509_certificate.to_der().map_err(CryptoError::from)?, quote))
 }
 
 fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
@@ -225,7 +228,7 @@ fn verify_signature(cert: &Certificate, verified_report: &[u8]) -> CryptoResult<
         .subject_public_key
         .as_bytes()
         .ok_or(CryptoError::ParseCertificate)?;
-    let tbs = cert.tbs_certificate.to_vec()?;
+    let tbs = cert.tbs_certificate.to_der()?;
     let signature = cert
         .signature_value
         .as_bytes()

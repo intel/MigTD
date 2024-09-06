@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use crypto::x509::Certificate;
-use der::Decodable;
+use crypto::x509::{Certificate, Decode};
 use spin::Once;
 
 use crate::Error;
