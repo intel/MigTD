@@ -5,13 +5,14 @@
 use alloc::vec::Vec;
 use core::convert::{TryFrom, TryInto};
 pub use der::asn1::{
-    Any, BitString, GeneralizedTime, ObjectIdentifier, OctetString, PrintableString, SequenceOf,
-    SetOfVec, UIntBytes, UtcTime, Utf8String,
+    AnyRef, BitStringRef, GeneralizedTime, ObjectIdentifier, OctetString, OctetStringRef,
+    PrintableString, PrintableStringRef, SequenceOf, SetOfVec, UintRef, UtcTime, Utf8StringRef,
 };
 pub use der::{
-    Choice, Decodable, Decoder, DerOrd, Encodable, Error as DerError, Header, Sequence, Tag,
-    TagNumber, Tagged,
+    Choice, Decode, DerOrd, Encode, Error as DerError, Header, Reader, Sequence, Tag, TagNumber,
+    Tagged,
 };
+use der::{ErrorKind, TagMode};
 
 pub struct CertificateBuilder<'a>(Certificate<'a>);
 
@@ -43,7 +44,7 @@ impl<'a> CertificateBuilder<'a> {
     ) -> Result<Self, DerError> {
         let subject_public_key_info = SubjectPublicKeyInfo {
             algorithm,
-            subject_public_key: BitString::new(0, public_key)?,
+            subject_public_key: BitStringRef::new(0, public_key)?,
         };
         self.0.tbs_certificate.subject_public_key_info = subject_public_key_info;
         Ok(self)
@@ -64,9 +65,9 @@ impl<'a> CertificateBuilder<'a> {
         signature: &'a mut Vec<u8>,
         mut signer: impl FnMut(&[u8], &mut Vec<u8>),
     ) -> Result<Self, DerError> {
-        let tbs = self.0.tbs_certificate.to_vec()?;
+        let tbs = self.0.tbs_certificate.to_der()?;
         signer(tbs.as_slice(), signature);
-        self.0.signature_value = BitString::new(0, signature)?;
+        self.0.signature_value = BitStringRef::new(0, signature)?;
         Ok(self)
     }
 
@@ -80,11 +81,11 @@ impl<'a> CertificateBuilder<'a> {
 //    tbsCertificate       TBSCertificate,
 //    signatureAlgorithm   AlgorithmIdentifier,
 //    signatureValue       BIT STRING  }
-#[derive(Clone)]
+#[derive(Clone, Sequence)]
 pub struct Certificate<'a> {
     pub tbs_certificate: TBSCertificate<'a>,
     pub signature_algorithm: AlgorithmIdentifier<'a>,
-    pub signature_value: BitString<'a>,
+    pub signature_value: BitStringRef<'a>,
 }
 
 impl<'a> Certificate<'a> {
@@ -93,23 +94,23 @@ impl<'a> Certificate<'a> {
         algorithm: AlgorithmIdentifier<'a>,
         public_key: &'a [u8],
     ) -> Result<Self, DerError> {
-        let version = Version(UIntBytes::new(&[2])?);
-        let serial_number = UIntBytes::new(&[1])?;
+        let version = Version(UintRef::new(&[2])?);
+        let serial_number = UintRef::new(&[1])?;
 
         let mut country_name = SetOfVec::new();
-        country_name.add(DistinguishedName {
-            attribute_type: ObjectIdentifier::new("2.5.4.6"),
-            value: PrintableString::new("XX")?.into(),
+        country_name.insert(DistinguishedName {
+            attribute_type: ObjectIdentifier::new("2.5.4.6")?,
+            value: PrintableStringRef::new("XX")?.into(),
         })?;
         let mut locality_name = SetOfVec::new();
-        locality_name.add(DistinguishedName {
-            attribute_type: ObjectIdentifier::new("2.5.4.7"),
-            value: Utf8String::new("Default City")?.into(),
+        locality_name.insert(DistinguishedName {
+            attribute_type: ObjectIdentifier::new("2.5.4.7")?,
+            value: Utf8StringRef::new("Default City")?.into(),
         })?;
         let mut organization_name = SetOfVec::new();
-        organization_name.add(DistinguishedName {
-            attribute_type: ObjectIdentifier::new("2.5.4.10"),
-            value: Utf8String::new("Default Company Ltd")?.into(),
+        organization_name.insert(DistinguishedName {
+            attribute_type: ObjectIdentifier::new("2.5.4.10")?,
+            value: Utf8StringRef::new("Default Company Ltd")?.into(),
         })?;
 
         let issuer = vec![country_name, locality_name, organization_name];
@@ -127,7 +128,7 @@ impl<'a> Certificate<'a> {
 
         let subject_public_key_info = SubjectPublicKeyInfo {
             algorithm,
-            subject_public_key: BitString::new(0, public_key)?,
+            subject_public_key: BitStringRef::new(0, public_key)?,
         };
 
         let tbs_certificate = TBSCertificate {
@@ -143,7 +144,7 @@ impl<'a> Certificate<'a> {
             extensions: None,
         };
 
-        let signature_value = BitString::new(0, &[])?;
+        let signature_value = BitStringRef::new(0, &[])?;
 
         Ok(Certificate {
             tbs_certificate,
@@ -157,37 +158,8 @@ impl<'a> Certificate<'a> {
     }
 
     pub fn set_signature(&mut self, signature: &'a [u8]) -> Result<(), DerError> {
-        self.signature_value = BitString::new(0, signature)?;
+        self.signature_value = BitStringRef::new(0, signature)?;
         Ok(())
-    }
-}
-
-impl<'a> Decodable<'a> for Certificate<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        decoder.sequence(|decoder| {
-            let tbs_certificate = decoder.decode()?;
-            let signature_algorithm = decoder.decode()?;
-            let signature_value = decoder.decode()?;
-
-            Ok(Self {
-                tbs_certificate,
-                signature_algorithm,
-                signature_value,
-            })
-        })
-    }
-}
-
-impl<'a> Sequence<'a> for Certificate<'a> {
-    fn fields<F, T>(&self, field_encoder: F) -> der::Result<T>
-    where
-        F: FnOnce(&[&dyn Encodable]) -> der::Result<T>,
-    {
-        field_encoder(&[
-            &self.tbs_certificate,
-            &self.signature_algorithm,
-            &self.signature_value,
-        ])
     }
 }
 
@@ -207,10 +179,10 @@ impl<'a> Sequence<'a> for Certificate<'a> {
 //     extensions      [3]  EXPLICIT Extensions OPTIONAL
 //                          -- If present, version MUST be v3
 // }
-#[derive(Clone)]
+#[derive(Clone, Sequence)]
 pub struct TBSCertificate<'a> {
     pub version: Version<'a>,
-    pub serial_number: UIntBytes<'a>, // ASN.1 INTEGER
+    pub serial_number: UintRef<'a>, // ASN.1 INTEGER
     pub signature: AlgorithmIdentifier<'a>,
     pub issuer: Vec<SetOfVec<DistinguishedName<'a>>>,
     pub validity: Validity,
@@ -221,65 +193,21 @@ pub struct TBSCertificate<'a> {
     pub extensions: Option<Extensions<'a>>,
 }
 
-impl<'a> Decodable<'a> for TBSCertificate<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        decoder.sequence(|decoder| {
-            let version = decoder.decode()?;
-            let serial_number = decoder.decode()?;
-            let signature = decoder.decode()?;
-            let issuer = decoder.decode()?;
-            let validity = decoder.decode()?;
-            let subject = decoder.decode()?;
-            let subject_public_key_info = decoder.decode()?;
-            let issuer_unique_id = decoder.decode()?;
-            let subject_unique_id = decoder.decode()?;
-            let extensions = decoder.decode()?;
-
-            Ok(Self {
-                version,
-                serial_number,
-                signature,
-                issuer,
-                validity,
-                subject,
-                subject_public_key_info,
-                extensions,
-                issuer_unique_id,
-                subject_unique_id,
-            })
-        })
-    }
-}
-
-impl<'a> Sequence<'a> for TBSCertificate<'a> {
-    fn fields<F, T>(&self, field_encoder: F) -> der::Result<T>
-    where
-        F: FnOnce(&[&dyn Encodable]) -> der::Result<T>,
-    {
-        field_encoder(&[
-            &self.version,
-            &self.serial_number,
-            &self.signature,
-            &self.issuer,
-            &self.validity,
-            &self.subject,
-            &self.subject_public_key_info,
-            &self.extensions,
-        ])
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Version<'a>(UIntBytes<'a>);
+pub struct Version<'a>(UintRef<'a>);
 
-impl<'a> Decodable<'a> for Version<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        let res = decoder.any()?;
-        Ok(Self(UIntBytes::from_der(res.value())?))
+impl<'a> Decode<'a> for Version<'a> {
+    fn decode<R: der::Reader<'a>>(decoder: &mut R) -> der::Result<Self> {
+        // let res = decoder.any()?;
+        let v = decoder
+            .context_specific(TagNumber::new(0), TagMode::Explicit)?
+            .ok_or(der::Error::new(ErrorKind::Failed, decoder.position()))?;
+        // let v = decoder.decode()?;
+        Ok(Self(v))
     }
 }
 
-impl<'a> Encodable for Version<'a> {
+impl<'a> Encode for Version<'a> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
@@ -292,7 +220,7 @@ impl<'a> Encodable for Version<'a> {
         explicit.encoded_len() + len
     }
 
-    fn encode(&self, encoder: &mut der::Encoder<'_>) -> der::Result<()> {
+    fn encode(&self, encoder: &mut impl der::Writer) -> der::Result<()> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
             der::Tag::ContextSpecific {
@@ -324,68 +252,22 @@ impl<'a> Choice<'a> for Version<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Sequence)]
 pub struct AlgorithmIdentifier<'a> {
     pub algorithm: ObjectIdentifier,
-    pub parameters: Option<Any<'a>>,
-}
-
-impl<'a> Decodable<'a> for AlgorithmIdentifier<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        decoder.sequence(|decoder| {
-            let algorithm = decoder.decode()?;
-            let parameters = decoder.decode()?;
-
-            Ok(Self {
-                algorithm,
-                parameters,
-            })
-        })
-    }
-}
-
-impl<'a> Sequence<'a> for AlgorithmIdentifier<'a> {
-    fn fields<F, T>(&self, field_encoder: F) -> der::Result<T>
-    where
-        F: FnOnce(&[&dyn Encodable]) -> der::Result<T>,
-    {
-        field_encoder(&[&self.algorithm, &self.parameters])
-    }
+    pub parameters: Option<AnyRef<'a>>,
 }
 
 #[allow(non_snake_case)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Sequence)]
 pub struct DistinguishedName<'a> {
     attribute_type: ObjectIdentifier,
-    value: Any<'a>,
+    value: AnyRef<'a>,
 }
 
 impl<'a> DerOrd for DistinguishedName<'a> {
     fn der_cmp(&self, other: &Self) -> der::Result<core::cmp::Ordering> {
         Ok(self.attribute_type.cmp(&other.attribute_type))
-    }
-}
-
-impl<'a> Decodable<'a> for DistinguishedName<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        decoder.sequence(|decoder| {
-            let attribute_type = decoder.decode()?;
-            let value = decoder.decode()?;
-
-            Ok(Self {
-                attribute_type,
-                value,
-            })
-        })
-    }
-}
-
-impl<'a> Sequence<'a> for DistinguishedName<'a> {
-    fn fields<F, T>(&self, field_encoder: F) -> der::Result<T>
-    where
-        F: FnOnce(&[&dyn Encodable]) -> der::Result<T>,
-    {
-        field_encoder(&[&self.attribute_type, &self.value])
     }
 }
 
@@ -409,77 +291,33 @@ impl From<GeneralizedTime> for Time {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub struct Validity {
     not_before: Time,
     not_after: Time,
 }
 
-impl Decodable<'_> for Validity {
-    fn decode(decoder: &mut Decoder) -> der::Result<Self> {
-        decoder.sequence(|decoder| {
-            let not_before = decoder.decode()?;
-            let not_after = decoder.decode()?;
-
-            Ok(Self {
-                not_before,
-                not_after,
-            })
-        })
-    }
-}
-
-impl Sequence<'_> for Validity {
-    fn fields<F, T>(&self, field_encoder: F) -> der::Result<T>
-    where
-        F: FnOnce(&[&dyn Encodable]) -> der::Result<T>,
-    {
-        field_encoder(&[&self.not_before, &self.not_after])
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Sequence)]
 pub struct SubjectPublicKeyInfo<'a> {
     pub algorithm: AlgorithmIdentifier<'a>,
-    pub subject_public_key: BitString<'a>,
-}
-
-#[allow(non_snake_case)]
-impl<'a> Decodable<'a> for SubjectPublicKeyInfo<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        decoder.sequence(|decoder| {
-            let algorithm = decoder.decode()?;
-            let subject_public_key = decoder.decode()?;
-
-            Ok(Self {
-                algorithm,
-                subject_public_key,
-            })
-        })
-    }
-}
-
-impl<'a> Sequence<'a> for SubjectPublicKeyInfo<'a> {
-    fn fields<F, T>(&self, field_encoder: F) -> der::Result<T>
-    where
-        F: FnOnce(&[&dyn Encodable]) -> der::Result<T>,
-    {
-        field_encoder(&[&self.algorithm, &self.subject_public_key])
-    }
+    pub subject_public_key: BitStringRef<'a>,
 }
 
 #[derive(Clone)]
-pub struct UniqueIdentifier<'a, const N: u8>(BitString<'a>);
+pub struct UniqueIdentifier<'a, const N: u8>(BitStringRef<'a>);
 
-impl<'a, const N: u8> Decodable<'a> for UniqueIdentifier<'a, N> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        let res = decoder.any()?;
-        let uid = BitString::from_der(res.value())?;
-        Ok(Self(uid))
+impl<'a, const N: u8> Decode<'a> for UniqueIdentifier<'a, N> {
+    fn decode<R: der::Reader<'a>>(decoder: &mut R) -> der::Result<Self> {
+        let id = decoder
+            .context_specific(TagNumber::new(N), TagMode::Explicit)?
+            .ok_or(der::Error::new(ErrorKind::Failed, decoder.position()))?;
+        // let id = decoder.decode()?;
+        // let uid = BitStringRef::from_der(res.value())?;
+        Ok(Self(id))
     }
 }
 
-impl<'a, const N: u8> Encodable for UniqueIdentifier<'a, N> {
+impl<'a, const N: u8> Encode for UniqueIdentifier<'a, N> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
@@ -492,7 +330,7 @@ impl<'a, const N: u8> Encodable for UniqueIdentifier<'a, N> {
         explicit.encoded_len() + len
     }
 
-    fn encode(&self, encoder: &mut der::Encoder<'_>) -> der::Result<()> {
+    fn encode(&self, encoder: &mut impl der::Writer) -> der::Result<()> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
             Tag::ContextSpecific {
@@ -533,14 +371,16 @@ impl<'a> Extensions<'a> {
     }
 }
 
-impl<'a> Decodable<'a> for Extensions<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        let res = decoder.any()?;
-        Ok(Self(Vec::from_der(res.value())?))
+impl<'a> Decode<'a> for Extensions<'a> {
+    fn decode<R: der::Reader<'a>>(decoder: &mut R) -> der::Result<Self> {
+        let ext = decoder
+            .context_specific(TagNumber::new(3), TagMode::Explicit)?
+            .ok_or(der::Error::new(ErrorKind::Failed, decoder.position()))?;
+        Ok(Self(ext))
     }
 }
 
-impl<'a> Encodable for Extensions<'a> {
+impl<'a> Encode for Extensions<'a> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
@@ -553,7 +393,7 @@ impl<'a> Encodable for Extensions<'a> {
         explicit.encoded_len() + len
     }
 
-    fn encode(&self, encoder: &mut der::Encoder<'_>) -> der::Result<()> {
+    fn encode(&self, encoder: &mut impl der::Writer) -> der::Result<()> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
             Tag::ContextSpecific {
@@ -585,11 +425,11 @@ impl<'a> Choice<'a> for Extensions<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Sequence)]
 pub struct Extension<'a> {
     pub extn_id: ObjectIdentifier,
     pub critical: Option<bool>, // ASN.1 BOOLEAN.
-    pub extn_value: Option<OctetString<'a>>,
+    pub extn_value: Option<OctetStringRef<'a>>,
 }
 
 impl<'a> Extension<'a> {
@@ -599,7 +439,7 @@ impl<'a> Extension<'a> {
         extn_value: Option<&'a [u8]>,
     ) -> Result<Self, DerError> {
         let extn_value = if let Some(extn_value) = extn_value {
-            Some(OctetString::new(extn_value)?)
+            Some(OctetStringRef::new(extn_value)?)
         } else {
             None
         };
@@ -609,31 +449,6 @@ impl<'a> Extension<'a> {
             critical,
             extn_value,
         })
-    }
-}
-
-impl<'a> Decodable<'a> for Extension<'a> {
-    fn decode(decoder: &mut Decoder<'a>) -> der::Result<Self> {
-        decoder.sequence(|decoder| {
-            let extn_id = decoder.decode()?;
-            let critical = decoder.decode()?;
-            let extn_value = decoder.decode()?;
-
-            Ok(Self {
-                extn_id,
-                critical,
-                extn_value,
-            })
-        })
-    }
-}
-
-impl<'a> Sequence<'a> for Extension<'a> {
-    fn fields<F, T>(&self, field_encoder: F) -> der::Result<T>
-    where
-        F: FnOnce(&[&dyn Encodable]) -> der::Result<T>,
-    {
-        field_encoder(&[&self.extn_id, &self.critical, &self.extn_value])
     }
 }
 
