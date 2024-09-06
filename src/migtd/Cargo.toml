@@ -15,7 +15,7 @@ attestation = { path = "../attestation", default-features = false, optional = tr
 cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
 crypto = { path = "../crypto" }
 lazy_static = { version = "1.0", features = ["spin_no_std"] }
-log = { version = "0.4.13" }
+log = { version = "=0.4.13" }
 pci = { path="../devices/pci" }
 policy = {path = "../policy"}
 rust_std_stub = { path = "../std-support/rust-std-stub" }
