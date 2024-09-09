@@ -1,5 +1,12 @@
 name: cargo-deny
-on: [push, pull_request]
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    # The branches below must be a subset of the branches above
+    branches: [ "main" ]
+  schedule:
+    - cron: '0 0 * * *'
 
 permissions:
   contents: read
