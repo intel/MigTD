@@ -85,7 +85,7 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            4,
+                            5,
                             0,
                             1,
                             0,
@@ -117,8 +117,8 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            6,
-                            6,
+                            7,
+                            7,
                             2,
                             2,
                             3,
@@ -138,9 +138,9 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            3,
+                            5,
                             0,
-                            6,
+                            7,
                             0,
                             0,
                             0,
@@ -230,7 +230,7 @@
                             3,
                             1,
                             0,
-                            3,
+                            5,
                             0,
                             0,
                             0,
@@ -244,7 +244,7 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            4,
+                            5,
                             0,
                             2,
                             0,
@@ -265,59 +265,6 @@
                 }
             },
             "fmspc": "B0C06F000000"
-        },
-        {
-            "Platform": {
-                "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 11
-                    },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            6,
-                            6,
-                            2,
-                            2,
-                            3,
-                            1,
-                            0,
-                            3,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
-                    "tdxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            3,
-                            0,
-                            6,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    }
-                }
-            },
-            "fmspc": "A0806F000000"
         },
         {
             "Platform": {
@@ -350,7 +297,7 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            3,
+                            5,
                             0,
                             2,
                             0,
@@ -456,7 +403,7 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            3,
+                            5,
                             0,
                             2,
                             0,
@@ -647,8 +594,8 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            6,
-                            6,
+                            7,
+                            7,
                             2,
                             2,
                             3,
@@ -668,9 +615,9 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            3,
+                            5,
                             0,
-                            6,
+                            7,
                             0,
                             0,
                             0,
@@ -801,13 +748,66 @@
                 "TcbInfo": {
                     "pcesvn": {
                         "operation": "greater-or-equal",
+                        "reference": 13
+                    },
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            2,
+                            2,
+                            7,
+                            7,
+                            4,
+                            255,
+                            0,
+                            2,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
+                    "tdxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            5,
+                            0,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    }
+                }
+            },
+            "fmspc": "20A06D080000"
+        },
+        {
+            "Platform": {
+                "TcbInfo": {
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
                         "reference": 11
                     },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            6,
-                            6,
+                            7,
+                            7,
                             2,
                             2,
                             3,
@@ -827,9 +827,9 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            3,
+                            5,
                             0,
-                            6,
+                            7,
                             0,
                             0,
                             0,
@@ -866,7 +866,7 @@
                             3,
                             1,
                             0,
-                            3,
+                            5,
                             0,
                             0,
                             0,
@@ -880,7 +880,7 @@
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            4,
+                            5,
                             0,
                             2,
                             0,
@@ -1020,7 +1020,7 @@
                     },
                     "TDXModuleSVN": {
                         "operation": "equal",
-                        "reference": 2
+                        "reference": 4
                     }
                 }
             }
