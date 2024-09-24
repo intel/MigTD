@@ -40,4 +40,3 @@ lto = true
 
 [patch.crates-io]
 ring = { path = "deps/td-shim/library/ring" }
-rustls = { path = "deps/rustls/rustls" }
