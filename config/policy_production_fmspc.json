@@ -967,7 +967,7 @@
                         "reference": 2
                     },
                     "ISVSVN": {
-                        "operation": "equal",
+                        "operation": "greater-or-equal",
                         "reference": 4
                     },
                     "MISCSELECT": {
@@ -997,7 +997,7 @@
                         "reference": 3
                     },
                     "TDXModuleSVN": {
-                        "operation": "equal",
+                        "operation": "greater-or-equal",
                         "reference": 2
                     }
                 }
@@ -1019,7 +1019,7 @@
                         "reference": 1
                     },
                     "TDXModuleSVN": {
-                        "operation": "equal",
+                        "operation": "greater-or-equal",
                         "reference": 4
                     }
                 }

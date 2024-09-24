@@ -162,7 +162,7 @@ impl QePolicy {
                         reference: Reference::Integer(isvprodid),
                     },
                     isvsvn: Property {
-                        operation: "equal".to_string(),
+                        operation: "greater-or-equal".to_string(),
                         reference: Reference::Integer(isvsvn),
                     },
                 },
@@ -262,7 +262,7 @@ impl TdxModulePolicy {
                                     reference: Reference::Integer(id),
                                 },
                                 tdx_module_svn: Property {
-                                    operation: "equal".to_string(),
+                                    operation: "greater-or-equal".to_string(),
                                     reference: Reference::Integer(
                                         tdx_module.tcb_levels[0].tcb.isvsvn,
                                     ),
