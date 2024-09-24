@@ -9,9 +9,10 @@ cfg-if = "1.0"
 der = {version = "0.7.9", features = ["oid", "alloc", "derive"]}
 pki-types = { package = "rustls-pki-types", version = "1" }
 rust_std_stub = { path = "../std-support/rust-std-stub" }
-rustls = { path = "../../deps/rustls/rustls", default-features = false, features = ["no_std"], optional = true }
+rustls = { version = "=0.23.12", default-features = false, features = ["ring" ], optional = true }
 rustls-pemfile = { version = "2.0.0", default-features = false }
-ring = { path = "../../deps/td-shim/library/ring", default-features = false, features = ["alloc"], optional = true }
+ring = { path = "../../deps/td-shim/library/ring", default-features = false, features = ["alloc", "less-safe-getrandom-custom-or-rdrand"], optional = true }
+sys_time = { path = "../std-support/sys_time" }
 zeroize = "1.5.7"
 
 [features]

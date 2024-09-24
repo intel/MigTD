@@ -64,6 +64,9 @@ pub enum Error {
     /// Unable to verify the TLS peer's certificates
     TlsVerifyPeerCert(String),
 
+    /// Error occurs during processing the tls connection
+    TlsConnection,
+
     /// Pem certificate parsing error
     DecodePemCert,
 
