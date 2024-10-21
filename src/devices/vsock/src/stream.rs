@@ -342,25 +342,40 @@ impl VsockStream {
             return Err(VsockError::Illegal);
         }
 
-        while self.data_queue.is_empty() {
-            self.recv_packet_connected()?;
-        }
+        if self.data_queue.is_empty() {
+            loop {
+                self.recv_packet_connected()?;
 
-        let mut recvd = 0;
-        if !self.data_queue.is_empty() {
-            let head = self.data_queue.front_mut().unwrap();
-            if head.len() <= buf.len() {
-                buf[..head.len()].copy_from_slice(head);
-                recvd = head.len();
-                self.data_queue.pop_front();
-            } else {
-                buf.copy_from_slice(&head[..buf.len()]);
-                recvd = buf.len();
-                head.drain(..buf.len());
+                // If there are received vsock packets, continue to pop them out and insert to the
+                // `data_queue`. If there is no vsock packet left in the device, break the loop.
+                if !VSOCK_DEVICE
+                    .lock()
+                    .get_mut()
+                    .ok_or(VsockError::DeviceNotAvailable)?
+                    .transport
+                    .can_recv()
+                {
+                    break;
+                }
             }
         }
 
-        Ok(recvd)
+        let mut used = 0;
+        while !self.data_queue.is_empty() && used < buf.len() {
+            let head = self.data_queue.front_mut().unwrap();
+            let free = buf.len() - used;
+            if head.len() <= free {
+                buf[used..used + head.len()].copy_from_slice(head);
+                used += head.len();
+                self.data_queue.pop_front();
+            } else {
+                buf[used..].copy_from_slice(&head[..free]);
+                used += free;
+                head.drain(..free);
+            }
+        }
+
+        Ok(used)
     }
 
     fn reset(&mut self) -> Result {
