@@ -64,26 +64,37 @@ impl VirtioSerialPort {
 
     pub fn recv(&mut self, data: &mut [u8]) -> Result<usize> {
         if self.cache.is_empty() {
-            let recv_bytes = SERIAL_DEVICE
-                .lock()
-                .get_mut()
-                .ok_or(VirtioSerialError::InvalidParameter)?
-                .dequeue(self.port_id, DEFAULT_TIMEOUT)?;
-            self.cache.push_back(recv_bytes);
+            loop {
+                let recv_bytes = SERIAL_DEVICE
+                    .lock()
+                    .get_mut()
+                    .ok_or(VirtioSerialError::InvalidParameter)?
+                    .dequeue(self.port_id, DEFAULT_TIMEOUT)?;
+                self.cache.push_back(recv_bytes);
+
+                if !SERIAL_DEVICE
+                    .lock()
+                    .get_mut()
+                    .ok_or(VirtioSerialError::InvalidParameter)?
+                    .can_recv(self.port_id)
+                {
+                    break;
+                }
+            }
         }
 
         let mut recvd = 0;
-        if !self.cache.is_empty() {
+        while !self.cache.is_empty() {
             let front = self.cache.front_mut().unwrap();
             let expect = data.len() - recvd;
             if front.len() <= expect {
-                data[..front.len()].copy_from_slice(front);
+                data[recvd..recvd + front.len()].copy_from_slice(front);
                 recvd += front.len();
                 self.cache.pop_front();
             } else {
                 data[recvd..].copy_from_slice(&front[..expect]);
                 front.drain(..expect);
-                recvd = expect;
+                recvd += expect;
             }
         }
 
