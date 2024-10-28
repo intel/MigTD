@@ -854,6 +854,18 @@ impl VirtioSerial {
     fn port_queue_pop(port_id: u32) -> Option<Vec<u8>> {
         RECEIVE_QUEUES.lock().get_mut(&port_id)?.pop_front()
     }
+
+    fn can_recv(&self, port_id: u32) -> bool {
+        RECEIVE_QUEUES
+            .lock()
+            .get(&port_id)
+            .is_some_and(|q| !q.is_empty())
+            || self
+                .queues
+                .index(Self::port_queue_index(port_id) as usize)
+                .borrow_mut()
+                .can_pop()
+    }
 }
 
 /// Align `size` up to a page.
