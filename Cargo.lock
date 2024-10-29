@@ -562,7 +562,7 @@ checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
 
 [[package]]
 name = "migtd"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "anyhow",
  "attestation",
