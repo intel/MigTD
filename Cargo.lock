@@ -90,6 +90,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f8ebf5827e4ac4fd5946560e6a99776ea73b596d80898f357007317a7141e47"
 
 [[package]]
+name = "async_io"
+version = "0.1.0"
+dependencies = [
+ "rust_std_stub",
+]
+
+[[package]]
+name = "async_runtime"
+version = "0.1.0"
+dependencies = [
+ "futures-task",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "atomic_refcell"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -411,6 +426,12 @@ dependencies = [
  "libc",
  "windows-sys",
 ]
+
+[[package]]
+name = "futures-task"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
 
 [[package]]
 name = "generic-array"
@@ -777,6 +798,7 @@ dependencies = [
  "cc",
  "getrandom",
  "libc",
+ "log",
  "spin 0.9.8",
  "untrusted",
  "windows-sys",
