@@ -147,11 +147,11 @@ or `migtd-attr=0x0000000000000000` shall be set by `-object` subcommand.
 
 1. Linux Kernel (KVM) and QEMU with with TDX 1.5 support
 
-* [qemu-kvm-configuration](doc/qemu_kvm_configuration.md) lists the versions of dependencies that MigTD has been tested on. Also refer to [tdx-tools](https://github.com/intel/tdx-tools/releases/tag/2023ww15) for more information about MVP release.
+* [qemu-kvm-configuration](doc/qemu_kvm_configuration.md) lists the versions of dependencies that MigTD has been tested on.
 
 2. TDX Attestation Software Stack
 
-* MigTD depends on `sgx-dcap-pccs` and `tdx-qgs` to do remote attestation. Please refer to [linux-sgx](https://github.com/intel/linux-sgx/tree/sgx_2.21) for details or follow the [tdx-tools wiki](https://github.com/intel/tdx-tools/wiki/5.-TDX-End-to-End-Attestation) to setup the environment.
+* MigTD depends on `sgx-dcap-pccs` and `tdx-qgs` to do remote attestation. Please refer to [linux-sgx](https://github.com/intel/linux-sgx/tree/sgx_2.21) for details.
 
 3. Guest-Hypervisor Communication Interface (GHCI) required for remote attestation
 
@@ -216,12 +216,12 @@ $QEMU -accel kvm \
 
 Ask migtd-dst to start pre-migration and wait for migtd-src's connection:
 ```
-echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-dst
+echo "qom-set /objects/tdx0/ vsockport 1235" | nc -U /tmp/qmp-sock-dst
 ```
 
 Ask migtd-src to start pre-migration:
 ```
-echo "qom-set /objects/tdx0/ vsockport 0" | nc -U /tmp/qmp-sock-src
+echo "qom-set /objects/tdx0/ vsockport 1234" | nc -U /tmp/qmp-sock-src
 ```
 
 Note: user TDs need to be bound to MigTDs before pre-migration.
