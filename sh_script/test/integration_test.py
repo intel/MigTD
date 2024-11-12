@@ -36,11 +36,12 @@ def test_function_001(device_type):
     migtd_dst = "../../Bin/migtd_001.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -56,11 +57,12 @@ def test_function_002(device_type):
     migtd_dst = "../../Bin/migtd_001.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -76,11 +78,12 @@ def test_function_negative_003(device_type):
     migtd_dst = "../../Bin/migtd_001.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -96,11 +99,12 @@ def test_function_004(device_type):
     migtd_dst = "../../Bin/migtd_004.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -116,11 +120,12 @@ def test_function_005(device_type):
     migtd_dst = "../../Bin/migtd_005.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -136,11 +141,12 @@ def test_function_negative_006(device_type):
     migtd_dst = "../../Bin/migtd_006.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -156,11 +162,12 @@ def test_function_negative_007(device_type):
     migtd_dst = "../../Bin/migtd_no.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -176,11 +183,12 @@ def test_function_negative_008(device_type):
     migtd_dst = "../../Bin/migtd_no.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -196,11 +204,12 @@ def test_function_negative_009(device_type):
     migtd_dst = "../../Bin/migtd_009.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
         ctx.start_mig_td(bios_img=migtd_src, type="src", no_device=True, device=device_type)
+        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True, wait_time=10)
         
@@ -212,11 +221,12 @@ def test_function_010(device_type):
     migtd_dst = "../../Bin/migtd_010.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -228,11 +238,12 @@ def test_function_011(device_type):
     migtd_dst = "../../Bin/migtd_011.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -248,11 +259,12 @@ def test_function_012(device_type):
     migtd_dst = "../../Bin/migtd_dst_012.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -268,11 +280,12 @@ def test_function_013(device_type):
     migtd_dst = "../../Bin/migtd_dst_013.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result()
         
@@ -288,11 +301,12 @@ def test_function_negative_014(device_type):
     migtd_dst = "../../Bin/migtd_dst_014.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -308,11 +322,12 @@ def test_function_negative_015(device_type):
     migtd_dst = "../../Bin/migtd_015.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -328,11 +343,12 @@ def test_function_negative_016(device_type):
     migtd_dst = "../../Bin/migtd_016.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -348,11 +364,12 @@ def test_function_negative_017(device_type):
     migtd_dst = "../../Bin/migtd_017.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -372,7 +389,8 @@ def test_function_negative_018(device_type):
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
         ctx.start_user_td(type="src")
         ctx.start_user_td(type="dst")
-        ctx.connect()
+        if device_type == "vsock":
+            ctx.connect()
         ctx.pre_migration()
         ctx.check_migration_result(negative=True)
         
@@ -400,9 +418,10 @@ def test_pre_binding(device_type, servtd_hash):
     with migtd_context() as ctx:
         ctx.start_user_td(type="src", is_pre_binding=True, hash=servtd_hash)
         ctx.start_user_td(type="dst", is_pre_binding=True, hash=servtd_hash)
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
-        ctx.connect()
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
+        if device_type == "vsock":
+            ctx.connect()
 
         ctx.pre_migration(is_pre_binding=True)
         ctx.check_migration_result()
@@ -417,9 +436,10 @@ def test_cycle(device_type):
     migtd_dst = "../../target/release/migtd.bin"
     
     with migtd_context() as ctx:
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
-        ctx.connect()
+        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
+        if device_type == "vsock":
+            ctx.connect()
         
         for i in range(ctx.stress_test_cycles):
             LOG.debug(f"#### Cycle Test: {i} ####")     
