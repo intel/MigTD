@@ -36,6 +36,7 @@ pub enum VsockTransportError {
     InvalidParameter,
     InvalidVsockPacket,
     Interrupt,
+    NotReady,
 }
 
 impl Display for VsockTransportError {
@@ -52,6 +53,7 @@ impl Display for VsockTransportError {
             #[cfg(feature = "vmcall-vsock")]
             VsockTransportError::Vmcall(_) => write!(f, "Vmcall"),
             VsockTransportError::Interrupt => write!(f, "Interrupt"),
+            VsockTransportError::NotReady => write!(f, "NotReady"),
         }
     }
 }
