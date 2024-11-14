@@ -3,19 +3,22 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use spin::Once;
 use td_payload::arch::apic::*;
 use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
 
 /// A simple apic timer notification handler used to handle the
 /// time out events
-
 static TIMEOUT_FLAG: AtomicBool = AtomicBool::new(false);
+static TIMEOUT_CALLBACK: Once<fn()> = Once::new();
 
 const TIMEOUT_VECTOR: u8 = 33;
 const CPUID_TSC_DEADLINE_BIT: u32 = 1 << 24;
 
 fn timer_handler(_stack: &mut InterruptStack) {
-    TIMEOUT_FLAG.store(true, Ordering::SeqCst);
+    TIMEOUT_CALLBACK
+        .get()
+        .unwrap_or(&(default_callback as fn()))();
 }
 
 pub fn init_timer() {
@@ -61,4 +64,12 @@ fn set_timer_notification(vector: u8) {
     {
         panic!("Failed to set interrupt callback for timer");
     }
+}
+
+pub fn set_timer_callback(cb: fn()) {
+    TIMEOUT_CALLBACK.call_once(|| cb);
+}
+
+fn default_callback() {
+    TIMEOUT_FLAG.store(true, Ordering::SeqCst);
 }
