@@ -6,6 +6,7 @@ pub mod data;
 pub mod event;
 pub mod session;
 
+use crate::driver::ticks::TimeoutError;
 use crate::ratls::RatlsError;
 use crate::ratls::{
     INVALID_MIG_POLICY_ERROR, MIG_POLICY_UNSATISFIED_ERROR, MUTUAL_ATTESTATION_ERROR,
@@ -218,5 +219,11 @@ impl From<TdVmcallError> for MigrationResult {
 impl From<TdCallError> for MigrationResult {
     fn from(_: TdCallError) -> Self {
         MigrationResult::TdxModuleError
+    }
+}
+
+impl From<TimeoutError> for MigrationResult {
+    fn from(_: TimeoutError) -> Self {
+        MigrationResult::NetworkError
     }
 }
