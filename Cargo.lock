@@ -285,6 +285,7 @@ dependencies = [
 name = "crypto"
 version = "0.1.0"
 dependencies = [
+ "async_io",
  "cfg-if",
  "der 0.7.9",
  "ring",
@@ -586,6 +587,7 @@ name = "migtd"
 version = "0.4.7"
 dependencies = [
  "anyhow",
+ "async_io",
  "attestation",
  "bitfield",
  "cc-measurement",
@@ -798,7 +800,6 @@ dependencies = [
  "cc",
  "getrandom",
  "libc",
- "log",
  "spin 0.9.8",
  "untrusted",
  "windows-sys",
