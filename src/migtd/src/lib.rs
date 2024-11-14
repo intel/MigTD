@@ -51,7 +51,7 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     // Run the global constructors
     init(payload);
 
-    // Initialize the timer based on the APIC TSC deadline mode
+    // Initilize the APIC timer
     driver::timer::init_timer();
 
     #[cfg(feature = "virtio-serial")]
