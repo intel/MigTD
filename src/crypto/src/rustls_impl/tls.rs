@@ -7,9 +7,9 @@ use core::time::Duration;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use async_io::{AsyncRead, AsyncWrite};
 use connection::{TlsClientConnection, TlsConnectionError, TlsServerConnection};
 use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
-use rust_std_stub::io::{Read, Write};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::ResolvesClientCert;
 use rustls::crypto::ring::cipher_suite::TLS13_AES_256_GCM_SHA384;
@@ -32,44 +32,44 @@ use super::ecdsa::EcdsaPk;
 pub type TlsLibError = rustls::Error;
 const TLS_CUSTOM_CALLBACK_ERROR: &str = "TlsCustomCallbackError";
 
-pub struct SecureChannel<T: Read + Write> {
+pub struct SecureChannel<T: AsyncRead + AsyncWrite + Unpin> {
     conn: TlsConnection<T>,
 }
 
 impl<T> SecureChannel<T>
 where
-    T: Read + Write,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     fn new(conn: TlsConnection<T>) -> Self {
         SecureChannel { conn }
     }
 
-    pub fn write(&mut self, data: &[u8]) -> Result<usize> {
-        self.conn.write(data)
+    pub async fn write(&mut self, data: &[u8]) -> Result<usize> {
+        self.conn.write(data).await
     }
 
-    pub fn read(&mut self, data: &mut [u8]) -> Result<usize> {
-        self.conn.read(data)
+    pub async fn read(&mut self, data: &mut [u8]) -> Result<usize> {
+        self.conn.read(data).await
     }
 }
 
-enum TlsConnection<T: Read + Write> {
+enum TlsConnection<T: AsyncRead + AsyncWrite + Unpin> {
     Server(TlsServerConnection<T>),
     Client(TlsClientConnection<T>),
 }
 
-impl<T: Read + Write> TlsConnection<T> {
-    fn read(&mut self, data: &mut [u8]) -> Result<usize> {
+impl<T: AsyncRead + AsyncWrite + Unpin> TlsConnection<T> {
+    async fn read(&mut self, data: &mut [u8]) -> Result<usize> {
         match self {
-            Self::Server(conn) => conn.read(data).map_err(Self::handle_stream_error),
-            Self::Client(conn) => conn.read(data).map_err(Self::handle_stream_error),
+            Self::Server(conn) => conn.read(data).await.map_err(Self::handle_stream_error),
+            Self::Client(conn) => conn.read(data).await.map_err(Self::handle_stream_error),
         }
     }
 
-    fn write(&mut self, data: &[u8]) -> Result<usize> {
+    async fn write(&mut self, data: &[u8]) -> Result<usize> {
         match self {
-            Self::Server(conn) => conn.write(data).map_err(Self::handle_stream_error),
-            Self::Client(conn) => conn.write(data).map_err(Self::handle_stream_error),
+            Self::Server(conn) => conn.write(data).await.map_err(Self::handle_stream_error),
+            Self::Client(conn) => conn.write(data).await.map_err(Self::handle_stream_error),
         }
     }
 
@@ -92,8 +92,8 @@ impl<T: Read + Write> TlsConnection<T> {
 }
 
 pub struct TlsConfig {
-    resolver: Resolver,
-    verifier: Verifier,
+    pub(crate) resolver: Resolver,
+    pub(crate) verifier: Verifier,
 }
 
 impl TlsConfig {
@@ -136,8 +136,10 @@ impl TlsConfig {
 
         Ok(())
     }
-
-    pub fn tls_client<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
+    pub fn tls_client<T: AsyncRead + AsyncWrite + Unpin>(
+        self,
+        stream: T,
+    ) -> Result<SecureChannel<T>> {
         let client_config = ClientConfig::builder_with_details(
             Arc::new(crypto_provider()),
             Arc::new(TlsTimeProvider {}),
@@ -156,7 +158,10 @@ impl TlsConfig {
         Ok(SecureChannel::new(TlsConnection::Client(connection)))
     }
 
-    pub fn tls_server<T: Read + Write>(self, stream: T) -> Result<SecureChannel<T>> {
+    pub fn tls_server<T: AsyncRead + AsyncWrite + Unpin>(
+        self,
+        stream: T,
+    ) -> Result<SecureChannel<T>> {
         let server_config = ServerConfig::builder_with_details(
             Arc::new(crypto_provider()),
             Arc::new(TlsTimeProvider {}),
@@ -173,7 +178,7 @@ impl TlsConfig {
     }
 }
 
-fn crypto_provider() -> CryptoProvider {
+pub(crate) fn crypto_provider() -> CryptoProvider {
     let mut provider = default_provider();
     provider.cipher_suites = vec![TLS13_AES_256_GCM_SHA384];
     provider.kx_groups = vec![SECP384R1];
@@ -181,7 +186,7 @@ fn crypto_provider() -> CryptoProvider {
 }
 
 #[derive(Debug)]
-struct Resolver {
+pub(crate) struct Resolver {
     certs: Vec<CertificateDer<'static>>,
     signing_key: EcdsaPk,
 }
@@ -225,7 +230,7 @@ impl ResolvesClientCert for Resolver {
 }
 
 #[derive(Debug)]
-struct Verifier {
+pub(crate) struct Verifier {
     // Function `cb` takes peer's certificates as first parameter and
     // additional data required by `cb` to verify the certs as second
     // parameter.
@@ -357,7 +362,9 @@ impl ClientCertVerifier for Verifier {
 
 pub(crate) mod connection {
     use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
-    use rust_std_stub::io::{self, Read, Write};
+    use async_io::{AsyncRead, AsyncWrite};
+    use core::{future::poll_fn, pin::Pin};
+    use rust_std_stub::io;
     use rustls::{
         client::UnbufferedClientConnection,
         server::UnbufferedServerConnection,
@@ -368,9 +375,9 @@ pub(crate) mod connection {
         ClientConfig, ServerConfig,
     };
 
-    const PAGE_SIZE: usize = 0x1000;
-    const TLS_BUFFER_SIZE: usize = 16 * PAGE_SIZE;
-    const APP_DATA_BUFFER_LIMIT: usize = PAGE_SIZE;
+    pub const PAGE_SIZE: usize = 0x1000;
+    pub const TLS_BUFFER_SIZE: usize = 16 * PAGE_SIZE;
+    pub const APP_DATA_BUFFER_LIMIT: usize = PAGE_SIZE;
 
     #[derive(Debug)]
     pub enum TlsConnectionError {
@@ -414,13 +421,13 @@ pub(crate) mod connection {
         }
     }
 
-    struct TlsBuffer {
+    pub struct TlsBuffer {
         inner: Vec<u8>,
         used: usize,
     }
 
     impl TlsBuffer {
-        fn new() -> Self {
+        pub fn new() -> Self {
             TlsBuffer {
                 inner: vec![0u8; TLS_BUFFER_SIZE],
                 used: 0,
@@ -428,7 +435,7 @@ pub(crate) mod connection {
         }
 
         // Try to run `f` and resize the buffer and try again if we got `InsufficientSizeError`
-        fn try_or_resize_and_retry<E>(
+        pub fn try_or_resize_and_retry<E>(
             &mut self,
             mut f: impl FnMut(&mut [u8]) -> Result<usize, E>,
             map_err: impl FnOnce(E) -> Result<InsufficientSizeError, TlsConnectionError>,
@@ -451,38 +458,38 @@ pub(crate) mod connection {
         }
 
         // Get the immutable reference of used buffer
-        fn used(&self) -> &[u8] {
+        pub fn used(&self) -> &[u8] {
             &self.inner[..self.used]
         }
 
         // Get the mutable reference of used buffer
-        fn used_mut(&mut self) -> &mut [u8] {
+        pub fn used_mut(&mut self) -> &mut [u8] {
             &mut self.inner[..self.used]
         }
 
         // Get the mutable reference of unused buffer
-        fn unused_mut(&mut self) -> &mut [u8] {
+        pub fn unused_mut(&mut self) -> &mut [u8] {
             &mut self.inner[self.used..]
         }
 
         // Reset the used
-        fn reset(&mut self) {
+        pub fn reset(&mut self) {
             self.used = 0;
         }
 
         // Accumulate number of used bytes
-        fn consume(&mut self, size: usize) {
+        pub fn consume(&mut self, size: usize) {
             self.used += size;
         }
 
         // Discard the first `size` bytes
-        fn discard(&mut self, size: usize) {
+        pub fn discard(&mut self, size: usize) {
             self.inner.copy_within(size..self.used, 0);
             self.used -= size;
         }
     }
 
-    pub struct TlsServerConnection<T: Read + Write> {
+    pub struct TlsServerConnection<T: AsyncRead + AsyncWrite + Unpin> {
         conn: UnbufferedServerConnection,
         input: TlsBuffer,
         output: TlsBuffer,
@@ -491,7 +498,7 @@ pub(crate) mod connection {
         received_app_data: ChunkVecBuffer,
     }
 
-    impl<T: Read + Write> TlsServerConnection<T> {
+    impl<T: AsyncRead + AsyncWrite + Unpin> TlsServerConnection<T> {
         pub fn new(config: Arc<ServerConfig>, transport: T) -> Result<Self, TlsConnectionError> {
             Ok(Self {
                 conn: UnbufferedServerConnection::new(config)?,
@@ -503,9 +510,9 @@ pub(crate) mod connection {
             })
         }
 
-        pub fn read(&mut self, data: &mut [u8]) -> Result<usize, TlsConnectionError> {
+        pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, TlsConnectionError> {
             if self.is_handshaking {
-                self.process_tls_status()?;
+                self.process_tls_status().await?;
             }
 
             if !self.received_app_data.is_empty() {
@@ -530,7 +537,10 @@ pub(crate) mod connection {
                         return Ok(read);
                     }
                     ConnectionState::WriteTraffic(..) => {
-                        let size = self.transport.read(self.input.unused_mut())?;
+                        let size = poll_fn(|cx| {
+                            Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
+                        })
+                        .await?;
                         self.input.consume(size);
                     }
                     _ => return Err(TlsConnectionError::UnexpectedState),
@@ -539,9 +549,9 @@ pub(crate) mod connection {
             }
         }
 
-        pub fn write(&mut self, data: &[u8]) -> Result<usize, TlsConnectionError> {
+        pub async fn write(&mut self, data: &[u8]) -> Result<usize, TlsConnectionError> {
             if self.is_handshaking {
-                self.process_tls_status()?;
+                self.process_tls_status().await?;
             }
 
             loop {
@@ -571,7 +581,10 @@ pub(crate) mod connection {
                             |out_buffer| state.encrypt(data, out_buffer),
                             map_err,
                         )?;
-                        self.transport.write(self.output.used())?;
+                        poll_fn(|cx| {
+                            Pin::new(&mut self.transport).poll_write(cx, self.output.used())
+                        })
+                        .await?;
                         self.output.reset();
                         break;
                     }
@@ -582,7 +595,7 @@ pub(crate) mod connection {
             Ok(data.len())
         }
 
-        fn process_tls_status(&mut self) -> Result<(), TlsConnectionError> {
+        async fn process_tls_status(&mut self) -> Result<(), TlsConnectionError> {
             loop {
                 let UnbufferedStatus { mut discard, state } =
                     self.conn.process_tls_records(self.input.used_mut());
@@ -602,12 +615,18 @@ pub(crate) mod connection {
                             )?;
                         }
                         ConnectionState::TransmitTlsData(state) => {
-                            self.transport.write(self.output.used())?;
+                            poll_fn(|cx| {
+                                Pin::new(&mut self.transport).poll_write(cx, self.output.used())
+                            })
+                            .await?;
                             self.output.reset();
                             state.done();
                         }
                         ConnectionState::BlockedHandshake { .. } => {
-                            let size = self.transport.read(self.input.unused_mut())?;
+                            let size = poll_fn(|cx| {
+                                Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
+                            })
+                            .await?;
                             self.input.consume(size);
                         }
                         ConnectionState::ReadTraffic(mut state) => {
@@ -632,7 +651,7 @@ pub(crate) mod connection {
                     },
                     Err(e) => {
                         self.input.discard(discard);
-                        self.handle_tls_error()?;
+                        self.handle_tls_error().await?;
                         return Err(TlsConnectionError::TlsLib(e));
                     }
                 }
@@ -641,7 +660,7 @@ pub(crate) mod connection {
             Ok(())
         }
 
-        fn handle_tls_error(&mut self) -> Result<(), TlsConnectionError> {
+        async fn handle_tls_error(&mut self) -> Result<(), TlsConnectionError> {
             let status = self.conn.process_tls_records(self.input.used_mut());
             match status.state? {
                 ConnectionState::EncodeTlsData(mut state) => {
@@ -655,7 +674,9 @@ pub(crate) mod connection {
                             }
                         },
                     )?;
-                    self.transport.write(self.output.used())?;
+
+                    poll_fn(|cx| Pin::new(&mut self.transport).poll_write(cx, self.output.used()))
+                        .await?;
                     self.output.reset();
                     Ok(())
                 }
@@ -739,7 +760,7 @@ pub(crate) mod connection {
         }
     }
 
-    pub struct TlsClientConnection<T: Read + Write> {
+    pub struct TlsClientConnection<T: AsyncRead + AsyncWrite + Unpin> {
         conn: UnbufferedClientConnection,
         input: TlsBuffer,
         output: TlsBuffer,
@@ -748,7 +769,7 @@ pub(crate) mod connection {
         received_app_data: ChunkVecBuffer,
     }
 
-    impl<T: Read + Write> TlsClientConnection<T> {
+    impl<T: AsyncRead + AsyncWrite + Unpin> TlsClientConnection<T> {
         pub fn new(config: Arc<ClientConfig>, transport: T) -> Result<Self, TlsConnectionError> {
             Ok(Self {
                 conn: UnbufferedClientConnection::new(config, "localhost".try_into().unwrap())?,
@@ -760,9 +781,9 @@ pub(crate) mod connection {
             })
         }
 
-        pub fn read(&mut self, data: &mut [u8]) -> Result<usize, TlsConnectionError> {
+        pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, TlsConnectionError> {
             if self.is_handshaking {
-                self.process_tls_status()?;
+                self.process_tls_status().await?;
             }
 
             if !self.received_app_data.is_empty() {
@@ -789,7 +810,10 @@ pub(crate) mod connection {
                         return Ok(read);
                     }
                     ConnectionState::WriteTraffic(..) => {
-                        let size = self.transport.read(self.input.unused_mut())?;
+                        let size = poll_fn(|cx| {
+                            Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
+                        })
+                        .await?;
                         self.input.consume(size);
                     }
                     _ => return Err(TlsConnectionError::UnexpectedState),
@@ -798,9 +822,9 @@ pub(crate) mod connection {
             }
         }
 
-        pub fn write(&mut self, data: &[u8]) -> Result<usize, TlsConnectionError> {
+        pub async fn write(&mut self, data: &[u8]) -> Result<usize, TlsConnectionError> {
             if self.is_handshaking {
-                self.process_tls_status()?;
+                self.process_tls_status().await?;
             }
 
             loop {
@@ -830,7 +854,10 @@ pub(crate) mod connection {
                             |out_buffer| state.encrypt(data, out_buffer),
                             map_err,
                         )?;
-                        self.transport.write(self.output.used())?;
+                        poll_fn(|cx| {
+                            Pin::new(&mut self.transport).poll_write(cx, self.output.used())
+                        })
+                        .await?;
                         self.output.reset();
                         break;
                     }
@@ -841,7 +868,7 @@ pub(crate) mod connection {
             Ok(data.len())
         }
 
-        fn process_tls_status(&mut self) -> Result<(), TlsConnectionError> {
+        async fn process_tls_status(&mut self) -> Result<(), TlsConnectionError> {
             loop {
                 let UnbufferedStatus { mut discard, state } =
                     self.conn.process_tls_records(self.input.used_mut());
@@ -861,12 +888,18 @@ pub(crate) mod connection {
                             )?;
                         }
                         ConnectionState::TransmitTlsData(state) => {
-                            self.transport.write(self.output.used())?;
+                            poll_fn(|cx| {
+                                Pin::new(&mut self.transport).poll_write(cx, self.output.used())
+                            })
+                            .await?;
                             self.output.reset();
                             state.done();
                         }
                         ConnectionState::BlockedHandshake { .. } => {
-                            let size = self.transport.read(self.input.unused_mut())?;
+                            let size = poll_fn(|cx| {
+                                Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
+                            })
+                            .await?;
                             self.input.consume(size);
                         }
                         ConnectionState::ReadTraffic(mut state) => {
@@ -891,7 +924,7 @@ pub(crate) mod connection {
                     },
                     Err(e) => {
                         self.input.discard(discard);
-                        self.handle_tls_error()?;
+                        self.handle_tls_error().await?;
                         return Err(TlsConnectionError::TlsLib(e));
                     }
                 }
@@ -900,7 +933,7 @@ pub(crate) mod connection {
             Ok(())
         }
 
-        fn handle_tls_error(&mut self) -> Result<(), TlsConnectionError> {
+        async fn handle_tls_error(&mut self) -> Result<(), TlsConnectionError> {
             let status = self.conn.process_tls_records(self.input.used_mut());
             match status.state? {
                 ConnectionState::EncodeTlsData(mut state) => {
@@ -914,7 +947,8 @@ pub(crate) mod connection {
                             }
                         },
                     )?;
-                    self.transport.write(self.output.used())?;
+                    poll_fn(|cx| Pin::new(&mut self.transport).poll_write(cx, self.output.used()))
+                        .await?;
                     self.output.reset();
                     Ok(())
                 }
@@ -925,7 +959,7 @@ pub(crate) mod connection {
 }
 
 #[derive(Debug)]
-struct TlsTimeProvider;
+pub(crate) struct TlsTimeProvider;
 
 impl TimeProvider for TlsTimeProvider {
     fn current_time(&self) -> Option<UnixTime> {

@@ -5,6 +5,7 @@ license = "BSD-2-Clause-Patent"
 edition = "2021"
 
 [dependencies]
+async_io = { path = "../async/async_io" }
 cfg-if = "1.0"
 der = {version = "0.7.9", features = ["oid", "alloc", "derive"]}
 pki-types = { package = "rustls-pki-types", version = "1" }
