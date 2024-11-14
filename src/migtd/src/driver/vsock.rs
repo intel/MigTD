@@ -6,9 +6,7 @@ use core::sync::atomic::AtomicBool;
 
 use alloc::boxed::Box;
 use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
-use vsock::{stream::VsockDevice, VsockDmaPageAllocator, VsockTimeout};
-
-use crate::driver::timer;
+use vsock::{stream::VsockDevice, VsockDmaPageAllocator};
 
 pub const VIRTIO_PCI_VENDOR_ID: u16 = 0x1af4;
 pub const VIRTIO_PCI_DEVICE_ID: u16 = 0x1053;
@@ -28,37 +26,11 @@ impl VsockDmaPageAllocator for Allocator {
     }
 }
 
-struct VsockTimer;
-
-impl VsockTimeout for VsockTimer {
-    fn is_timeout(&self) -> bool {
-        timer::timeout()
-    }
-
-    fn reset_timeout(&self) {
-        timer::reset_timer()
-    }
-
-    fn set_timeout(&self, timeout: u64) -> Option<u64> {
-        timer::schedule_timeout(timeout)?;
-
-        // enable the interrupt to accept the timeout event
-        x86_64::instructions::interrupts::enable();
-
-        Some(timeout)
-    }
-}
-
 #[cfg(feature = "vmcall-vsock")]
 pub fn vmcall_vsock_device_init(mid: u64, cid: u64) {
     // Create the transport layer of vsock with the virtio transport instance
-    let vsock_transport = vsock::transport::VmcallVsock::new(
-        mid,
-        cid,
-        Box::new(Allocator {}),
-        Box::new(VsockTimer {}),
-    )
-    .expect("Fail to create vsock transport layer");
+    let vsock_transport = vsock::transport::VmcallVsock::new(mid, cid, Box::new(Allocator {}))
+        .expect("Fail to create vsock transport layer");
 
     // Bind the vsock device to the VSOCK_DEVICE instance
     vsock::stream::register_vsock_device(VsockDevice::new(Box::new(vsock_transport)))
@@ -81,12 +53,9 @@ pub fn virtio_vsock_device_init(end_of_ram: u64) {
     let virtio_transport = virtio::virtio_pci::VirtioPciTransport::new(pci_device);
 
     // Create the transport layer of vsock with the virtio transport instance
-    let vsock_transport = vsock::transport::VirtioVsock::new(
-        Box::new(virtio_transport),
-        Box::new(Allocator {}),
-        Box::new(VsockTimer {}),
-    )
-    .expect("Failed to create vsock transport layer");
+    let vsock_transport =
+        vsock::transport::VirtioVsock::new(Box::new(virtio_transport), Box::new(Allocator {}))
+            .expect("Failed to create vsock transport layer");
 
     // Bind the vsock device to the VSOCK_DEVICE instance
     vsock::stream::register_vsock_device(VsockDevice::new(Box::new(vsock_transport)))

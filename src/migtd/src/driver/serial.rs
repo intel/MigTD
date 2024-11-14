@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::boxed::Box;
-use core::sync::atomic::AtomicBool;
 use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
 use virtio_serial::*;
 
@@ -11,8 +10,6 @@ use crate::driver::timer;
 
 pub const VIRTIO_PCI_VENDOR_ID: u16 = 0x1af4;
 pub const VIRTIO_PCI_DEVICE_ID: u16 = 0x1043;
-
-pub static TIMEOUT: AtomicBool = AtomicBool::new(false);
 
 // Implement a DMA allocator for vsock device
 struct Allocator;

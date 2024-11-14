@@ -5,6 +5,7 @@ license = "BSD-2-Clause-Patent"
 edition = "2021"
 
 [dependencies]
+async_io = { path = "../../async/async_io" }
 atomic_refcell = "0.1.7"
 byteorder = { version = "1.0", default-features = false }
 cfg-if = "1.0"
