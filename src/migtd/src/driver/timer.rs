@@ -3,21 +3,16 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use spin::Once;
 use td_payload::arch::apic::*;
 use td_payload::arch::idt::register;
 use td_payload::interrupt_handler_template;
 
-/// A simple apic timer notification handler used to handle the
-/// time out events
-
 static TIMEOUT_FLAG: AtomicBool = AtomicBool::new(false);
+static TIMEOUT_CALLBACK: Once<fn()> = Once::new();
 
 const TIMEOUT_VECTOR: u8 = 33;
 const CPUID_TSC_DEADLINE_BIT: u32 = 1 << 24;
-
-interrupt_handler_template!(timer, _stack, {
-    TIMEOUT_FLAG.store(true, Ordering::SeqCst);
-});
 
 pub fn init_timer() {
     let cpuid = unsafe { core::arch::x86_64::__cpuid_count(0x1, 0) };
@@ -59,4 +54,18 @@ fn apic_timer_lvtt_setup(vector: u8) {
 fn set_timer_notification(vector: u8) {
     // Setup interrupt handler
     register(vector, timer);
+}
+
+pub fn set_timer_callback(cb: fn()) {
+    TIMEOUT_CALLBACK.call_once(|| cb);
+}
+
+interrupt_handler_template!(timer, _stack, {
+    TIMEOUT_CALLBACK
+        .get()
+        .unwrap_or(&(default_callback as fn()))();
+});
+
+fn default_callback() {
+    TIMEOUT_FLAG.store(true, Ordering::SeqCst);
 }
