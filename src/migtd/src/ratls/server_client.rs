@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{string::ToString, vec::Vec};
+use async_io::{AsyncRead, AsyncWrite};
 use crypto::{
     ecdsa::{ecdsa_verify, EcdsaPk},
     hash::digest_sha384,
@@ -15,7 +16,6 @@ use crypto::{
 };
 use log::error;
 use policy::PolicyError;
-use rust_std_stub::io::{Read, Write};
 
 use super::*;
 use crate::{event_log::get_event_log, mig_policy};
@@ -24,7 +24,7 @@ const PUBLIC_KEY_HASH_SIZE: usize = 48;
 
 type Result<T> = core::result::Result<T, RatlsError>;
 
-pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
+pub fn server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
     let (certs, quote) = gen_cert(&signing_key)?;
     let certs = vec![certs];
@@ -34,7 +34,7 @@ pub fn server<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
     config.tls_server(stream).map_err(|e| e.into())
 }
 
-pub fn client<T: Read + Write>(stream: T) -> Result<SecureChannel<T>> {
+pub fn client<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
     let (certs, quote) = gen_cert(&signing_key)?;
     let certs = vec![certs];
