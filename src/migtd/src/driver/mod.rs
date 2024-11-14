@@ -4,6 +4,7 @@
 
 #[cfg(feature = "virtio-serial")]
 pub mod serial;
+pub mod ticks;
 pub mod timer;
 #[cfg(any(feature = "virtio-vsock", feature = "vmcall-vsock"))]
 pub mod vsock;
