@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeSet, vec::Vec};
 use core::mem::size_of;
+use lazy_static::lazy_static;
 use scroll::Pread;
+use spin::Mutex;
 use td_payload::mm::shared::SharedMemory;
 use td_shim_interface::td_uefi_pi::hob as hob_lib;
 use tdx_tdcall::{
@@ -28,6 +30,11 @@ const GSM_FIELD_MIN_EXPORT_VERSION: u64 = 0x2000000100000001;
 const GSM_FIELD_MAX_EXPORT_VERSION: u64 = 0x2000000100000002;
 const GSM_FIELD_MIN_IMPORT_VERSION: u64 = 0x2000000100000003;
 const GSM_FIELD_MAX_IMPORT_VERSION: u64 = 0x2000000100000004;
+
+// #[cfg(feature = "async")]
+lazy_static! {
+    pub static ref REQUESTS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
+}
 
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
@@ -155,7 +162,7 @@ impl MigrationSession {
         Ok(())
     }
 
-    pub fn wait_for_request(&mut self) -> Result<()> {
+    pub fn wait_for_request(&mut self) -> Result<Option<u64>> {
         match self.state {
             MigrationState::WaitForRequest => {
                 // Allocate shared page for command and response buffer
@@ -176,48 +183,52 @@ impl MigrationSession {
                     VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
                         .ok_or(MigrationResult::InvalidParameter)?;
 
-                loop {
-                    #[cfg(feature = "vmcall-interrupt")]
-                    {
-                        tdx::tdvmcall_service(
-                            cmd_mem.as_bytes(),
-                            rsp_mem.as_mut_bytes(),
-                            event::VMCALL_SERVICE_VECTOR as u64,
-                            0,
-                        )?;
-                        event::wait_for_event(&event::VMCALL_SERVICE_FLAG);
-                    }
-                    #[cfg(not(feature = "vmcall-interrupt"))]
-                    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
-
-                    let private_mem = rsp_mem.copy_to_private_shadow();
-
-                    // Parse out the response data
-                    let rsp = VmcallServiceResponse::try_read(private_mem)
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                    // Check the GUID of the reponse
-                    if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
-                        return Err(MigrationResult::InvalidParameter);
-                    }
-                    let wfr = rsp
-                        .read_data::<ServiceMigWaitForReqResponse>(0)
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                    if wfr.command != MIG_COMMAND_WAIT {
-                        return Err(MigrationResult::InvalidParameter);
-                    }
-                    if wfr.operation == 1 {
-                        let mig_info = Self::read_mig_info(
-                            &private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..],
-                        )
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                        self.state = MigrationState::Operate(MigrationOperation::Migrate(mig_info));
-
-                        return Ok(());
-                    } else if wfr.operation != 0 {
-                        break;
-                    }
+                #[cfg(feature = "vmcall-interrupt")]
+                {
+                    tdx::tdvmcall_service(
+                        cmd_mem.as_bytes(),
+                        rsp_mem.as_mut_bytes(),
+                        event::VMCALL_SERVICE_VECTOR as u64,
+                        0,
+                    )?;
                 }
-                Err(MigrationResult::InvalidParameter)
+                #[cfg(not(feature = "vmcall-interrupt"))]
+                tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+
+                let private_mem = rsp_mem.copy_to_private_shadow();
+
+                // Parse out the response data
+                let rsp = VmcallServiceResponse::try_read(private_mem)
+                    .ok_or(MigrationResult::InvalidParameter)?;
+                // Check the GUID of the reponse
+                if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
+                    return Err(MigrationResult::InvalidParameter);
+                }
+                let wfr = rsp
+                    .read_data::<ServiceMigWaitForReqResponse>(0)
+                    .ok_or(MigrationResult::InvalidParameter)?;
+                if wfr.command != MIG_COMMAND_WAIT {
+                    return Err(MigrationResult::InvalidParameter);
+                }
+                if wfr.operation == 1 {
+                    let mig_info = Self::read_mig_info(
+                        &private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..],
+                    )
+                    .ok_or(MigrationResult::InvalidParameter)?;
+                    let request_id = mig_info.mig_info.mig_request_id;
+
+                    if REQUESTS.lock().contains(&request_id) {
+                        Ok(None)
+                    } else {
+                        self.state = MigrationState::Operate(MigrationOperation::Migrate(mig_info));
+                        REQUESTS.lock().insert(request_id);
+                        Ok(Some(request_id))
+                    }
+                } else if wfr.operation == 0 {
+                    Ok(None)
+                } else {
+                    Err(MigrationResult::InvalidParameter)
+                }
             }
             _ => Err(MigrationResult::InvalidParameter),
         }
@@ -233,11 +244,11 @@ impl MigrationSession {
     }
 
     #[cfg(feature = "main")]
-    pub fn op(&mut self) -> Result<()> {
+    pub async fn op(&mut self) -> Result<()> {
         match &self.state {
             MigrationState::Operate(operation) => match operation {
                 MigrationOperation::Migrate(info) => {
-                    let state = Self::migrate(info);
+                    let state = Self::migrate(info).await;
                     self.state = MigrationState::Complete(RequestInformation {
                         request_id: info.mig_info.mig_request_id,
                         operation: 1,
@@ -319,17 +330,11 @@ impl MigrationSession {
     }
 
     #[cfg(feature = "main")]
-    fn migrate(info: &MigrationInformation) -> Result<()> {
-        let mut msk = MigrationSessionKey::new();
+    async fn migrate(info: &MigrationInformation) -> Result<()> {
+        use crate::driver::ticks::with_timeout;
+        use core::time::Duration;
 
-        for idx in 0..msk.fields.len() {
-            let ret = tdx::tdcall_servtd_rd(
-                info.mig_info.binding_handle,
-                TDCS_FIELD_MIG_ENC_KEY + idx as u64,
-                &info.mig_info.target_td_uuid,
-            )?;
-            msk.fields[idx] = ret.content;
-        }
+        const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
         let transport;
         #[cfg(feature = "virtio-serial")]
@@ -347,55 +352,53 @@ impl MigrationSession {
             use vsock::{stream::VsockStream, VsockAddr};
             // Establish the vsock connection with host
             let mut vsock = VsockStream::new()?;
-            vsock.connect(&VsockAddr::new(
-                info.mig_socket_info.mig_td_cid as u32,
-                info.mig_socket_info.mig_channel_port,
-            ))?;
-
+            vsock
+                .connect(&VsockAddr::new(
+                    info.mig_socket_info.mig_td_cid as u32,
+                    info.mig_socket_info.mig_channel_port,
+                ))
+                .await?;
             transport = vsock;
         };
 
         let mut remote_information = ExchangeInformation::default();
-        let mut exchange_information = ExchangeInformation {
-            key: msk,
-            ..Default::default()
-        };
+        let mut exchange_information = MigrationSession::exchange_info(&info)?;
 
         // Establish TLS layer connection and negotiate the MSK
         if info.is_src() {
-            let min_export_version = tdcall_sys_rd(GSM_FIELD_MIN_EXPORT_VERSION)?.1;
-            let max_export_version = tdcall_sys_rd(GSM_FIELD_MAX_EXPORT_VERSION)?.1;
-            if min_export_version > u16::MAX as u64 || max_export_version > u16::MAX as u64 {
-                return Err(MigrationResult::InvalidParameter);
-            }
-            exchange_information.min_ver = min_export_version as u16;
-            exchange_information.max_ver = max_export_version as u16;
-
             // TLS client
             let mut ratls_client =
                 ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
             // MigTD-S send Migration Session Forward key to peer
-            ratls_client.write(exchange_information.as_bytes())?;
-            let size = ratls_client.read(remote_information.as_bytes_mut())?;
+            with_timeout(
+                TLS_TIMEOUT,
+                ratls_client.write(exchange_information.as_bytes()),
+            )
+            .await??;
+            let size = with_timeout(
+                TLS_TIMEOUT,
+                ratls_client.read(remote_information.as_bytes_mut()),
+            )
+            .await??;
             if size < size_of::<ExchangeInformation>() {
                 return Err(MigrationResult::NetworkError);
             }
         } else {
-            let min_import_version = tdcall_sys_rd(GSM_FIELD_MIN_IMPORT_VERSION)?.1;
-            let max_import_version = tdcall_sys_rd(GSM_FIELD_MAX_IMPORT_VERSION)?.1;
-            if min_import_version > u16::MAX as u64 || max_import_version > u16::MAX as u64 {
-                return Err(MigrationResult::InvalidParameter);
-            }
-            exchange_information.min_ver = min_import_version as u16;
-            exchange_information.max_ver = max_import_version as u16;
-
             // TLS server
             let mut ratls_server =
                 ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-            ratls_server.write(exchange_information.as_bytes())?;
-            let size = ratls_server.read(remote_information.as_bytes_mut())?;
+            with_timeout(
+                TLS_TIMEOUT,
+                ratls_server.write(exchange_information.as_bytes()),
+            )
+            .await??;
+            let size = with_timeout(
+                TLS_TIMEOUT,
+                ratls_server.read(remote_information.as_bytes_mut()),
+            )
+            .await??;
             if size < size_of::<ExchangeInformation>() {
                 return Err(MigrationResult::NetworkError);
             }
@@ -403,19 +406,57 @@ impl MigrationSession {
 
         let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
         set_mig_version(info, mig_ver)?;
+        MigrationSession::write_msk(&info.mig_info, &remote_information.key)?;
 
-        for idx in 0..remote_information.key.fields.len() {
-            tdx::tdcall_servtd_wr(
-                info.mig_info.binding_handle,
-                TDCS_FIELD_MIG_DEC_KEY + idx as u64,
-                remote_information.key.fields[idx],
-                &info.mig_info.target_td_uuid,
-            )
-            .map_err(|_| MigrationResult::TdxModuleError)?;
-        }
         log::info!("Set MSK and report status\n");
         exchange_information.key.clear();
         remote_information.key.clear();
+
+        Ok(())
+    }
+
+    fn exchange_info(info: &MigrationInformation) -> Result<ExchangeInformation> {
+        let mut exchange_info = ExchangeInformation::default();
+        MigrationSession::read_msk(&info.mig_info, &mut exchange_info.key)?;
+
+        let (field_min, field_max) = if info.is_src() {
+            (GSM_FIELD_MIN_EXPORT_VERSION, GSM_FIELD_MAX_EXPORT_VERSION)
+        } else {
+            (GSM_FIELD_MIN_IMPORT_VERSION, GSM_FIELD_MAX_IMPORT_VERSION)
+        };
+        let min_version = tdcall_sys_rd(field_min)?.1;
+        let max_version = tdcall_sys_rd(field_max)?.1;
+        if min_version > u16::MAX as u64 || max_version > u16::MAX as u64 {
+            return Err(MigrationResult::InvalidParameter);
+        }
+        exchange_info.min_ver = min_version as u16;
+        exchange_info.max_ver = max_version as u16;
+
+        Ok(exchange_info)
+    }
+
+    fn read_msk(mig_info: &MigtdMigrationInformation, msk: &mut MigrationSessionKey) -> Result<()> {
+        for idx in 0..msk.fields.len() {
+            let ret = tdx::tdcall_servtd_rd(
+                mig_info.binding_handle,
+                TDCS_FIELD_MIG_ENC_KEY + idx as u64,
+                &mig_info.target_td_uuid,
+            )?;
+            msk.fields[idx] = ret.content;
+        }
+        Ok(())
+    }
+
+    fn write_msk(mig_info: &MigtdMigrationInformation, msk: &MigrationSessionKey) -> Result<()> {
+        for idx in 0..msk.fields.len() {
+            tdx::tdcall_servtd_wr(
+                mig_info.binding_handle,
+                TDCS_FIELD_MIG_DEC_KEY + idx as u64,
+                msk.fields[idx],
+                &mig_info.target_td_uuid,
+            )
+            .map_err(|_| MigrationResult::TdxModuleError)?;
+        }
 
         Ok(())
     }
