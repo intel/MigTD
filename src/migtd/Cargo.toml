@@ -11,6 +11,7 @@ required-features = ["main"]
 [dependencies]
 bitfield = "0.13.2"
 anyhow = { version = "1.0.68", default-features = false }
+async_io = { path = "../async/async_io" }
 attestation = { path = "../attestation", default-features = false, optional = true }
 cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
 crypto = { path = "../crypto" }
