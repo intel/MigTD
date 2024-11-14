@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{collections::VecDeque, vec::Vec};
+use async_io::{AsyncRead, AsyncWrite};
 use rust_std_stub::io::{self, Read, Write};
 
 use crate::{Result, VirtioSerialError, SERIAL_DEVICE};
@@ -27,6 +28,52 @@ impl Write for VirtioSerialPort {
 impl Read for VirtioSerialPort {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.recv(buf).map_err(|e| e.into())
+    }
+}
+
+impl AsyncRead for VirtioSerialPort {
+    fn poll_read(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> core::task::Poll<io::Result<usize>> {
+        match self.get_mut().recv(buf) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VirtioSerialError::NotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        }
+    }
+}
+
+impl AsyncWrite for VirtioSerialPort {
+    fn poll_write(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+        buf: &[u8],
+    ) -> core::task::Poll<io::Result<usize>> {
+        match self.get_mut().send(buf) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VirtioSerialError::NotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        }
+    }
+
+    fn poll_close(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<io::Result<()>> {
+        core::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_flush(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<io::Result<()>> {
+        core::task::Poll::Ready(Ok(()))
     }
 }
 

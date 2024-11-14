@@ -4,10 +4,7 @@
 
 use crate::protocol::{field, Packet};
 use crate::stream::{VsockStream, BINDING_PKT_QUEUES, CONNECTION_PKT_QUEUES};
-use crate::{
-    align_up, VsockAddr, VsockAddrPair, VsockDmaPageAllocator, VsockTimeout, VsockTransport,
-    PAGE_SIZE,
-};
+use crate::{align_up, VsockAddr, VsockAddrPair, VsockDmaPageAllocator, VsockTransport, PAGE_SIZE};
 
 use super::event::*;
 use super::{Result, VsockTransportError};
@@ -51,7 +48,6 @@ impl DmaRecord {
 pub struct VirtioVsock {
     pub virtio_transport: Box<dyn VirtioTransport>,
     dma_allocator: Box<dyn VsockDmaPageAllocator>,
-    timer: Box<dyn VsockTimeout>,
     rx: RefCell<VirtQueue>,
     tx: RefCell<VirtQueue>,
     #[allow(unused)]
@@ -67,7 +63,6 @@ impl VirtioVsock {
     pub fn new(
         mut virtio_transport: Box<dyn VirtioTransport>,
         dma_allocator: Box<dyn VsockDmaPageAllocator>,
-        timer: Box<dyn VsockTimeout>,
     ) -> Result<Self> {
         let transport = virtio_transport.as_mut();
         // Initialise the transport
@@ -137,7 +132,6 @@ impl VirtioVsock {
         Ok(Self {
             virtio_transport,
             dma_allocator,
-            timer,
             rx: RefCell::new(queue_rx),
             tx: RefCell::new(queue_tx),
             event: RefCell::new(queue_event),
@@ -339,7 +333,7 @@ impl VsockTransport for VirtioVsock {
         _stream: &VsockStream,
         hdr: &[u8],
         buf: &[u8],
-        timeout: u64,
+        _timeout: u64,
     ) -> core::result::Result<usize, VsockTransportError> {
         if hdr.len() != field::HEADER_LEN || buf.len() > u32::MAX as usize {
             return Err(VsockTransportError::InvalidParameter);
@@ -371,16 +365,7 @@ impl VsockTransport for VirtioVsock {
 
         self.kick_queue(QUEUE_TX)?;
 
-        self.timer
-            .set_timeout(timeout)
-            .ok_or(VsockTransportError::InvalidParameter)?;
-
-        while !self.tx.borrow_mut().can_pop() && !self.timer.is_timeout() {
-            if !wait_for_event(&TX_FLAG, self.timer.as_ref()) && !self.tx.borrow_mut().can_pop() {
-                return Err(VsockTransportError::Timeout);
-            }
-        }
-        self.timer.reset_timeout();
+        while !self.tx.borrow_mut().can_pop() {}
 
         let mut g2h = Vec::new();
         let mut h2g = Vec::new();
@@ -397,29 +382,22 @@ impl VsockTransport for VirtioVsock {
     fn dequeue(
         &mut self,
         stream: &VsockStream,
-        timeout: u64,
+        _timeout: u64,
     ) -> core::result::Result<Vec<u8>, VsockTransportError> {
         if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
             return Ok(data);
         }
 
-        self.timer
-            .set_timeout(timeout)
-            .ok_or(VsockTransportError::InvalidParameter)?;
+        if !self.rx.borrow_mut().can_pop() {
+            return Err(VsockTransportError::NotReady);
+        }
+        RX_FLAG.store(false, Ordering::SeqCst);
 
-        loop {
-            while !self.rx.borrow_mut().can_pop() && !self.timer.is_timeout() {
-                if !wait_for_event(&RX_FLAG, self.timer.as_ref()) && !self.rx.borrow_mut().can_pop()
-                {
-                    return Err(VsockTransportError::Timeout);
-                }
-            }
-
-            self.pop_used_rx()?;
-            if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
-                self.timer.reset_timeout();
-                return Ok(data);
-            }
+        self.pop_used_rx()?;
+        if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
+            Ok(data)
+        } else {
+            Err(VsockTransportError::NotReady)
         }
     }
 

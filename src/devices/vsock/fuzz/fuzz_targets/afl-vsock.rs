@@ -11,7 +11,7 @@ use virtio::{virtio_pci::VirtioPciTransport, Result};
 use vsock::{
     stream::{register_vsock_device, VsockDevice, VsockStream},
     transport::VirtioVsock,
-    VsockAddr, VsockDmaPageAllocator, VsockTimeout, VsockTransport,
+    VsockAddr, VsockDmaPageAllocator, VsockTransport,
 };
 
 const PTR_OFFSET: u64 = 0x10000;
@@ -75,20 +75,6 @@ impl VsockDmaPageAllocator for Allocator {
     }
 }
 
-struct VsockTimer;
-
-impl VsockTimeout for VsockTimer {
-    fn is_timeout(&self) -> bool {
-        true
-    }
-
-    fn reset_timeout(&self) {}
-
-    fn set_timeout(&self, timeout: u64) -> Option<u64> {
-        Some(timeout)
-    }
-}
-
 fn fuzz_vsock(paddr: u64, packet: &[u8]) {
     let mut packet = packet.to_vec();
     if packet.len() < PACKET_LEN {
@@ -100,7 +86,6 @@ fn fuzz_vsock(paddr: u64, packet: &[u8]) {
     let vsock_transport = if let Ok(vsock_transport) = VirtioVsock::new(
         Box::new(virtio_transport),
         Box::new(Allocator {}),
-        Box::new(VsockTimer {}),
     ) {
         vsock_transport
     } else {

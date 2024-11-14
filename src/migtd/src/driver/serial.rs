@@ -13,8 +13,6 @@ use crate::driver::timer;
 pub const VIRTIO_PCI_VENDOR_ID: u16 = 0x1af4;
 pub const VIRTIO_PCI_DEVICE_ID: u16 = 0x1043;
 
-pub static TIMEOUT: AtomicBool = AtomicBool::new(false);
-
 // Implement a DMA allocator for vsock device
 struct Allocator;
 

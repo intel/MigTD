@@ -2,13 +2,18 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use core::future::poll_fn;
+
 use crate::protocol::field::{FLAG_SHUTDOWN_READ, FLAG_SHUTDOWN_WRITE, HEADER_LEN};
 use crate::protocol::{field, Packet};
-use crate::{VsockAddr, VsockAddrPair, VsockError, VsockTransport, VSOCK_BUF_ALLOC};
+use crate::{
+    VsockAddr, VsockAddrPair, VsockError, VsockTransport, VsockTransportError, VSOCK_BUF_ALLOC,
+};
 
 use alloc::{
     boxed::Box, collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec,
 };
+use async_io::{AsyncRead, AsyncWrite};
 use lazy_static::lazy_static;
 use rust_std_stub::io::{self, Read, Write};
 use spin::{Mutex, Once};
@@ -105,6 +110,52 @@ impl Write for VsockStream {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl AsyncRead for VsockStream {
+    fn poll_read(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> core::task::Poll<io::Result<usize>> {
+        match self.get_mut().recv(buf, 0) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VsockError::NotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        }
+    }
+}
+
+impl AsyncWrite for VsockStream {
+    fn poll_write(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+        buf: &[u8],
+    ) -> core::task::Poll<io::Result<usize>> {
+        match self.get_mut().send(buf, 0) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VsockError::NotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        }
+    }
+
+    fn poll_close(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<io::Result<()>> {
+        core::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_flush(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<io::Result<()>> {
+        core::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -217,7 +268,7 @@ impl VsockStream {
         Ok(new_stream)
     }
 
-    pub fn connect(&mut self, addr: &VsockAddr) -> Result {
+    pub async fn connect(&mut self, addr: &VsockAddr) -> Result {
         if self.state != State::Closed {
             return Err(VsockError::Illegal);
         }
@@ -238,20 +289,40 @@ impl VsockStream {
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-        let _ = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
+        let _ = poll_fn(|_cx| {
+            match VSOCK_DEVICE
+                .lock()
+                .get_mut()
+                .ok_or(VsockError::DeviceNotAvailable)?
+                .transport
+                .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)
+            {
+                Ok(size) => core::task::Poll::Ready(Ok(size)),
+                Err(e) => match e {
+                    VsockTransportError::NotReady => core::task::Poll::Pending,
+                    _ => core::task::Poll::Ready(Err(VsockError::from(e))),
+                },
+            }
+        })
+        .await?;
 
         self.state = State::RequestSend;
-        let recv = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
+        let recv = poll_fn(|_cx| {
+            match VSOCK_DEVICE
+                .lock()
+                .get_mut()
+                .ok_or(VsockError::DeviceNotAvailable)?
+                .transport
+                .dequeue(self, DEFAULT_TIMEOUT)
+            {
+                Ok(data) => core::task::Poll::Ready(Ok(data)),
+                Err(e) => match e {
+                    VsockTransportError::NotReady => core::task::Poll::Pending,
+                    _ => core::task::Poll::Ready(Err(VsockError::from(e))),
+                },
+            }
+        })
+        .await?;
 
         let packet = Packet::new_checked(recv.as_slice())?;
 
