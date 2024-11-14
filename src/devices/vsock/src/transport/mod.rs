@@ -35,6 +35,7 @@ pub enum VsockTransportError {
     Timeout,
     InvalidParameter,
     InvalidVsockPacket,
+    NotReady,
 }
 
 impl Display for VsockTransportError {
@@ -50,6 +51,7 @@ impl Display for VsockTransportError {
             VsockTransportError::Virtio(e) => write!(f, "Virtio: {}", e),
             #[cfg(feature = "vmcall-vsock")]
             VsockTransportError::Vmcall(_) => write!(f, "Vmcall"),
+            VsockTransportError::NotReady => write!(f, "NotReady"),
         }
     }
 }
