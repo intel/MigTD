@@ -42,6 +42,8 @@ pub enum VsockError {
     Illegal,
     /// There is no listen socket on remote
     REFUSED,
+    /// There is no data has been sent or received
+    NotReady,
 }
 
 impl Display for VsockError {
@@ -56,6 +58,7 @@ impl Display for VsockError {
             VsockError::REFUSED => write!(f, "REFUSED"),
             VsockError::NoAvailablePort => write!(f, "NoAvailablePort"),
             VsockError::AddressAlreadyUsed => write!(f, "AddressAlreadyUsed"),
+            VsockError::NotReady => write!(f, "NotReady"),
         }
     }
 }
@@ -70,7 +73,10 @@ impl From<VsockError> for io::Error {
 
 impl From<VsockTransportError> for VsockError {
     fn from(e: VsockTransportError) -> Self {
-        Self::Transport(e)
+        match e {
+            VsockTransportError::NotReady => VsockError::NotReady,
+            _ => Self::Transport(e),
+        }
     }
 }
 
@@ -98,13 +104,6 @@ pub trait VsockTransport {
 pub trait VsockDmaPageAllocator {
     fn alloc_pages(&self, page_num: usize) -> Option<u64>;
     fn free_pages(&self, addr: u64, page_num: usize);
-}
-
-/// Trait to allow separation of transport from block driver
-pub trait VsockTimeout {
-    fn set_timeout(&self, timeout: u64) -> Option<u64>;
-    fn is_timeout(&self) -> bool;
-    fn reset_timeout(&self);
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]

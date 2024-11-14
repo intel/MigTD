@@ -6,8 +6,8 @@ use crate::protocol::field::HEADER_LEN;
 use crate::protocol::Packet;
 use crate::stream::{VsockStream, BINDING_PKT_QUEUES, CONNECTION_PKT_QUEUES};
 use crate::{
-    align_up, VsockAddr, VsockAddrPair, VsockDmaPageAllocator, VsockTimeout, VsockTransport,
-    VsockTransportError, PAGE_SIZE,
+    align_up, VsockAddr, VsockAddrPair, VsockDmaPageAllocator, VsockTransport, VsockTransportError,
+    PAGE_SIZE,
 };
 
 use super::event::*;
@@ -41,25 +41,18 @@ pub struct VmcallVsock {
     mid: u64,
     cid: u64,
     dma_allocator: Box<dyn VsockDmaPageAllocator>,
-    timer: Box<dyn VsockTimeout>,
     // DMA record table
     dma_record: BTreeMap<u64, usize>,
 }
 
 impl VmcallVsock {
-    pub fn new(
-        mid: u64,
-        cid: u64,
-        dma_allocator: Box<dyn VsockDmaPageAllocator>,
-        timer: Box<dyn VsockTimeout>,
-    ) -> Result<Self> {
-        register_callback(VMCALL_VECTOR, vmcall_notification)?;
+    pub fn new(mid: u64, cid: u64, dma_allocator: Box<dyn VsockDmaPageAllocator>) -> Result<Self> {
+        register_callback(VMCALL_VECTOR, vmcall_notification);
 
         Ok(Self {
             mid,
             cid,
             dma_allocator,
-            timer,
             dma_record: BTreeMap::new(),
         })
     }
@@ -133,14 +126,11 @@ impl VmcallVsock {
         self.set_command(command, COMMAND_SEND, &[header, data])?;
         self.set_response(response)?;
 
-        self.timer.set_timeout(timeout);
         tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout)
             .map_err(|e| VsockTransportError::Vmcall(e))?;
 
-        if !wait_for_event(&VMCALL_FLAG, self.timer.as_ref()) {
-            return Err(VsockTransportError::Timeout);
-        }
-        self.timer.reset_timeout();
+        while !VMCALL_FLAG.load(Ordering::SeqCst) {}
+        VMCALL_FLAG.store(false, Ordering::SeqCst);
 
         // Parse the response data
         // Check the GUID of the reponse
@@ -169,38 +159,31 @@ impl VmcallVsock {
         self.set_command(command, COMMAND_RECV, &[])?;
         self.set_response(response)?;
 
-        self.timer.set_timeout(timeout);
         tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout)
             .map_err(|e| VsockTransportError::Vmcall(e))?;
 
-        // TO DO:
-        // Refactor the waiting logic
-        loop {
-            if !wait_for_event(&VMCALL_FLAG, self.timer.as_ref()) {
-                return Err(VsockTransportError::Timeout);
-            }
-            self.timer.reset_timeout();
-
-            // Parse the response data
-            // Check the GUID of the reponse
-            let reply = Response::new(response).ok_or(VsockTransportError::InvalidParameter)?;
-
-            // Do the sanity check
-            if reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
-                || reply.status() != 0
-                || reply.data()[0] != CURRENT_VERSION
-                || reply.data()[1] != COMMAND_RECV
-                || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != self.mid
-            {
-                return Err(VsockTransportError::InvalidParameter);
-            }
-
-            self.recv_packet(&reply.data()[12..])?;
-
-            if let Some(data) = Self::pop_stream_queues(addrs) {
-                return Ok(data);
-            }
+        if !VMCALL_FLAG.load(Ordering::SeqCst) {
+            return Err(VsockTransportError::NotReady);
         }
+        VMCALL_FLAG.store(false, Ordering::SeqCst);
+
+        // Parse the response data
+        // Check the GUID of the reponse
+        let reply = Response::new(response).ok_or(VsockTransportError::InvalidParameter)?;
+
+        // Do the sanity check
+        if reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
+            || reply.status() != 0
+            || reply.data()[0] != CURRENT_VERSION
+            || reply.data()[1] != COMMAND_RECV
+            || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != self.mid
+        {
+            return Err(VsockTransportError::InvalidParameter);
+        }
+
+        self.recv_packet(&reply.data()[12..])?;
+
+        Self::pop_stream_queues(addrs).ok_or(VsockTransportError::InvalidVsockPacket)
     }
 
     fn set_command(&mut self, page: &mut [u8], cmd: u8, data: &[&[u8]]) -> Result<()> {

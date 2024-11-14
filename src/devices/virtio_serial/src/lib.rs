@@ -67,6 +67,8 @@ pub enum VirtioSerialError {
     PortAlreadyUsed(u32),
     /// Configure device interrupt
     Interrupt,
+    // There is no data has been sent or received
+    NotReady,
 }
 
 impl Display for VirtioSerialError {
@@ -81,6 +83,7 @@ impl Display for VirtioSerialError {
             VirtioSerialError::PortNotAvailable(e) => write!(f, "PortNotAvailable: 0x{:x}", e),
             VirtioSerialError::PortAlreadyUsed(e) => write!(f, "PortAlreadyUsed: 0x{:x}", e),
             VirtioSerialError::Interrupt => write!(f, "Interrupt"),
+            VirtioSerialError::NotReady => write!(f, "NotReady"),
         }
     }
 }
@@ -585,7 +588,7 @@ impl VirtioSerial {
         Ok(data.len())
     }
 
-    pub fn enqueue(&mut self, data: &[u8], port_id: u32, timeout: u64) -> Result<usize> {
+    pub fn enqueue(&mut self, data: &[u8], port_id: u32, _timeout: u64) -> Result<usize> {
         if data.is_empty() || data.len() > u32::MAX as usize {
             return Err(VirtioSerialError::InvalidParameter);
         }
@@ -605,17 +608,7 @@ impl VirtioSerial {
         vq.borrow_mut().add(g2h.as_slice(), &[])?;
         self.kick_queue(queue_idx)?;
 
-        self.timer
-            .set_timeout(timeout)
-            .ok_or(VirtioSerialError::InvalidParameter)?;
-
-        while !vq.borrow_mut().can_pop() && !self.timer.is_timeout() {
-            if !wait_for_event(&IRQ_FLAG, self.timer.as_ref()) && !vq.borrow_mut().can_pop() {
-                return Err(VirtioSerialError::Timeout);
-            }
-        }
-
-        self.timer.reset_timeout();
+        while !vq.borrow_mut().can_pop() {}
 
         let mut g2h = Vec::new();
         let mut h2g = Vec::new();
@@ -696,32 +689,22 @@ impl VirtioSerial {
         self.kick_queue(queue_idx)
     }
 
-    fn dequeue(&mut self, port_id: u32, timeout: u64) -> Result<Vec<u8>> {
+    fn dequeue(&mut self, port_id: u32, _timeout: u64) -> Result<Vec<u8>> {
         if let Some(data) = Self::port_queue_pop(port_id) {
             return Ok(data);
         }
 
-        self.timer
-            .set_timeout(timeout)
-            .ok_or(VirtioSerialError::InvalidParameter)?;
+        let vq = self.queues.index(Self::port_queue_index(port_id) as usize);
 
-        loop {
-            let vq = self.queues.index(Self::port_queue_index(port_id) as usize);
+        if !vq.borrow_mut().can_pop() {
+            return Err(VirtioSerialError::NotReady);
+        }
 
-            while !vq.borrow_mut().can_pop() && !self.timer.is_timeout() {
-                if !wait_for_event(&IRQ_FLAG, self.timer.as_ref()) && !vq.borrow_mut().can_pop() {
-                    return Err(VirtioSerialError::Timeout);
-                }
-            }
-
-            self.pop_used_rx(port_id).map_err(|e| {
-                self.timer.reset_timeout();
-                e
-            })?;
-            if let Some(data) = Self::port_queue_pop(port_id) {
-                self.timer.reset_timeout();
-                return Ok(data);
-            }
+        self.pop_used_rx(port_id)?;
+        if let Some(data) = Self::port_queue_pop(port_id) {
+            Ok(data)
+        } else {
+            Err(VirtioSerialError::NotReady)
         }
     }
 
