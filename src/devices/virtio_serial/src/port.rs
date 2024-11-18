@@ -8,7 +8,7 @@ use rust_std_stub::io::{self, Read, Write};
 
 use crate::{Result, VirtioSerialError, SERIAL_DEVICE};
 
-const DEFAULT_TIMEOUT: u64 = 8000;
+const DEFAULT_TIMEOUT: u32 = 8000;
 
 pub struct VirtioSerialPort {
     port_id: u32,

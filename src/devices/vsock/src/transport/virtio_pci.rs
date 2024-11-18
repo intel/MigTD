@@ -333,7 +333,7 @@ impl VsockTransport for VirtioVsock {
         _stream: &VsockStream,
         hdr: &[u8],
         buf: &[u8],
-        _timeout: u64,
+        _timeout: u32,
     ) -> core::result::Result<usize, VsockTransportError> {
         if hdr.len() != field::HEADER_LEN || buf.len() > u32::MAX as usize {
             return Err(VsockTransportError::InvalidParameter);
@@ -382,7 +382,7 @@ impl VsockTransport for VirtioVsock {
     fn dequeue(
         &mut self,
         stream: &VsockStream,
-        _timeout: u64,
+        _timeout: u32,
     ) -> core::result::Result<Vec<u8>, VsockTransportError> {
         if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
             return Ok(data);

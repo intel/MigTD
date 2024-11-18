@@ -34,7 +34,7 @@ use event::*;
 pub const MAX_PORT_SUPPORTED: usize = 2;
 
 const DEFAULT_BUF_SIZE: usize = PAGE_SIZE;
-const DEFAULT_TIMEOUT: u64 = 0x8000;
+const DEFAULT_TIMEOUT: u32 = 0x8000;
 const PAGE_SIZE: usize = 0x1000;
 const PORT0_RECEIVEQ: u16 = 0;
 const PORT0_TRANSMITQ: u16 = 1;
@@ -143,7 +143,7 @@ pub trait DmaPageAllocator {
 
 /// Trait to allow separation of transport from block driver
 pub trait Timer {
-    fn set_timeout(&self, timeout: u64) -> Option<u64>;
+    fn set_timeout(&self, timeout: u32) -> Option<u32>;
     fn is_timeout(&self) -> bool;
     fn reset_timeout(&self);
 }
@@ -588,7 +588,7 @@ impl VirtioSerial {
         Ok(data.len())
     }
 
-    pub fn enqueue(&mut self, data: &[u8], port_id: u32, _timeout: u64) -> Result<usize> {
+    pub fn enqueue(&mut self, data: &[u8], port_id: u32, _timeout: u32) -> Result<usize> {
         if data.is_empty() || data.len() > u32::MAX as usize {
             return Err(VirtioSerialError::InvalidParameter);
         }
@@ -689,7 +689,7 @@ impl VirtioSerial {
         self.kick_queue(queue_idx)
     }
 
-    fn dequeue(&mut self, port_id: u32, _timeout: u64) -> Result<Vec<u8>> {
+    fn dequeue(&mut self, port_id: u32, _timeout: u32) -> Result<Vec<u8>> {
         if let Some(data) = Self::port_queue_pop(port_id) {
             return Ok(data);
         }
