@@ -21,7 +21,7 @@ use spin::{Mutex, Once};
 type Result<T = ()> = core::result::Result<T, VsockError>;
 
 // Timeouts in millisecond
-const DEFAULT_TIMEOUT: u64 = 8000;
+const DEFAULT_TIMEOUT: u32 = 8000;
 
 lazy_static! {
     static ref VSOCK_DEVICE: Mutex<Once<VsockDevice>> = Mutex::new(Once::new());
