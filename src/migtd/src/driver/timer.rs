@@ -28,14 +28,14 @@ pub fn init_timer() {
     set_timer_notification(TIMEOUT_VECTOR)
 }
 
-pub fn schedule_timeout(timeout: u64) -> Option<u64> {
+pub fn schedule_timeout(timeout: u32) -> Option<u64> {
     reset_timer();
     let cpuid = unsafe { core::arch::x86_64::__cpuid_count(0x15, 0) };
     let tsc_frequency = cpuid.ecx * (cpuid.ebx / cpuid.eax);
-    let timeout = timeout / 1000 * tsc_frequency as u64;
+    let deadline = (tsc_frequency / 1000) as u64 * timeout as u64;
 
     apic_timer_lvtt_setup(TIMEOUT_VECTOR);
-    one_shot_tsc_deadline_mode(timeout)
+    one_shot_tsc_deadline_mode(deadline)
 }
 
 pub fn timeout() -> bool {

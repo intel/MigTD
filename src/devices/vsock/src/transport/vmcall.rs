@@ -121,12 +121,12 @@ impl VmcallVsock {
         response: &mut [u8],
         header: &[u8],
         data: &[u8],
-        timeout: u64,
+        timeout: u32,
     ) -> Result<usize> {
         self.set_command(command, COMMAND_SEND, &[header, data])?;
         self.set_response(response)?;
 
-        tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout)
+        tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
             .map_err(|e| VsockTransportError::Vmcall(e))?;
 
         while !VMCALL_FLAG.load(Ordering::SeqCst) {}
@@ -154,12 +154,12 @@ impl VmcallVsock {
         command: &mut [u8],
         response: &mut [u8],
         addrs: &VsockAddrPair,
-        timeout: u64,
+        timeout: u32,
     ) -> Result<Vec<u8>> {
         self.set_command(command, COMMAND_RECV, &[])?;
         self.set_response(response)?;
 
-        tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout)
+        tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
             .map_err(|e| VsockTransportError::Vmcall(e))?;
 
         if !VMCALL_FLAG.load(Ordering::SeqCst) {
@@ -240,7 +240,7 @@ impl VsockTransport for VmcallVsock {
         _stream: &VsockStream,
         hdr: &[u8],
         buf: &[u8],
-        timeout: u64,
+        timeout: u32,
     ) -> Result<usize> {
         let command = self.allocate_dma(36 + hdr.len() + buf.len())?;
 
@@ -260,7 +260,7 @@ impl VsockTransport for VmcallVsock {
             })
     }
 
-    fn dequeue(&mut self, stream: &VsockStream, timeout: u64) -> Result<Vec<u8>> {
+    fn dequeue(&mut self, stream: &VsockStream, timeout: u32) -> Result<Vec<u8>> {
         if let Some(data) = Self::pop_stream_queues(&stream.addr()) {
             return Ok(data);
         }

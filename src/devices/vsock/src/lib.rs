@@ -90,12 +90,12 @@ pub trait VsockTransport {
         stream: &VsockStream,
         hdr: &[u8],
         data: &[u8],
-        timeout: u64,
+        timeout: u32,
     ) -> core::result::Result<usize, VsockTransportError>;
     fn dequeue(
         &mut self,
         stream: &VsockStream,
-        timeout: u64,
+        timeout: u32,
     ) -> core::result::Result<Vec<u8>, VsockTransportError>;
     fn can_send(&self) -> bool;
     fn can_recv(&self) -> bool;
