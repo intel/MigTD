@@ -103,17 +103,17 @@ fn handle_pre_mig() {
         if queued < MAX_CONCURRENCY_REQUESTS {
             let mut session = MigrationSession::new();
             if let Ok(info) = session.wait_for_request() {
-                #[cfg(feature = "vmcall-vsock")]
-                {
-                    // Safe to unwrap because we have got the request information
-                    let info = session.info().unwrap();
-                    migtd::driver::vsock::vmcall_vsock_device_init(
-                        info.mig_info.mig_request_id,
-                        info.mig_socket_info.mig_td_cid,
-                    );
-                }
                 if let Some(request_id) = info {
                     async_runtime::add_task(async move {
+                        #[cfg(feature = "vmcall-vsock")]
+                        {
+                            // Safe to unwrap because we have got the request information
+                            let info = session.info().unwrap();
+                            migtd::driver::vsock::vmcall_vsock_device_init(
+                                info.mig_info.mig_request_id,
+                                info.mig_socket_info.mig_td_cid,
+                            );
+                        }
                         let status = session
                             .op()
                             .await
