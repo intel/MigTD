@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{collections::BTreeSet, vec::Vec};
-use core::mem::size_of;
+use core::{mem::size_of, sync::atomic::Ordering};
+use event::VMCALL_SERVICE_FLAG;
 use lazy_static::lazy_static;
 use scroll::Pread;
 use spin::Mutex;
@@ -80,8 +81,13 @@ impl ExchangeInformation {
     }
 }
 
+struct WaitForRequestContext {
+    rsp_mem: Option<SharedMemory>,
+    pending_response: bool,
+}
+
 enum MigrationState {
-    WaitForRequest,
+    WaitForRequest(WaitForRequestContext),
     Operate(MigrationOperation),
     Complete(RequestInformation),
 }
@@ -103,7 +109,10 @@ impl Default for MigrationSession {
 impl MigrationSession {
     pub fn new() -> Self {
         MigrationSession {
-            state: MigrationState::WaitForRequest,
+            state: MigrationState::WaitForRequest(WaitForRequestContext {
+                rsp_mem: None,
+                pending_response: false,
+            }),
         }
     }
 
@@ -163,39 +172,60 @@ impl MigrationSession {
     }
 
     pub fn wait_for_request(&mut self) -> Result<Option<u64>> {
-        match self.state {
-            MigrationState::WaitForRequest => {
-                // Allocate shared page for command and response buffer
-                let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-                let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        match &mut self.state {
+            MigrationState::WaitForRequest(context) => {
+                if !context.pending_response || cfg!(not(feature = "vmcall-interrupt")) {
+                    // Allocate shared page for command and response buffer
+                    let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+                    let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
-                // Set Migration wait for request command buffer
-                let mut cmd =
-                    VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-                        .ok_or(MigrationResult::InvalidParameter)?;
-                let wfr = ServiceMigWaitForReqCommand {
-                    version: 0,
-                    command: MIG_COMMAND_WAIT,
-                    reserved: [0; 2],
-                };
-                cmd.write(wfr.as_bytes())?;
-                let _ =
-                    VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-                        .ok_or(MigrationResult::InvalidParameter)?;
+                    // Set Migration wait for request command buffer
+                    let mut cmd = VmcallServiceCommand::new(
+                        cmd_mem.as_mut_bytes(),
+                        VMCALL_SERVICE_MIGTD_GUID,
+                    )
+                    .ok_or(MigrationResult::InvalidParameter)?;
+                    let wfr = ServiceMigWaitForReqCommand {
+                        version: 0,
+                        command: MIG_COMMAND_WAIT,
+                        reserved: [0; 2],
+                    };
+                    cmd.write(wfr.as_bytes())?;
+                    let _ = VmcallServiceResponse::new(
+                        rsp_mem.as_mut_bytes(),
+                        VMCALL_SERVICE_MIGTD_GUID,
+                    )
+                    .ok_or(MigrationResult::InvalidParameter)?;
+
+                    #[cfg(not(feature = "vmcall-interrupt"))]
+                    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+
+                    #[cfg(feature = "vmcall-interrupt")]
+                    {
+                        tdx::tdvmcall_service(
+                            cmd_mem.as_bytes(),
+                            rsp_mem.as_mut_bytes(),
+                            event::VMCALL_SERVICE_VECTOR as u64,
+                            0,
+                        )?;
+                    }
+
+                    context.rsp_mem = Some(rsp_mem);
+                    context.pending_response = true;
+                }
 
                 #[cfg(feature = "vmcall-interrupt")]
-                {
-                    tdx::tdvmcall_service(
-                        cmd_mem.as_bytes(),
-                        rsp_mem.as_mut_bytes(),
-                        event::VMCALL_SERVICE_VECTOR as u64,
-                        0,
-                    )?;
+                if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
+                    VMCALL_SERVICE_FLAG.store(false, Ordering::SeqCst);
+                } else {
+                    return Ok(None);
                 }
-                #[cfg(not(feature = "vmcall-interrupt"))]
-                tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-                let private_mem = rsp_mem.copy_to_private_shadow();
+                let private_mem = context
+                    .rsp_mem
+                    .as_mut()
+                    .ok_or(MigrationResult::InvalidParameter)?
+                    .copy_to_private_shadow();
 
                 // Parse out the response data
                 let rsp = VmcallServiceResponse::try_read(private_mem)
