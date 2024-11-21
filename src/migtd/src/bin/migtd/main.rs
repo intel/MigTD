@@ -7,9 +7,14 @@
 
 extern crate alloc;
 
+use core::future::poll_fn;
+use core::task::Poll;
+
 use log::info;
-use migtd::migration::{session::MigrationSession, MigrationResult};
+use migtd::migration::session::*;
+use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
+use spin::Mutex;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -49,7 +54,7 @@ pub fn runtime_main() {
 
     migration::event::register_callback();
     // Query the capability of VMM
-    if MigrationSession::query().is_err() {
+    if query().is_err() {
         panic!("Migration is not supported by VMM");
     }
 
@@ -92,37 +97,55 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
 }
 
 fn handle_pre_mig() {
-    use migtd::migration::session::REQUESTS;
     #[cfg(feature = "vmcall-interrupt")]
     const MAX_CONCURRENCY_REQUESTS: usize = 16;
     #[cfg(not(feature = "vmcall-interrupt"))]
     const MAX_CONCURRENCY_REQUESTS: usize = 1;
 
-    let mut queued = async_runtime::poll_tasks();
-    loop {
-        if queued < MAX_CONCURRENCY_REQUESTS {
-            let mut session = MigrationSession::new();
-            if let Ok(info) = session.wait_for_request() {
-                if let Some(request_id) = info {
-                    async_runtime::add_task(async move {
-                        #[cfg(feature = "vmcall-vsock")]
-                        {
-                            // Safe to unwrap because we have got the request information
-                            let info = session.info().unwrap();
-                            migtd::driver::vsock::vmcall_vsock_device_init(
-                                info.mig_info.mig_request_id,
-                                info.mig_socket_info.mig_td_cid,
-                            );
-                        }
-                        let status = session
-                            .op()
-                            .await
-                            .map(|_| MigrationResult::Success)
-                            .unwrap_or_else(|e| e);
-                        let _ = session.report_status(status as u8);
-                        REQUESTS.lock().remove(&request_id);
-                    });
+    // Set by `wait_for_request` async task when getting new request from VMM.
+    static PENDING_REQUEST: Mutex<Option<MigrationInformation>> = Mutex::new(None);
+
+    async_runtime::add_task(async move {
+        loop {
+            poll_fn(|_cx| {
+                // Wait until the pending request is taken by a new task
+                if PENDING_REQUEST.lock().is_none() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
                 }
+            })
+            .await;
+
+            if let Ok(request) = wait_for_request().await {
+                *PENDING_REQUEST.lock() = Some(request);
+            }
+        }
+    });
+
+    let mut queued = async_runtime::poll_tasks();
+
+    loop {
+        // The async task waiting for VMM response is always in the queue
+        if queued < MAX_CONCURRENCY_REQUESTS + 1 {
+            let new_request = PENDING_REQUEST.lock().take();
+
+            if let Some(request) = new_request {
+                async_runtime::add_task(async move {
+                    #[cfg(feature = "vmcall-vsock")]
+                    {
+                        migtd::driver::vsock::vmcall_vsock_device_init(
+                            request.mig_info.mig_request_id,
+                            request.mig_socket_info.mig_td_cid,
+                        );
+                    }
+                    let status = exchange_msk(&request)
+                        .await
+                        .map(|_| MigrationResult::Success)
+                        .unwrap_or_else(|e| e);
+                    let _ = report_status(status as u8, request.mig_info.mig_request_id);
+                    REQUESTS.lock().remove(&request.mig_info.mig_request_id);
+                });
             }
         }
         queued = async_runtime::poll_tasks();
