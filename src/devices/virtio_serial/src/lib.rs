@@ -697,12 +697,8 @@ impl VirtioSerial {
             return Err(VirtioSerialError::NotReady);
         }
 
-        self.pop_used_rx(port_id).map_err(|e| {
-            self.timer.reset_timeout();
-            e
-        })?;
+        self.pop_used_rx(port_id)?;
         if let Some(data) = Self::port_queue_pop(port_id) {
-            self.timer.reset_timeout();
             Ok(data)
         } else {
             Err(VirtioSerialError::NotReady)

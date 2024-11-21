@@ -55,8 +55,8 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     // Run the global constructors
     init(payload);
 
-    // Initilize the system ticks
-    driver::ticks::init_sys_tick();
+    // Initilize the APIC timer
+    driver::timer::init_timer();
 
     #[cfg(feature = "virtio-serial")]
     driver::serial::virtio_serial_device_init(end_of_ram() as u64);
@@ -64,6 +64,9 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     // Init the vsock-virtio device
     #[cfg(feature = "virtio-vsock")]
     driver::vsock::virtio_vsock_device_init(end_of_ram() as u64);
+
+    // Initilize the system ticks
+    driver::ticks::init_sys_tick();
 
     arch::init::init(&layout, main);
 }
