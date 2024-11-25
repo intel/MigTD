@@ -126,12 +126,14 @@ impl VmcallVsock {
         self.set_command(command, COMMAND_SEND, &[header, data])?;
         self.set_response(response)?;
 
+        log::info!("Sending vsock message thru VMCALL...\n");
         tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
             .map_err(|e| VsockTransportError::Vmcall(e))?;
 
         while !VMCALL_FLAG.load(Ordering::SeqCst) {}
         VMCALL_FLAG.store(false, Ordering::SeqCst);
 
+        log::info!("VMM has received the vsock message.\n");
         // Parse the response data
         // Check the GUID of the reponse
         let reply = Response::new(response).ok_or(VsockTransportError::InvalidParameter)?;
@@ -143,6 +145,7 @@ impl VmcallVsock {
             || reply.data()[1] != COMMAND_SEND
             || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != self.mid
         {
+            log::error!("Failed at checking `VMCALL_MIGTD_SEND` response\n");
             return Err(VsockTransportError::InvalidParameter);
         }
 
@@ -159,6 +162,7 @@ impl VmcallVsock {
         self.set_command(command, COMMAND_RECV, &[])?;
         self.set_response(response)?;
 
+        log::info!("Receving vsock message thru VMCALL...\n");
         tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
             .map_err(|e| VsockTransportError::Vmcall(e))?;
 
@@ -178,6 +182,7 @@ impl VmcallVsock {
             || reply.data()[1] != COMMAND_RECV
             || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != self.mid
         {
+            log::error!("Failed at checking `VMCALL_MIGTD_RECV` response\n");
             return Err(VsockTransportError::InvalidParameter);
         }
 

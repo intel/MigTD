@@ -131,6 +131,7 @@ fn handle_pre_mig() {
             let new_request = PENDING_REQUEST.lock().take();
 
             if let Some(request) = new_request {
+                log::info!("Create a new task to handle migration request\n");
                 async_runtime::add_task(async move {
                     #[cfg(feature = "vmcall-vsock")]
                     {

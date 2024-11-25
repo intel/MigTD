@@ -194,6 +194,7 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
             if REQUESTS.lock().contains(&request_id) {
                 Poll::Pending
             } else {
+                log::info!("Got a valid migration request.\n");
                 REQUESTS.lock().insert(request_id);
                 Poll::Ready(Ok(mig_info))
             }
@@ -290,6 +291,8 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     #[cfg(not(feature = "virtio-serial"))]
     {
         use vsock::{stream::VsockStream, VsockAddr};
+
+        log::info!("Start a vsock stream for TLS message transmission\n");
         // Establish the vsock connection with host
         let mut vsock = VsockStream::new()?;
         vsock
@@ -306,6 +309,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
 
     // Establish TLS layer connection and negotiate the MSK
     if info.is_src() {
+        log::info!("Start a TLS client for migration source\n");
         // TLS client
         let mut ratls_client =
             ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
@@ -325,6 +329,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             return Err(MigrationResult::NetworkError);
         }
     } else {
+        log::info!("Start a TLS server for migration destination\n");
         // TLS server
         let mut ratls_server =
             ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
