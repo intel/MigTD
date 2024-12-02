@@ -339,6 +339,8 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         if size < size_of::<ExchangeInformation>() {
             return Err(MigrationResult::NetworkError);
         }
+        #[cfg(not(feature = "virtio-serial"))]
+        ratls_client.transport_mut().shutdown().await?;
     } else {
         // TLS server
         let mut ratls_server =
@@ -357,6 +359,8 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         if size < size_of::<ExchangeInformation>() {
             return Err(MigrationResult::NetworkError);
         }
+        #[cfg(not(feature = "virtio-serial"))]
+        ratls_server.transport_mut().shutdown().await?;
     }
 
     let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;

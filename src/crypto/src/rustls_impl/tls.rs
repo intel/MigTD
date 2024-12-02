@@ -44,6 +44,10 @@ where
         SecureChannel { conn }
     }
 
+    pub fn transport_mut(&mut self) -> &mut T {
+        self.conn.transport_mut()
+    }
+
     pub async fn write(&mut self, data: &[u8]) -> Result<usize> {
         self.conn.write(data).await
     }
@@ -87,6 +91,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> TlsConnection<T> {
                 Error::TlsStream
             }
             _ => Error::TlsStream,
+        }
+    }
+
+    fn transport_mut(&mut self) -> &mut T {
+        match self {
+            Self::Server(conn) => &mut conn.transport,
+            Self::Client(conn) => &mut conn.transport,
         }
     }
 }
