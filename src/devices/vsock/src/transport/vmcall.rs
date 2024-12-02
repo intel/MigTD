@@ -5,20 +5,18 @@
 use crate::protocol::field::HEADER_LEN;
 use crate::protocol::Packet;
 use crate::stream::{VsockStream, BINDING_PKT_QUEUES, CONNECTION_PKT_QUEUES};
-use crate::{
-    align_up, VsockAddr, VsockAddrPair, VsockDmaPageAllocator, VsockTransport, VsockTransportError,
-    PAGE_SIZE,
-};
+use crate::{align_up, VsockAddr, VsockAddrPair, VsockTransportError, PAGE_SIZE};
 
 use super::event::*;
 use super::Result;
 
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::convert::TryInto;
+use core::future::poll_fn;
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::Poll;
 use td_payload::interrupt_handler_template;
+use td_payload::mm::shared::SharedMemory;
 use td_shim_interface::td_uefi_pi::pi::guid;
 use tdx_tdcall::tdx;
 
@@ -26,6 +24,8 @@ const CURRENT_VERSION: u8 = 0;
 const COMMAND_SEND: u8 = 3;
 const COMMAND_RECV: u8 = 4;
 const MAX_VSOCK_MTU: usize = 0x1000 * 16;
+const VMCALL_COMMON_HEADER_LEN: usize = 36;
+const VMCALL_STATUS_RESERVED: u32 = 0xffff_ffff;
 const VMCALL_VECTOR: u8 = 0x52;
 
 static VMCALL_FLAG: AtomicBool = AtomicBool::new(false);
@@ -37,274 +37,234 @@ const VMCALL_SERVICE_MIGTD_GUID: guid::Guid = guid::Guid::from_fields(
     [0xa4, 0x44, 0x8f, 0x32, 0xb8, 0xd6, 0x11, 0xe5],
 );
 
-pub struct VmcallVsock {
-    mid: u64,
-    cid: u64,
-    dma_allocator: Box<dyn VsockDmaPageAllocator>,
-    // DMA record table
-    dma_record: BTreeMap<u64, usize>,
+fn push_stream_queues(addrs: &VsockAddrPair, buf: Vec<u8>) {
+    if buf.is_empty() {
+        return;
+    }
+
+    if let Some(stream_queue) = CONNECTION_PKT_QUEUES.lock().get_mut(addrs) {
+        stream_queue.push_back(buf);
+    } else if let Some(stream_queue) = BINDING_PKT_QUEUES.lock().get_mut(&addrs.local) {
+        stream_queue.push_back(buf);
+    }
 }
 
-impl VmcallVsock {
-    pub fn new(mid: u64, cid: u64, dma_allocator: Box<dyn VsockDmaPageAllocator>) -> Result<Self> {
-        register_callback(VMCALL_VECTOR, vmcall_notification);
+fn pop_stream_queues(addrs: &VsockAddrPair) -> Option<Vec<u8>> {
+    if let Some(stream_queue) = CONNECTION_PKT_QUEUES.lock().get_mut(addrs) {
+        stream_queue.pop_front()
+    } else if let Some(stream_queue) = BINDING_PKT_QUEUES.lock().get_mut(&addrs.local) {
+        stream_queue.pop_front()
+    } else {
+        None
+    }
+}
 
-        Ok(Self {
-            mid,
-            cid,
-            dma_allocator,
-            dma_record: BTreeMap::new(),
-        })
+// Parse the packet header and data from the untrusted source.
+//
+// pkt = Stream Message Header + MigTD Communication Packet
+fn recv_packet(pkt: &[u8]) -> Result<()> {
+    let mut header = Vec::new();
+    let mut data = Vec::new();
+
+    if pkt.len() < HEADER_LEN {
+        return Err(VsockTransportError::InvalidVsockPacket);
+    }
+    // Read out the packet header into a safe place
+    header.extend_from_slice(&pkt[..HEADER_LEN]);
+
+    // Parse the data length from the packet header and copy it out from DMA buffer
+    let packet_hdr =
+        Packet::new_checked(&header[..]).map_err(|_| VsockTransportError::InvalidVsockPacket)?;
+    let data_len = packet_hdr.data_len();
+    if data_len != 0 {
+        if data_len as usize > pkt.len() - HEADER_LEN {
+            return Err(VsockTransportError::InvalidParameter);
+        }
+        data.extend_from_slice(&pkt[HEADER_LEN..HEADER_LEN + data_len as usize])
     }
 
-    fn push_stream_queues(addrs: &VsockAddrPair, buf: Vec<u8>) {
-        if buf.is_empty() {
-            return;
-        }
+    let key = VsockAddrPair {
+        local: VsockAddr::new(packet_hdr.dst_cid() as u32, packet_hdr.dst_port()),
+        remote: VsockAddr::new(packet_hdr.src_cid() as u32, packet_hdr.src_port()),
+    };
 
-        if let Some(stream_queue) = CONNECTION_PKT_QUEUES.lock().get_mut(addrs) {
-            stream_queue.push_back(buf);
-        } else if let Some(stream_queue) = BINDING_PKT_QUEUES.lock().get_mut(&addrs.local) {
-            stream_queue.push_back(buf);
-        }
+    push_stream_queues(&key, header);
+    push_stream_queues(&key, data);
+
+    Ok(())
+}
+
+pub fn vsock_transport_init() {
+    register_callback(VMCALL_VECTOR, vmcall_notification);
+    log::info!("Interrupt callback is registered for vmcall-vsock\n");
+}
+
+// Get current device CID
+pub fn vsock_transport_get_cid() -> core::result::Result<u64, VsockTransportError> {
+    Err(VsockTransportError::InvalidParameter)
+}
+
+pub async fn vsock_transport_enqueue(
+    stream: &VsockStream,
+    hdr: &[u8],
+    buf: &[u8],
+    timeout: u32,
+) -> Result<usize> {
+    let command_pages = align_up(VMCALL_COMMON_HEADER_LEN + hdr.len() + buf.len()) / PAGE_SIZE;
+    let mut command = SharedMemory::new(command_pages).ok_or(VsockTransportError::DmaAllocation)?;
+
+    let response_pages = align_up(VMCALL_COMMON_HEADER_LEN) / PAGE_SIZE;
+    let mut response =
+        SharedMemory::new(response_pages).ok_or(VsockTransportError::DmaAllocation)?;
+
+    // Request sending out the message
+    vmcall_service_migtd_send(
+        command.as_mut_bytes(),
+        response.as_mut_bytes(),
+        hdr,
+        buf,
+        stream.transport_context(),
+        timeout,
+    )
+    .await
+}
+
+pub async fn vsock_transport_dequeue(stream: &VsockStream, timeout: u32) -> Result<Vec<u8>> {
+    if let Some(data) = pop_stream_queues(&stream.addr()) {
+        return Ok(data);
     }
 
-    fn pop_stream_queues(addrs: &VsockAddrPair) -> Option<Vec<u8>> {
-        if let Some(stream_queue) = CONNECTION_PKT_QUEUES.lock().get_mut(addrs) {
-            stream_queue.pop_front()
-        } else if let Some(stream_queue) = BINDING_PKT_QUEUES.lock().get_mut(&addrs.local) {
-            stream_queue.pop_front()
-        } else {
-            None
-        }
-    }
+    let command_pages = align_up(VMCALL_COMMON_HEADER_LEN) / PAGE_SIZE;
+    let mut command = SharedMemory::new(command_pages).ok_or(VsockTransportError::DmaAllocation)?;
 
-    // Parse the packet header and data from the untrusted source.
-    //
-    // pkt = Stream Message Header + MigTD Communication Packet
-    fn recv_packet(&self, pkt: &[u8]) -> Result<()> {
-        let mut header = Vec::new();
-        let mut data = Vec::new();
+    let response_pages = MAX_VSOCK_MTU / PAGE_SIZE;
+    let mut response =
+        SharedMemory::new(response_pages).ok_or(VsockTransportError::DmaAllocation)?;
 
-        if pkt.len() < HEADER_LEN {
-            return Err(VsockTransportError::InvalidVsockPacket);
-        }
-        // Read out the packet header into a safe place
-        header.extend_from_slice(&pkt[..HEADER_LEN]);
+    vmcall_service_migtd_receive(
+        command.as_mut_bytes(),
+        response.as_mut_bytes(),
+        &stream.addr(),
+        stream.transport_context(),
+        timeout,
+    )
+    .await
+}
 
-        // Parse the data length from the packet header and copy it out from DMA buffer
-        let packet_hdr = Packet::new_checked(&header[..])
-            .map_err(|_| VsockTransportError::InvalidVsockPacket)?;
-        let data_len = packet_hdr.data_len();
-        if data_len != 0 {
-            if data_len as usize > pkt.len() - HEADER_LEN {
-                return Err(VsockTransportError::InvalidParameter);
-            }
+/// Whether can send packet.
+pub fn vsock_transport_can_send() -> bool {
+    true
+}
 
-            data.extend_from_slice(&pkt[HEADER_LEN..HEADER_LEN + data_len as usize])
-        }
+/// Whether can receive packet.
+pub fn vsock_transport_can_recv() -> Result<bool> {
+    Ok(false)
+}
 
-        let key = VsockAddrPair {
-            local: VsockAddr::new(packet_hdr.dst_cid() as u32, packet_hdr.dst_port()),
-            remote: VsockAddr::new(packet_hdr.src_cid() as u32, packet_hdr.src_port()),
-        };
+async fn vmcall_service_migtd_send(
+    command: &mut [u8],
+    response: &mut [u8],
+    header: &[u8],
+    data: &[u8],
+    mid: u64,
+    timeout: u32,
+) -> Result<usize> {
+    set_command(command, COMMAND_SEND, &[header, data], mid)?;
+    set_response(response)?;
 
-        Self::push_stream_queues(&key, header);
-        Self::push_stream_queues(&key, data);
+    log::info!("Sending vsock message thru VMCALL...\n");
+    tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
+        .map_err(|e| VsockTransportError::Vmcall(e))?;
 
-        Ok(())
-    }
-
-    fn vmcall_service_migtd_send(
-        &mut self,
-        command: &mut [u8],
-        response: &mut [u8],
-        header: &[u8],
-        data: &[u8],
-        timeout: u32,
-    ) -> Result<usize> {
-        self.set_command(command, COMMAND_SEND, &[header, data])?;
-        self.set_response(response)?;
-
-        log::info!("Sending vsock message thru VMCALL...\n");
-        tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
-            .map_err(|e| VsockTransportError::Vmcall(e))?;
-
-        while !VMCALL_FLAG.load(Ordering::SeqCst) {}
-        VMCALL_FLAG.store(false, Ordering::SeqCst);
-
-        log::info!("VMM has received the vsock message.\n");
+    poll_fn(|_cx| -> Poll<Result<usize>> {
         // Parse the response data
         // Check the GUID of the reponse
         let reply = Response::new(response).ok_or(VsockTransportError::InvalidParameter)?;
+
+        // Status is set as `VMCALL_STATUS_RESERVED` to check if the response is returned by VMM
+        if reply.status() == VMCALL_STATUS_RESERVED {
+            return Poll::Pending;
+        }
+
+        log::info!("VMM has received the vsock message.\n");
 
         // Do the sanity check
         if reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
             || reply.status() != 0
             || reply.data()[0] != CURRENT_VERSION
             || reply.data()[1] != COMMAND_SEND
-            || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != self.mid
+            || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != mid
         {
             log::error!("Failed at checking `VMCALL_MIGTD_SEND` response\n");
-            return Err(VsockTransportError::InvalidParameter);
+            return Poll::Ready(Err(VsockTransportError::InvalidParameter));
         }
 
-        Ok(data.len())
-    }
+        Poll::Ready(Ok(data.len()))
+    })
+    .await
+}
 
-    fn vmcall_service_migtd_receive(
-        &mut self,
-        command: &mut [u8],
-        response: &mut [u8],
-        addrs: &VsockAddrPair,
-        timeout: u32,
-    ) -> Result<Vec<u8>> {
-        self.set_command(command, COMMAND_RECV, &[])?;
-        self.set_response(response)?;
+async fn vmcall_service_migtd_receive(
+    command: &mut [u8],
+    response: &mut [u8],
+    addrs: &VsockAddrPair,
+    mid: u64,
+    timeout: u32,
+) -> Result<Vec<u8>> {
+    set_command(command, COMMAND_RECV, &[], mid)?;
+    set_response(response)?;
 
-        log::info!("Receving vsock message thru VMCALL...\n");
-        tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
-            .map_err(|e| VsockTransportError::Vmcall(e))?;
+    log::info!("Receving vsock message thru VMCALL...\n");
+    tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout as u64)
+        .map_err(|e| VsockTransportError::Vmcall(e))?;
 
-        if !VMCALL_FLAG.load(Ordering::SeqCst) {
-            return Err(VsockTransportError::NotReady);
-        }
-        VMCALL_FLAG.store(false, Ordering::SeqCst);
-
+    poll_fn(|_cx| -> Poll<Result<Vec<u8>>> {
         // Parse the response data
         // Check the GUID of the reponse
         let reply = Response::new(response).ok_or(VsockTransportError::InvalidParameter)?;
+
+        // Status is set as `VMCALL_STATUS_RESERVED` to check if the response is returned by VMM
+        if reply.status() == VMCALL_STATUS_RESERVED {
+            return Poll::Pending;
+        }
 
         // Do the sanity check
         if reply.guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes()
             || reply.status() != 0
             || reply.data()[0] != CURRENT_VERSION
             || reply.data()[1] != COMMAND_RECV
-            || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != self.mid
+            || u64::from_le_bytes(reply.data()[4..12].try_into().unwrap()) != mid
         {
             log::error!("Failed at checking `VMCALL_MIGTD_RECV` response\n");
-            return Err(VsockTransportError::InvalidParameter);
+            return Poll::Ready(Err(VsockTransportError::InvalidParameter));
         }
 
-        self.recv_packet(&reply.data()[12..])?;
-
-        Self::pop_stream_queues(addrs).ok_or(VsockTransportError::InvalidVsockPacket)
-    }
-
-    fn set_command(&mut self, page: &mut [u8], cmd: u8, data: &[&[u8]]) -> Result<()> {
-        let mut command = Command::new(page, &VMCALL_SERVICE_MIGTD_GUID)
-            .ok_or(VsockTransportError::InvalidParameter)?;
-        // Version: 0
-        command.write(&[0]);
-        // Command
-        command.write(&[cmd]);
-        // Reserved
-        command.write(&[0, 0]);
-        // MigRequestId
-        command.write(&self.mid.to_le_bytes());
-        for &bytes in data {
-            command.write(bytes);
-        }
-
-        Ok(())
-    }
-
-    fn set_response(&mut self, page: &mut [u8]) -> Result<usize> {
-        Response::fill(page, &VMCALL_SERVICE_MIGTD_GUID)
-            .ok_or(VsockTransportError::InvalidParameter)
-    }
-
-    fn allocate_dma(&mut self, size: usize) -> Result<&'static mut [u8]> {
-        let dma_size = align_up(size);
-        let dma_addr = self
-            .dma_allocator
-            .alloc_pages(dma_size / PAGE_SIZE)
-            .ok_or(VsockTransportError::DmaAllocation)?;
-
-        Ok(unsafe { core::slice::from_raw_parts_mut(dma_addr as *mut u8, dma_size) })
-    }
-
-    fn free_dma(&mut self, dma: &[u8]) {
-        self.dma_allocator
-            .free_pages(dma.as_ptr() as u64, dma.len() / PAGE_SIZE);
-    }
+        recv_packet(&reply.data()[12..])?;
+        Poll::Ready(pop_stream_queues(addrs).ok_or(VsockTransportError::InvalidVsockPacket))
+    })
+    .await
 }
 
-impl VsockTransport for VmcallVsock {
-    fn init(&mut self) -> Result<()> {
-        Ok(())
+fn set_command(page: &mut [u8], cmd: u8, data: &[&[u8]], mid: u64) -> Result<()> {
+    let mut command = Command::new(page, &VMCALL_SERVICE_MIGTD_GUID)
+        .ok_or(VsockTransportError::InvalidParameter)?;
+    // Version: 0
+    command.write(&[0]);
+    // Command
+    command.write(&[cmd]);
+    // Reserved
+    command.write(&[0, 0]);
+    // MigRequestId
+    command.write(&mid.to_le_bytes());
+    for &bytes in data {
+        command.write(bytes);
     }
 
-    // Get current device CID
-    fn get_cid(&self) -> Result<u64> {
-        Ok(self.cid)
-    }
-
-    fn enqueue(
-        &mut self,
-        _stream: &VsockStream,
-        hdr: &[u8],
-        buf: &[u8],
-        timeout: u32,
-    ) -> Result<usize> {
-        let command = self.allocate_dma(36 + hdr.len() + buf.len())?;
-
-        let response = if let Ok(response) = self.allocate_dma(36) {
-            response
-        } else {
-            self.free_dma(command);
-            return Err(VsockTransportError::DmaAllocation);
-        };
-
-        // Request sending out the message
-        self.vmcall_service_migtd_send(command, response, hdr, buf, timeout)
-            .map(|res| {
-                self.free_dma(command);
-                self.free_dma(response);
-                res
-            })
-    }
-
-    fn dequeue(&mut self, stream: &VsockStream, timeout: u32) -> Result<Vec<u8>> {
-        if let Some(data) = Self::pop_stream_queues(&stream.addr()) {
-            return Ok(data);
-        }
-
-        let command = self.allocate_dma(36)?;
-
-        let response = if let Ok(response) = self.allocate_dma(MAX_VSOCK_MTU) {
-            response
-        } else {
-            self.free_dma(command);
-            return Err(VsockTransportError::DmaAllocation);
-        };
-
-        self.vmcall_service_migtd_receive(command, response, &stream.addr(), timeout)
-            .map(|res| {
-                self.free_dma(command);
-                self.free_dma(response);
-                res
-            })
-    }
-
-    /// Whether can send packet.
-    fn can_send(&self) -> bool {
-        true
-    }
-
-    /// Whether can receive packet.
-    fn can_recv(&self) -> bool {
-        true
-    }
+    Ok(())
 }
 
-impl Drop for VmcallVsock {
-    fn drop(&mut self) {
-        for record in &self.dma_record {
-            self.dma_allocator
-                .free_pages(*record.0, *record.1 / PAGE_SIZE)
-        }
-    }
+fn set_response(page: &mut [u8]) -> Result<usize> {
+    Response::fill(page, &VMCALL_SERVICE_MIGTD_GUID).ok_or(VsockTransportError::InvalidParameter)
 }
 
 struct Command<'a> {
@@ -355,8 +315,8 @@ impl<'a> Response<'a> {
         response[0..16].copy_from_slice(guid.as_bytes());
         // Length field
         response[16..20].copy_from_slice(&u32::to_le_bytes(len as u32));
-        // Reserved field
-        response[20..24].copy_from_slice(&u32::to_le_bytes(0));
+        // Status field
+        response[20..24].copy_from_slice(&u32::to_le_bytes(VMCALL_STATUS_RESERVED));
 
         Some(len)
     }
