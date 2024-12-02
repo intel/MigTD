@@ -4,7 +4,7 @@
 
 use crate::protocol::{field, Packet};
 use crate::stream::{VsockStream, BINDING_PKT_QUEUES, CONNECTION_PKT_QUEUES};
-use crate::{align_up, VsockAddr, VsockAddrPair, VsockDmaPageAllocator, VsockTransport, PAGE_SIZE};
+use crate::{align_up, VsockAddr, VsockAddrPair, VsockDmaPageAllocator, PAGE_SIZE};
 
 use super::event::*;
 use super::{Result, VsockTransportError};
@@ -12,10 +12,14 @@ use super::{Result, VsockTransportError};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::cell::RefCell;
+use core::future::poll_fn;
 use core::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::Poll;
+use lazy_static::lazy_static;
+use spin::{Mutex, Once};
 use td_payload::interrupt_handler_template;
+use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
 use virtio::virtqueue::{VirtQueue, VirtQueueLayout, VirtqueueBuf};
 use virtio::{consts::*, VirtioError, VirtioTransport};
 
@@ -33,6 +37,10 @@ pub static RX_FLAG: AtomicBool = AtomicBool::new(false);
 pub static TX_FLAG: AtomicBool = AtomicBool::new(false);
 pub static CONFIG_FLAG: AtomicBool = AtomicBool::new(false);
 
+lazy_static! {
+    static ref VSOCK_DEVICE: Mutex<Once<VirtioVsock>> = Mutex::new(Once::new());
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DmaRecord {
     pub dma_addr: u64,
@@ -48,16 +56,17 @@ impl DmaRecord {
 pub struct VirtioVsock {
     pub virtio_transport: Box<dyn VirtioTransport>,
     dma_allocator: Box<dyn VsockDmaPageAllocator>,
-    rx: RefCell<VirtQueue>,
-    tx: RefCell<VirtQueue>,
+    rx: VirtQueue,
+    tx: VirtQueue,
     #[allow(unused)]
-    event: RefCell<VirtQueue>,
-
+    event: VirtQueue,
     /// DMA record table
     dma_record: BTreeMap<u64, DmaRecord>,
-
     rx_buf_num: usize,
 }
+
+unsafe impl Send for VirtioVsock {}
+unsafe impl Sync for VirtioVsock {}
 
 impl VirtioVsock {
     pub fn new(
@@ -102,9 +111,8 @@ impl VirtioVsock {
             VirtQueueLayout::new(QUEUE_SIZE as u16).ok_or(VirtioError::CreateVirtioQueue)?;
         // We have three queue for vsock (rx, tx and event)
         let queue_size = queue_layout.size() << 2;
-        let queue_dma_pages = dma_allocator
-            .alloc_pages(queue_size / PAGE_SIZE)
-            .ok_or(VsockTransportError::DmaAllocation)?;
+        let queue_dma_pages = unsafe { alloc_shared_pages(queue_size / PAGE_SIZE) }
+            .ok_or(VsockTransportError::DmaAllocation)? as u64;
         dma_record.insert(queue_dma_pages, DmaRecord::new(queue_dma_pages, queue_size));
 
         // program queue rx(idx 0)
@@ -132,9 +140,9 @@ impl VirtioVsock {
         Ok(Self {
             virtio_transport,
             dma_allocator,
-            rx: RefCell::new(queue_rx),
-            tx: RefCell::new(queue_tx),
-            event: RefCell::new(queue_event),
+            rx: queue_rx,
+            tx: queue_tx,
+            event: queue_event,
             dma_record,
             rx_buf_num: 0,
         })
@@ -173,7 +181,7 @@ impl VirtioVsock {
         let mut g2h = Vec::new();
         let mut h2g = Vec::new();
 
-        let _ = self.rx.borrow_mut().pop_used(&mut g2h, &mut h2g)?;
+        let _ = self.rx.pop_used(&mut g2h, &mut h2g)?;
         if h2g.len() != 2 {
             self.rx_buf_num -= h2g.len();
             return Err(VsockTransportError::InvalidVsockPacket);
@@ -277,7 +285,7 @@ impl VirtioVsock {
             ];
 
             // A buffer chain contains a packet header buffer and a data buffer
-            self.rx.get_mut().add(&[], &h2g)?;
+            self.rx.add(&[], &h2g)?;
 
             self.rx_buf_num += 2;
         }
@@ -306,119 +314,149 @@ impl VirtioVsock {
     }
 }
 
-impl VsockTransport for VirtioVsock {
-    fn init(&mut self) -> core::result::Result<(), VsockTransportError> {
-        // Report driver ready
-        self.virtio_transport.add_status(VIRTIO_STATUS_DRIVER_OK)?;
+pub fn vsock_transport_init(
+    virtio: Box<dyn VirtioTransport>,
+    dma_allocator: Box<dyn VsockDmaPageAllocator>,
+) -> Result<()> {
+    let virtio_vsock = VirtioVsock::new(virtio, dma_allocator)?;
+    let mut lock = VSOCK_DEVICE.lock();
+    lock.call_once(|| virtio_vsock);
 
-        if self.virtio_transport.get_status()? & VIRTIO_STATUS_DRIVER_OK != VIRTIO_STATUS_DRIVER_OK
-        {
-            self.virtio_transport.add_status(VIRTIO_STATUS_FAILED)?;
-            return Err(VsockTransportError::Initilization);
-        }
+    let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
+    // Report driver ready
+    device
+        .virtio_transport
+        .add_status(VIRTIO_STATUS_DRIVER_OK)?;
 
-        self.rx_queue_fill()?;
+    if device.virtio_transport.get_status()? & VIRTIO_STATUS_DRIVER_OK != VIRTIO_STATUS_DRIVER_OK {
+        device.virtio_transport.add_status(VIRTIO_STATUS_FAILED)?;
+        return Err(VsockTransportError::Initilization);
+    }
+    device.rx_queue_fill()?;
 
-        Ok(())
+    Ok(())
+}
+
+// Get current device CID
+pub fn vsock_transport_get_cid() -> Result<u64> {
+    let mut lock = VSOCK_DEVICE.lock();
+    let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
+
+    Ok(u64::from(device.virtio_transport.read_device_config(0)?)
+        | u64::from(device.virtio_transport.read_device_config(4)?) << 32)
+}
+
+pub async fn vsock_transport_enqueue(
+    _stream: &VsockStream,
+    hdr: &[u8],
+    buf: &[u8],
+    _timeout: u32,
+) -> Result<usize> {
+    if hdr.len() != field::HEADER_LEN || buf.len() > u32::MAX as usize {
+        return Err(VsockTransportError::InvalidParameter);
     }
 
-    // Get current device CID
-    fn get_cid(&self) -> core::result::Result<u64, VsockTransportError> {
-        Ok(u64::from(self.virtio_transport.read_device_config(0)?)
-            | u64::from(self.virtio_transport.read_device_config(4)?) << 32)
-    }
+    // Acquire the lock to access the vsock device.
+    let mut lock = VSOCK_DEVICE.lock();
+    let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
 
-    fn enqueue(
-        &mut self,
-        _stream: &VsockStream,
-        hdr: &[u8],
-        buf: &[u8],
-        _timeout: u32,
-    ) -> core::result::Result<usize, VsockTransportError> {
-        if hdr.len() != field::HEADER_LEN || buf.len() > u32::MAX as usize {
-            return Err(VsockTransportError::InvalidParameter);
-        }
+    let mut g2h = Vec::new();
 
-        let mut g2h = Vec::new();
+    let dma = device
+        .allocate_dma_memory(hdr.len())
+        .ok_or(VsockTransportError::DmaAllocation)?;
 
-        let dma = self
-            .allocate_dma_memory(hdr.len())
+    let dma_buf = unsafe { &mut *slice_from_raw_parts_mut(dma.dma_addr as *mut u8, dma.dma_size) };
+    dma_buf[0..hdr.len()].copy_from_slice(hdr);
+    g2h.push(VirtqueueBuf::new(dma.dma_addr, hdr.len() as u32));
+
+    if !buf.is_empty() {
+        let dma = device
+            .allocate_dma_memory(buf.len())
             .ok_or(VsockTransportError::DmaAllocation)?;
 
         let dma_buf =
             unsafe { &mut *slice_from_raw_parts_mut(dma.dma_addr as *mut u8, dma.dma_size) };
-        dma_buf[0..hdr.len()].copy_from_slice(hdr);
-        g2h.push(VirtqueueBuf::new(dma.dma_addr, hdr.len() as u32));
-
-        if !buf.is_empty() {
-            let dma = self
-                .allocate_dma_memory(buf.len())
-                .ok_or(VsockTransportError::DmaAllocation)?;
-
-            let dma_buf =
-                unsafe { &mut *slice_from_raw_parts_mut(dma.dma_addr as *mut u8, dma.dma_size) };
-            dma_buf[0..buf.len()].copy_from_slice(buf);
-            g2h.push(VirtqueueBuf::new(dma.dma_addr, buf.len() as u32));
-        }
-
-        self.tx.borrow_mut().add(g2h.as_slice(), &[])?;
-
-        self.kick_queue(QUEUE_TX)?;
-
-        while !self.tx.borrow_mut().can_pop() {}
-
-        let mut g2h = Vec::new();
-        let mut h2g = Vec::new();
-        let _ = self.tx.borrow_mut().pop_used(&mut g2h, &mut h2g)?;
-
-        for vq_buf in &g2h {
-            self.free_dma_memory(vq_buf.addr)
-                .ok_or(VsockTransportError::DmaAllocation)?;
-        }
-
-        Ok(buf.len())
+        dma_buf[0..buf.len()].copy_from_slice(buf);
+        g2h.push(VirtqueueBuf::new(dma.dma_addr, buf.len() as u32));
     }
 
-    fn dequeue(
-        &mut self,
-        stream: &VsockStream,
-        _timeout: u32,
-    ) -> core::result::Result<Vec<u8>, VsockTransportError> {
-        if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
-            return Ok(data);
-        }
+    device.tx.add(g2h.as_slice(), &[])?;
+    device.kick_queue(QUEUE_TX)?;
 
-        if !self.rx.borrow_mut().can_pop() {
-            return Err(VsockTransportError::NotReady);
-        }
-        RX_FLAG.store(false, Ordering::SeqCst);
+    // Release the lock to avoid deadlock in the `poll_fn`
+    core::mem::drop(lock);
 
-        self.pop_used_rx()?;
-        if let Some(data) = Self::pop_buf_from_stream_queues(&stream.addr()) {
-            Ok(data)
+    // Poll if there are used buffer in tx queue
+    poll_fn(|_cx| -> Poll<Result<()>> {
+        let mut lock = VSOCK_DEVICE.lock();
+        let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
+
+        if !device.tx.can_pop() {
+            Poll::Pending
         } else {
-            Err(VsockTransportError::NotReady)
+            let mut g2h = Vec::new();
+            let mut h2g = Vec::new();
+            let _ = device.tx.pop_used(&mut g2h, &mut h2g)?;
+
+            for vq_buf in &g2h {
+                device
+                    .free_dma_memory(vq_buf.addr)
+                    .ok_or(VsockTransportError::DmaAllocation)?;
+            }
+            Poll::Ready(Ok(()))
         }
+    })
+    .await?;
+
+    Ok(buf.len())
+}
+
+pub async fn vsock_transport_dequeue(stream: &VsockStream, _timeout: u32) -> Result<Vec<u8>> {
+    if let Some(data) = VirtioVsock::pop_buf_from_stream_queues(&stream.addr()) {
+        return Ok(data);
     }
 
-    /// Whether can send packet.
-    fn can_send(&self) -> bool {
-        let tx = self.tx.borrow();
-        tx.available_desc() >= 1
-    }
+    poll_fn(|_cx| -> Poll<Result<Vec<u8>>> {
+        // Acquire the lock to pop the used buffer from rx queue.
+        let mut lock = VSOCK_DEVICE.lock();
+        let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
 
-    /// Whether can receive packet.
-    fn can_recv(&self) -> bool {
-        let rx = self.rx.borrow();
-        rx.can_pop()
-    }
+        // Pop the used buffer in the rx queue.
+        if !device.rx.can_pop() {
+            Poll::Pending
+        } else {
+            device.pop_used_rx()?;
+            if let Some(data) = VirtioVsock::pop_buf_from_stream_queues(&stream.addr()) {
+                Poll::Ready(Ok(data))
+            } else {
+                Poll::Pending
+            }
+        }
+    })
+    .await
+}
+
+/// Whether can send packet.
+pub fn vsock_transport_can_send() -> Result<bool> {
+    let mut lock = VSOCK_DEVICE.lock();
+    let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
+
+    Ok(device.tx.available_desc() >= 1)
+}
+
+/// Whether can receive packet.
+pub fn vsock_transport_can_recv() -> Result<bool> {
+    let mut lock = VSOCK_DEVICE.lock();
+    let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
+
+    Ok(device.rx.can_pop())
 }
 
 impl Drop for VirtioVsock {
     fn drop(&mut self) {
         for record in &self.dma_record {
-            self.dma_allocator
-                .free_pages(record.1.dma_addr, record.1.dma_size / PAGE_SIZE)
+            unsafe { free_shared_pages(record.1.dma_addr as usize, record.1.dma_size / PAGE_SIZE) }
         }
     }
 }
