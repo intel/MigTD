@@ -363,7 +363,6 @@ impl ClientCertVerifier for Verifier {
 pub(crate) mod connection {
     use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
     use async_io::{AsyncRead, AsyncWrite};
-    use core::{future::poll_fn, pin::Pin};
     use rust_std_stub::io;
     use rustls::{
         client::UnbufferedClientConnection,
@@ -493,7 +492,7 @@ pub(crate) mod connection {
         conn: UnbufferedServerConnection,
         input: TlsBuffer,
         output: TlsBuffer,
-        transport: T,
+        pub transport: T,
         is_handshaking: bool,
         received_app_data: ChunkVecBuffer,
     }
@@ -537,10 +536,7 @@ pub(crate) mod connection {
                         return Ok(read);
                     }
                     ConnectionState::WriteTraffic(..) => {
-                        let size = poll_fn(|cx| {
-                            Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
-                        })
-                        .await?;
+                        let size = self.transport.read(self.input.unused_mut()).await?;
                         self.input.consume(size);
                     }
                     _ => return Err(TlsConnectionError::UnexpectedState),
@@ -581,10 +577,7 @@ pub(crate) mod connection {
                             |out_buffer| state.encrypt(data, out_buffer),
                             map_err,
                         )?;
-                        poll_fn(|cx| {
-                            Pin::new(&mut self.transport).poll_write(cx, self.output.used())
-                        })
-                        .await?;
+                        self.transport.write(self.output.used()).await?;
                         self.output.reset();
                         break;
                     }
@@ -615,18 +608,12 @@ pub(crate) mod connection {
                             )?;
                         }
                         ConnectionState::TransmitTlsData(state) => {
-                            poll_fn(|cx| {
-                                Pin::new(&mut self.transport).poll_write(cx, self.output.used())
-                            })
-                            .await?;
+                            self.transport.write(self.output.used()).await?;
                             self.output.reset();
                             state.done();
                         }
                         ConnectionState::BlockedHandshake { .. } => {
-                            let size = poll_fn(|cx| {
-                                Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
-                            })
-                            .await?;
+                            let size = self.transport.read(self.input.unused_mut()).await?;
                             self.input.consume(size);
                         }
                         ConnectionState::ReadTraffic(mut state) => {
@@ -675,8 +662,7 @@ pub(crate) mod connection {
                         },
                     )?;
 
-                    poll_fn(|cx| Pin::new(&mut self.transport).poll_write(cx, self.output.used()))
-                        .await?;
+                    self.transport.write(self.output.used()).await?;
                     self.output.reset();
                     Ok(())
                 }
@@ -764,7 +750,7 @@ pub(crate) mod connection {
         conn: UnbufferedClientConnection,
         input: TlsBuffer,
         output: TlsBuffer,
-        transport: T,
+        pub transport: T,
         is_handshaking: bool,
         received_app_data: ChunkVecBuffer,
     }
@@ -810,10 +796,7 @@ pub(crate) mod connection {
                         return Ok(read);
                     }
                     ConnectionState::WriteTraffic(..) => {
-                        let size = poll_fn(|cx| {
-                            Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
-                        })
-                        .await?;
+                        let size = self.transport.read(self.input.unused_mut()).await?;
                         self.input.consume(size);
                     }
                     _ => return Err(TlsConnectionError::UnexpectedState),
@@ -854,10 +837,7 @@ pub(crate) mod connection {
                             |out_buffer| state.encrypt(data, out_buffer),
                             map_err,
                         )?;
-                        poll_fn(|cx| {
-                            Pin::new(&mut self.transport).poll_write(cx, self.output.used())
-                        })
-                        .await?;
+                        self.transport.write(self.output.used()).await?;
                         self.output.reset();
                         break;
                     }
@@ -888,18 +868,12 @@ pub(crate) mod connection {
                             )?;
                         }
                         ConnectionState::TransmitTlsData(state) => {
-                            poll_fn(|cx| {
-                                Pin::new(&mut self.transport).poll_write(cx, self.output.used())
-                            })
-                            .await?;
+                            self.transport.write(self.output.used()).await?;
                             self.output.reset();
                             state.done();
                         }
                         ConnectionState::BlockedHandshake { .. } => {
-                            let size = poll_fn(|cx| {
-                                Pin::new(&mut self.transport).poll_read(cx, self.input.unused_mut())
-                            })
-                            .await?;
+                            let size = self.transport.read(self.input.unused_mut()).await?;
                             self.input.consume(size);
                         }
                         ConnectionState::ReadTraffic(mut state) => {
@@ -947,8 +921,7 @@ pub(crate) mod connection {
                             }
                         },
                     )?;
-                    poll_fn(|cx| Pin::new(&mut self.transport).poll_write(cx, self.output.used()))
-                        .await?;
+                    self.transport.write(self.output.used()).await?;
                     self.output.reset();
                     Ok(())
                 }
