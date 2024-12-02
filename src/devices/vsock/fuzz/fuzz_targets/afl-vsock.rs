@@ -8,11 +8,7 @@ use fuzzlib::{init, virtio_dma_alloc, virtio_dma_dealloc, COMMON_HEADER};
 use spin::{once::Once, Mutex};
 use std::thread::spawn;
 use virtio::{virtio_pci::VirtioPciTransport, Result};
-use vsock::{
-    stream::{register_vsock_device, VsockDevice, VsockStream},
-    transport::VirtioVsock,
-    VsockAddr, VsockDmaPageAllocator, VsockTransport,
-};
+use vsock::{stream::VsockStream, transport::*, VsockAddr, VsockDmaPageAllocator, VsockTransport};
 
 const PTR_OFFSET: u64 = 0x10000;
 const PAGE_SIZE: usize = 0x1000;
@@ -83,19 +79,17 @@ fn fuzz_vsock(paddr: u64, packet: &[u8]) {
 
     let pci_device = pci::PciDevice::new(0, 1, 0);
     let virtio_transport = VirtioPciTransport::new(pci_device);
-    let vsock_transport = if let Ok(vsock_transport) = VirtioVsock::new(
-        Box::new(virtio_transport),
-        Box::new(Allocator {}),
-    ) {
-        vsock_transport
-    } else {
-        return;
-    };
 
-    let _ = VsockTransport::get_cid(&vsock_transport);
-    let _ = VsockTransport::can_send(&vsock_transport);
-    let _ = VsockTransport::can_recv(&vsock_transport);
-    register_vsock_device(VsockDevice::new(Box::new(vsock_transport)));
+    // Initialize the vsock transport
+    if vsock::transport::vsock_transport_init(Box::new(virtio_transport), Box::new(Allocator {}))
+        .is_err()
+    {
+        return;
+    }
+
+    let _ = vsock_transport_get_cid();
+    let _ = vsock_transport_can_send();
+    let _ = vsock_transport_can_recv();
 
     packet[30..32].copy_from_slice(&[1, 0]);
     let device_addr = paddr - PAGE_SIZE as u64 + 0x100 + 0x200;
