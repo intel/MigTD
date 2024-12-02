@@ -293,8 +293,16 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         use vsock::{stream::VsockStream, VsockAddr};
 
         log::info!("Start a vsock stream for TLS message transmission\n");
-        // Establish the vsock connection with host
+        #[cfg(feature = "virtio-vsock")]
         let mut vsock = VsockStream::new()?;
+
+        #[cfg(feature = "vmcall-vsock")]
+        let mut vsock = VsockStream::new_with_cid(
+            info.mig_socket_info.mig_td_cid,
+            info.mig_info.mig_request_id,
+        )?;
+
+        // Establish the vsock connection with host
         vsock
             .connect(&VsockAddr::new(
                 info.mig_socket_info.mig_td_cid as u32,

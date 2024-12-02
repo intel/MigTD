@@ -65,6 +65,10 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     #[cfg(feature = "virtio-vsock")]
     driver::vsock::virtio_vsock_device_init(end_of_ram() as u64);
 
+    // Init the vmcall-vsock device
+    #[cfg(feature = "vmcall-vsock")]
+    driver::vsock::vmcall_vsock_device_init();
+
     // Initilize the system ticks
     driver::ticks::init_sys_tick();
 
