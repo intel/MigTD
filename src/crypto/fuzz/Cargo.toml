@@ -14,6 +14,7 @@ afl = { version = "*", optional = true }
 arbitrary = "=1.1.3"
 der = { version = "0.7.9", features = ["oid", "alloc"] }
 serde = "=1.0.198"
+x86_64 = "=0.14.11"
 
 [dependencies.crypto]
 path = ".."
