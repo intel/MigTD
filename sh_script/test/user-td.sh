@@ -6,11 +6,11 @@
 #
 set -e
 
-QEMU_EXEC="/usr/local/bin/qemu-system-x86_64"
+QEMU_EXEC="/usr/libexec/qemu-kvm"
 TD_TYPE=""
 KERNEL=""
 GUEST_IMG=""
-OVMF="/home/env/OVMF.fd"
+OVMF="/usr/share/qemu/OVMF.fd"
 BOOT_TYPE="direct"
 TARGET_PID=""
 ROOT_PARTITION="/dev/vda3"
@@ -31,7 +31,7 @@ Usage: $(basename "$0") [OPTION]...
   -k <kernel file>          Kernel file
   -b [direct|grub]          Boot type, default is "direct" which requires kernel binary specified via "-k"
   -p                        incoming port
-  -q [tdvmcall|vsock]       Support for TD quote using tdvmcall or vsock
+  -a [tdvmcall|vsock]       Support for TD quote using tdvmcall or vsock
   -r <root partition>       root partition for direct boot, default is /dev/vda1
   -t <src|dst>              Must set userTD type, src or dst
   -g [true|false]           Use pre-binding or not, default is "false"
@@ -41,7 +41,7 @@ EOM
 }
 
 process_args() {
-    while getopts "i:k:b:o:p:q:r:t:g:m:h" option; do
+    while getopts "i:k:b:o:p:q:a:r:t:g:m:h" option; do
         case "${option}" in
             i) GUEST_IMG=$OPTARG;;
             k) KERNEL=$OPTARG;;
