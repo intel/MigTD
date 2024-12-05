@@ -131,14 +131,8 @@ fn handle_pre_mig() {
             let new_request = PENDING_REQUEST.lock().take();
 
             if let Some(request) = new_request {
+                log::info!("Create a new task to handle migration request\n");
                 async_runtime::add_task(async move {
-                    #[cfg(feature = "vmcall-vsock")]
-                    {
-                        migtd::driver::vsock::vmcall_vsock_device_init(
-                            request.mig_info.mig_request_id,
-                            request.mig_socket_info.mig_td_cid,
-                        );
-                    }
                     let status = exchange_msk(&request)
                         .await
                         .map(|_| MigrationResult::Success)

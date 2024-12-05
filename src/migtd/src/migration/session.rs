@@ -194,6 +194,7 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
             if REQUESTS.lock().contains(&request_id) {
                 Poll::Pending
             } else {
+                log::info!("Got a valid migration request.\n");
                 REQUESTS.lock().insert(request_id);
                 Poll::Ready(Ok(mig_info))
             }
@@ -290,8 +291,18 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     #[cfg(not(feature = "virtio-serial"))]
     {
         use vsock::{stream::VsockStream, VsockAddr};
-        // Establish the vsock connection with host
+
+        log::info!("Start a vsock stream for TLS message transmission\n");
+        #[cfg(feature = "virtio-vsock")]
         let mut vsock = VsockStream::new()?;
+
+        #[cfg(feature = "vmcall-vsock")]
+        let mut vsock = VsockStream::new_with_cid(
+            info.mig_socket_info.mig_td_cid,
+            info.mig_info.mig_request_id,
+        )?;
+
+        // Establish the vsock connection with host
         vsock
             .connect(&VsockAddr::new(
                 info.mig_socket_info.mig_td_cid as u32,
@@ -306,6 +317,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
 
     // Establish TLS layer connection and negotiate the MSK
     if info.is_src() {
+        log::info!("Start a TLS client for migration source\n");
         // TLS client
         let mut ratls_client =
             ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
@@ -324,7 +336,10 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         if size < size_of::<ExchangeInformation>() {
             return Err(MigrationResult::NetworkError);
         }
+        #[cfg(not(feature = "virtio-serial"))]
+        ratls_client.transport_mut().shutdown().await?;
     } else {
+        log::info!("Start a TLS server for migration destination\n");
         // TLS server
         let mut ratls_server =
             ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
@@ -342,6 +357,8 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         if size < size_of::<ExchangeInformation>() {
             return Err(MigrationResult::NetworkError);
         }
+        #[cfg(not(feature = "virtio-serial"))]
+        ratls_server.transport_mut().shutdown().await?;
     }
 
     let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
