@@ -6,9 +6,9 @@
 #
 set -e
 
-QEMU_EXEC="/usr/local/bin/qemu-system-x86_64"
+QEMU_EXEC="/usr/libexec/qemu-kvm"
 GUEST_CID=18
-MIGTD="/usr/share/td-migration/migtd.bin"
+MIGTD=""
 VIRTIO_SERIAL=false
 MIGTD_TYPE=""
 DEST_IP="127.0.0.1"
@@ -19,6 +19,8 @@ Usage: $(basename "$0") [OPTION]...
   -q <qemu path>            QEMU path
   -m <migtd file>           MigTD file
   -t <src|dst>              Must set migtd type, src or dst
+  -s                        Use virtio serial, default is vsock
+  -i <dest_ip>              IP of destination
   -h                        Show this help
 EOM
 }
@@ -93,7 +95,7 @@ QEMU_CMD="${QEMU_EXEC} \
     if [[ $NO_DEVICE != true ]]; then
         if [[ ${VIRTIO_SERIAL} == true ]]; then
             QEMU_CMD+=" -device virtio-serial-pci,id=virtio-serial0 "
-            if [[ ${MIGTD_TYPE} == "src" ]]; then
+            if [[ ${MIGTD_TYPE} == "dst" ]]; then
                 QEMU_CMD+=" -chardev socket,host=0.0.0.0,port=1236,server=on,id=foo "
             else
                 QEMU_CMD+=" -chardev socket,host=${DEST_IP},port=1236,server=off,id=foo "
