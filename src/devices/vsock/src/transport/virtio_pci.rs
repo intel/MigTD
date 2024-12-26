@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::ptr::{slice_from_raw_parts, slice_from_raw_parts_mut};
 use core::sync::atomic::{AtomicBool, Ordering};
+use td_payload::arch::idt::InterruptStack;
 use virtio::virtqueue::{VirtQueue, VirtQueueLayout, VirtqueueBuf};
 use virtio::{consts::*, VirtioError, VirtioTransport};
 
@@ -129,9 +130,9 @@ impl VirtioVsock {
         let irq_index_tx = transport.set_interrupt_vector(TX_VECTOR)?;
         Self::set_queue_notify(transport, QUEUE_TX, irq_index_tx)?;
 
-        register_callback(RX_VECTOR, rx_callback);
-        register_callback(TX_VECTOR, tx_callback);
-        register_callback(CONFIG_VECTOR, config_callback);
+        register_callback(RX_VECTOR, rx_callback)?;
+        register_callback(TX_VECTOR, tx_callback)?;
+        register_callback(CONFIG_VECTOR, config_callback)?;
 
         Ok(Self {
             virtio_transport,
@@ -444,14 +445,14 @@ impl Drop for VirtioVsock {
     }
 }
 
-interrupt_handler_template!(rx_callback, _stack, {
+fn rx_callback(_: &mut InterruptStack) {
     RX_FLAG.store(true, Ordering::SeqCst);
-});
+}
 
-interrupt_handler_template!(tx_callback, _stack, {
+fn tx_callback(_: &mut InterruptStack) {
     TX_FLAG.store(true, Ordering::SeqCst);
-});
+}
 
-interrupt_handler_template!(config_callback, _stack, {
+fn config_callback(_: &mut InterruptStack) {
     CONFIG_FLAG.store(true, Ordering::SeqCst);
-});
+}

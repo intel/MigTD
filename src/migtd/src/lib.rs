@@ -46,7 +46,7 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
         shadow_stack_size: DEFAULT_SHADOW_STACK_SIZE,
     };
 
-    arch::init::pre_init(hob as u64, &layout);
+    arch::init::pre_init(hob as u64, &layout, true);
 
     // Init internal heap
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]

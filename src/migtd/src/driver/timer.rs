@@ -4,8 +4,7 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use td_payload::arch::apic::*;
-use td_payload::arch::idt::register;
-use td_payload::interrupt_handler_template;
+use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
 
 /// A simple apic timer notification handler used to handle the
 /// time out events
@@ -15,9 +14,9 @@ static TIMEOUT_FLAG: AtomicBool = AtomicBool::new(false);
 const TIMEOUT_VECTOR: u8 = 33;
 const CPUID_TSC_DEADLINE_BIT: u32 = 1 << 24;
 
-interrupt_handler_template!(timer, _stack, {
+fn timer_handler(_stack: &mut InterruptStack) {
     TIMEOUT_FLAG.store(true, Ordering::SeqCst);
-});
+}
 
 pub fn init_timer() {
     let cpuid = unsafe { core::arch::x86_64::__cpuid_count(0x1, 0) };
@@ -58,5 +57,8 @@ fn apic_timer_lvtt_setup(vector: u8) {
 
 fn set_timer_notification(vector: u8) {
     // Setup interrupt handler
-    register(vector, timer);
+    if register_interrupt_callback(vector as usize, InterruptCallback::new(timer_handler)).is_err()
+    {
+        panic!("Failed to set interrupt callback for timer");
+    }
 }

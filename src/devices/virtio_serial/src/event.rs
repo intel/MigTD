@@ -2,15 +2,18 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::{
+    result::Result,
+    sync::atomic::{AtomicBool, Ordering},
+};
 pub use td_payload::arch::apic::*;
-use td_payload::arch::idt::register;
-pub use td_payload::interrupt_handler_template;
+use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
 
-use crate::Timer;
+use crate::{Timer, VirtioSerialError};
 
-pub fn register_callback(vector: u8, cb: unsafe extern "C" fn()) {
-    register(vector, cb);
+pub fn register_callback(vector: u8, cb: fn(&mut InterruptStack)) -> Result<(), VirtioSerialError> {
+    register_interrupt_callback(vector as usize, InterruptCallback::new(cb))
+        .map_err(|_| VirtioSerialError::Interrupt)
 }
 
 pub fn wait_for_event(event_flag: &AtomicBool, timer: &dyn Timer) -> bool {
