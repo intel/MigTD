@@ -22,6 +22,7 @@ use core::slice::{from_raw_parts, from_raw_parts_mut};
 use core::sync::atomic::{AtomicBool, Ordering};
 use lazy_static::lazy_static;
 use spin::{Mutex, Once};
+use td_payload::arch::idt::InterruptStack;
 use virtio::{consts::*, virtqueue::*, VirtioError, VirtioTransport};
 
 use rust_std_stub::{error, io};
@@ -65,6 +66,8 @@ pub enum VirtioSerialError {
     PortNotAvailable(u32),
     // The port is already occupied
     PortAlreadyUsed(u32),
+    /// Configure device interrupt
+    Interrupt,
 }
 
 impl Display for VirtioSerialError {
@@ -78,6 +81,7 @@ impl Display for VirtioSerialError {
             VirtioSerialError::Timeout => write!(f, "Timeout"),
             VirtioSerialError::PortNotAvailable(e) => write!(f, "PortNotAvailable: 0x{:x}", e),
             VirtioSerialError::PortAlreadyUsed(e) => write!(f, "PortAlreadyUsed: 0x{:x}", e),
+            VirtioSerialError::Interrupt => write!(f, "Interrupt"),
         }
     }
 }
@@ -393,7 +397,7 @@ impl VirtioSerial {
     }
 
     fn init_notification(&mut self) -> Result<()> {
-        register_callback(IRQ_VECTOR, serial_event_callback);
+        register_callback(IRQ_VECTOR, serial_event_callback)?;
         let transport = self.virtio.as_mut();
 
         let irq_index = transport.set_interrupt_vector(IRQ_VECTOR)?;
@@ -873,6 +877,6 @@ pub(crate) fn align_up(size: usize) -> usize {
     (size & !(PAGE_SIZE - 1)) + if size % PAGE_SIZE != 0 { PAGE_SIZE } else { 0 }
 }
 
-interrupt_handler_template!(serial_event_callback, _stack, {
+fn serial_event_callback(_: &mut InterruptStack) {
     IRQ_FLAG.store(true, Ordering::SeqCst);
-});
+}

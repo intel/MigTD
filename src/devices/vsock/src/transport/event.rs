@@ -2,19 +2,31 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use super::VsockTransportError;
+
+use core::result::Result;
 use core::sync::atomic::{AtomicBool, Ordering};
-pub use td_payload::arch::apic::*;
-use td_payload::arch::idt::register;
-pub use td_payload::interrupt_handler_template;
+use td_payload::arch::apic::*;
+use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
 
 use crate::VsockTimeout;
 
 #[cfg(not(feature = "fuzz"))]
-pub fn register_callback(vector: u8, cb: unsafe extern "C" fn()) {
-    register(vector, cb);
+pub fn register_callback(
+    vector: u8,
+    cb: fn(&mut InterruptStack),
+) -> Result<(), VsockTransportError> {
+    register_interrupt_callback(vector as usize, InterruptCallback::new(cb))
+        .map_err(|_| VsockTransportError::Interrupt)
 }
+
 #[cfg(feature = "fuzz")]
-pub fn register_callback(vector: u8, cb: unsafe extern "C" fn()) {}
+pub fn register_callback(
+    vector: u8,
+    cb: fn(&mut InterruptStack),
+) -> Result<(), VsockTransportError> {
+    Ok(())
+}
 
 pub fn wait_for_event(event_flag: &AtomicBool, timer: &dyn VsockTimeout) -> bool {
     while !event_flag.load(Ordering::SeqCst) {

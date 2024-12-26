@@ -328,7 +328,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79b71cca7d95d7681a4b3b9cdf63c8dbc3730d0584c2c74e31416d64a90493f4"
 dependencies = [
  "const-oid 0.6.2",
- "der_derive 0.4.1",
 ]
 
 [[package]]
@@ -338,20 +337,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f55bf8e7b65898637379c1b74eb1551107c8294ed26d855ceb9fd1a09cfc9bc0"
 dependencies = [
  "const-oid 0.9.6",
- "der_derive 0.7.3",
+ "der_derive",
  "zeroize",
-]
-
-[[package]]
-name = "der_derive"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8aed3b3c608dc56cf36c45fe979d04eda51242e6703d8d0bb03426ef7c41db6a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "synstructure",
 ]
 
 [[package]]
@@ -1009,18 +996,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synstructure"
-version = "0.12.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f36bdaa60a83aca3921b5259d5400cbf5e90fc51931376a9bd4a0eb79aa7210f"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "unicode-xid",
-]
-
-[[package]]
 name = "sys_time"
 version = "0.1.0"
 dependencies = [
@@ -1122,7 +1097,7 @@ dependencies = [
  "anyhow",
  "cc",
  "cc-measurement",
- "der 0.4.5",
+ "der 0.7.9",
  "lazy_static",
  "r-efi",
  "ring",
@@ -1136,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "td-shim-interface"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "log",
  "r-efi",
@@ -1175,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "tdx-tdcall"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "lazy_static",
  "log",
@@ -1249,12 +1224,6 @@ name = "unicode-ident"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
-
-[[package]]
-name = "unicode-xid"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
 
 [[package]]
 name = "untrusted"

@@ -16,10 +16,9 @@ use super::Result;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::arch::asm;
 use core::convert::TryInto;
 use core::sync::atomic::{AtomicBool, Ordering};
-use td_payload::{eoi, interrupt_handler_template};
+use td_payload::arch::idt::InterruptStack;
 use td_shim_interface::td_uefi_pi::pi::guid;
 use tdx_tdcall::tdx;
 
@@ -54,7 +53,7 @@ impl VmcallVsock {
         dma_allocator: Box<dyn VsockDmaPageAllocator>,
         timer: Box<dyn VsockTimeout>,
     ) -> Result<Self> {
-        register_callback(VMCALL_VECTOR, vmcall_notification);
+        register_callback(VMCALL_VECTOR, vmcall_notification)?;
 
         Ok(Self {
             mid,
@@ -406,9 +405,9 @@ impl<'a> Response<'a> {
     }
 }
 
-interrupt_handler_template!(vmcall_notification, _stack, {
+fn vmcall_notification(_: &mut InterruptStack) {
     VMCALL_FLAG.store(true, Ordering::SeqCst);
-});
+}
 
 fn speculation_barrier() {
     unsafe { core::arch::x86_64::_mm_lfence() };

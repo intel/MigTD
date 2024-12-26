@@ -5,8 +5,8 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 use core::{ffi::c_void, slice::from_raw_parts_mut};
 use td_payload::arch::apic::{disable, enable_and_hlt};
-use td_payload::arch::idt::register;
-use td_payload::{interrupt_handler_template, mm::shared::SharedMemory};
+use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
+use td_payload::mm::shared::SharedMemory;
 use tdx_tdcall::tdx::tdvmcall_get_quote;
 
 use crate::binding::AttestLibError;
@@ -46,13 +46,20 @@ pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i3
     0
 }
 
-interrupt_handler_template!(vmm_notification, _stack, {
+fn vmm_notification(_: &mut InterruptStack) {
     NOTIFIER.store(NOTIFY_VALUE, Ordering::SeqCst);
-});
+}
 
 pub fn set_vmm_notification() {
     // Setup interrupt handler
-    register(NOTIFY_VECTOR, vmm_notification);
+    if register_interrupt_callback(
+        NOTIFY_VECTOR as usize,
+        InterruptCallback::new(vmm_notification),
+    )
+    .is_err()
+    {
+        panic!("Fail to setup interrupt callback for VMM notify\n");
+    }
 
     // Setup event notifier
     if tdx_tdcall::tdx::tdvmcall_setup_event_notify(NOTIFY_VECTOR as u64).is_err() {

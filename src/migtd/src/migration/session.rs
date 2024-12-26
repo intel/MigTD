@@ -131,7 +131,9 @@ impl MigrationSession {
         #[cfg(not(feature = "vmcall-interrupt"))]
         tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-        let private_mem = rsp_mem.copy_to_private_shadow();
+        let private_mem = rsp_mem
+            .copy_to_private_shadow()
+            .ok_or(MigrationResult::OutOfResource)?;
 
         // Parse the response data
         // Check the GUID of the reponse
@@ -190,7 +192,9 @@ impl MigrationSession {
                     #[cfg(not(feature = "vmcall-interrupt"))]
                     tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-                    let private_mem = rsp_mem.copy_to_private_shadow();
+                    let private_mem = rsp_mem
+                        .copy_to_private_shadow()
+                        .ok_or(MigrationResult::OutOfResource)?;
 
                     // Parse out the response data
                     let rsp = VmcallServiceResponse::try_read(private_mem)
@@ -298,7 +302,9 @@ impl MigrationSession {
 
         tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
 
-        let private_mem = rsp_mem.copy_to_private_shadow();
+        let private_mem = rsp_mem
+            .copy_to_private_shadow()
+            .ok_or(MigrationResult::OutOfResource)?;
 
         // Parse the response data
         // Check the GUID of the reponse

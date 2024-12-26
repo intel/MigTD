@@ -29,11 +29,19 @@ impl Tdmsrrw {
         // In x2APIC mode, SVR is mapped to MSR address 0x80f.
         // Since SVR(SIVR) is not virtualized, before we implement the handling in #VE of MSRRD/WR,
         // use tdvmcall instead direct read/write operation.
-        let read1 = tdx_tdcall::tdx::tdvmcall_rdmsr(0x80f);
+        let read1 = if let Ok(val) = tdx_tdcall::tdx::tdvmcall_rdmsr(0x80f) {
+            val
+        } else {
+            return TestResult::Fail;
+        };
 
         tdx_tdcall::tdx::tdvmcall_wrmsr(0x80f, read1 + 1);
 
-        let read2 = tdx_tdcall::tdx::tdvmcall_rdmsr(0x80f);
+        let read2 = if let Ok(val) = tdx_tdcall::tdx::tdvmcall_rdmsr(0x80f) {
+            val
+        } else {
+            return TestResult::Fail;
+        };
 
         if (read1 + 1 != read2) {
             print!(
