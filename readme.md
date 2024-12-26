@@ -19,13 +19,11 @@ This package is the sample code to show the concept of Migration TD in TDX Migra
 
 * Install [Rust](https://www.rust-lang.org/tools/install):
 ```
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.83.0
 ```
-* Install toolchain and components required by MigTD:
+* Add Rust target required by MigTD:
 ```
-rustup toolchain install nightly-2023-12-31
-rustup component add --toolchain nightly-2023-12-31 rust-src
-cargo install cargo-xbuild
+rustup target add x86_64-unknown-none
 ```
 
 2. [clang](https://releases.llvm.org/download.html#13.0.1)

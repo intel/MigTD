@@ -33,7 +33,7 @@ virtio = { path="../devices/virtio" }
 vsock = { path="../devices/vsock" }
 virtio_serial = { path="../devices/virtio_serial", optional = true }
 x86 = "0.47.0"
-x86_64 = "0.14.9"
+x86_64 = { version = "0.14", default-features = false, features = ["instructions"] }
 zerocopy = { version = "0.7", features = ["derive"] }
 
 minicov = { version = "0.2", default-features = false, optional = true }

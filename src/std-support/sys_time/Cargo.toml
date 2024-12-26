@@ -8,5 +8,5 @@ edition = "2018"
 
 [dependencies]
 lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
-x86_64 = "0.14"
+x86_64 = { version = "0.14", default-features = false, features = ["instructions"] }
 time = { version = "0.3", default-features = false }

@@ -11,7 +11,7 @@ name: main
 
 env:
   AS: nasm
-  RUST_TOOLCHAIN: nightly-2023-12-31
+  RUST_TOOLCHAIN: 1.83.0
   TOOLCHAIN_PROFILE: minimal
 
 permissions:
@@ -50,11 +50,8 @@ jobs:
           override: true
           components: rust-src
 
-      - name: Run cargo install cargo-xbuild
-        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
-        with:
-          command: install
-          args: cargo-xbuild
+      - name: Add `x86_64-unknown-none` target
+        run: rustup target add x86_64-unknown-none
         
       - name: Preparation Work
         run: bash sh_script/preparation.sh
@@ -103,11 +100,8 @@ jobs:
           override: true
           components: rust-src
 
-      - name: Run cargo install cargo-xbuild
-        uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1.0.3
-        with:
-          command: install
-          args: cargo-xbuild
+      - name: Add `x86_64-unknown-none` target
+        run: rustup target add x86_64-unknown-none
         
       - name: Preparation Work
         run: bash sh_script/preparation.sh
