@@ -6,6 +6,7 @@ env:
   AS: nasm
   AR: llvm-ar
   CC: clang
+  RUST_TOOLCHAIN: 1.83.0
 
 permissions:
   contents: read
@@ -38,26 +39,19 @@ jobs:
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
         with:
           profile: minimal
-          toolchain: nightly-2023-12-31
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
           components: clippy
 
-      - name: install stable rust toolchain
-        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
-        with:
-          toolchain: 1.78.0
-          profile: minimal
-          override: true
-
       - name: Install required cargo
-        run: cargo +stable-x86_64-unknown-linux-gnu install clippy-sarif sarif-fmt
+        run: cargo install clippy-sarif sarif-fmt
 
       - name: Preparation Work
         run: bash sh_script/preparation.sh
 
       - name: Run rust-clippy for result collection
         run:
-          cargo +nightly-2023-12-31-x86_64-unknown-linux-gnu clippy 
+          cargo clippy 
           --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt
           --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
         continue-on-error: true
@@ -69,7 +63,7 @@ jobs:
           wait-for-processing: true
       
       - name: Run rust-clippy
-        run: cargo +nightly-2023-12-31-x86_64-unknown-linux-gnu clippy --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt
+        run: cargo clippy --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt
 
   rustfmt:
     name: Format
@@ -95,7 +89,7 @@ jobs:
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
         with:
           profile: minimal
-          toolchain: nightly-2023-12-31
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
           components: rustfmt
 

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 #![no_std]
-#![feature(naked_functions)]
 
 extern crate alloc;
 

@@ -4,8 +4,6 @@
 
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
-#![feature(alloc_error_handler)]
-#![feature(naked_functions)]
 
 #[cfg_attr(feature = "main", macro_use)]
 extern crate alloc;

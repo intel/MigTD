@@ -170,7 +170,7 @@ impl BuildArgs {
         sh.set_var("CC_x86_64_unknown_none", "clang");
         sh.set_var("AR_x86_64_unknown_none", "llvm-ar");
 
-        cmd!(sh, "cargo xbuild -p migtd --target x86_64-unknown-none")
+        cmd!(sh, "cargo build -p migtd --target x86_64-unknown-none")
             .args(["--features", self.features().as_str()])
             .args(["--profile", self.profile()])
             .run()?;

@@ -13,7 +13,7 @@ env:
   AS: nasm
   AR: llvm-ar
   CC: clang
-  NIGHTLY_RUST_TOOLCHAIN: nightly-2023-12-31
+  RUST_TOOLCHAIN: 1.83.0
   TOOLCHAIN_PROFILE: minimal
 
 permissions:
@@ -43,7 +43,7 @@ jobs:
         uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
         with:
           profile: ${{ env.TOOLCHAIN_PROFILE }}
-          toolchain: ${{ env.NIGHTLY_RUST_TOOLCHAIN }}
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
 
       - name: Checkout sources
@@ -51,6 +51,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Add `x86_64-unknown-none` target
+        run: rustup target add x86_64-unknown-none
+  
       - name: Preparation work
         run: bash sh_script/preparation.sh
 

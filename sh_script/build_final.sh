@@ -91,11 +91,11 @@ function final_test_td_payload() {
     cleanup
 
     pushd tests
-    cargo xbuild -p test-td-payload --target x86_64-unknown-none --release --features=main,tdx --no-default-features
+    cargo build -p test-td-payload --target x86_64-unknown-none --release --features=main,tdx --no-default-features
     popd
 
     pushd deps/td-shim
-    cargo xbuild -p td-shim --target x86_64-unknown-none --release --features=main,tdx --no-default-features
+    cargo build -p td-shim --target x86_64-unknown-none --release --features=main,tdx --no-default-features
 
     set_cc
     cargo run -p td-shim-tools --bin td-shim-strip-info -- -n test-td-payload -w ../../ --target x86_64-unknown-none
@@ -245,20 +245,20 @@ function final_migtd() {
 }
 
 function build_migtd() {
-    cargo xbuild -p migtd --target x86_64-unknown-none --release --features=${MIGTD_FEATURE}
+    cargo build -p migtd --target x86_64-unknown-none --release --features=${MIGTD_FEATURE}
     check_file_exist "./target/x86_64-unknown-none/release/migtd"    
 }
 
 function build_tdshim() {
     pushd deps/td-shim
-    cargo xbuild -p td-shim --target x86_64-unknown-none --release --features=main,tdx --no-default-features
+    cargo build -p td-shim --target x86_64-unknown-none --release --features=main,tdx --no-default-features
     check_file_exist "./target/x86_64-unknown-none/release/td-shim" 
     popd 
 }
 
 function build_tdshim_sb() {
     pushd deps/td-shim
-    cargo xbuild -p td-shim --target x86_64-unknown-none --release --features=main,tdx,secure-boot --no-default-features 
+    cargo build -p td-shim --target x86_64-unknown-none --release --features=main,tdx,secure-boot --no-default-features 
     check_file_exist "./target/x86_64-unknown-none/release/td-shim"
     popd 
 }
