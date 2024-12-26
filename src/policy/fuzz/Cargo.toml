@@ -16,7 +16,6 @@ afl = {version = "*", optional = true }
 arbitrary = "=1.1.3"
 log = "0.4.13"
 serde = "=1.0.198"
-x86_64 = "=0.14.11"
 
 [features]
 default = ["libfuzzer-sys"]
