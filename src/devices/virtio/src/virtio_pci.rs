@@ -164,15 +164,15 @@ impl VirtioTransport for VirtioPciTransport {
         let mut cycle_flag = 0usize;
         let mut cycle_list = [0u8; CYCLE_LEN];
         // Read status register
-        let status = self.device.read_u16(STATUS_OFFSET);
-        let device_id = self.device.read_u16(DEVICE_OFFSET);
+        let status = self.device.read_u16(STATUS_OFFSET)?;
+        let device_id = self.device.read_u16(DEVICE_OFFSET)?;
         // bit 4 of status is capability bit
         if status & 1 << 4 == 0 {
             return Err(VirtioError::VirtioUnsupportedDevice);
         }
 
         // capabilities list offset is at 0x34
-        let mut cap_next = self.device.read_u8(PCI_CAP_POINTER);
+        let mut cap_next = self.device.read_u8(PCI_CAP_POINTER)?;
 
         while cap_next <= u8::MAX - CAP_LEN + 1 && cap_next > 0 {
             if cycle_list.contains(&cap_next) {
@@ -180,7 +180,7 @@ impl VirtioTransport for VirtioPciTransport {
             }
             cycle_list[cycle_flag] = cap_next;
 
-            let capability = self.device.read_u8(cap_next);
+            let capability = self.device.read_u8(cap_next)?;
             // vendor specific capability
             if capability == VIRTIO_CAPABILITIES_SPECIFIC {
                 // These offsets are into the following structure:
@@ -199,11 +199,11 @@ impl VirtioTransport for VirtioPciTransport {
                     return Err(VirtioError::InvalidParameter);
                 }
 
-                let cfg_type = self.device.read_u8(cap_next + VIRTIO_CFG_TYPE_OFFSET);
+                let cfg_type = self.device.read_u8(cap_next + VIRTIO_CFG_TYPE_OFFSET)?;
                 #[allow(clippy::disallowed_names)]
-                let bar = self.device.read_u8(cap_next + VIRTIO_BAR_OFFSET);
-                let offset = self.device.read_u32(cap_next + VIRTIO_CAP_OFFSET);
-                let length = self.device.read_u32(cap_next + VIRTIO_CAP_LENGTH_OFFSET);
+                let bar = self.device.read_u8(cap_next + VIRTIO_BAR_OFFSET)?;
+                let offset = self.device.read_u32(cap_next + VIRTIO_CAP_OFFSET)?;
+                let length = self.device.read_u32(cap_next + VIRTIO_CAP_LENGTH_OFFSET)?;
 
                 if bar > MAX_BARS_INDEX {
                     return Err(VirtioError::InvalidParameter);
@@ -266,7 +266,7 @@ impl VirtioTransport for VirtioPciTransport {
                     //         struct virtio_pci_cap cap;
                     //         le32 notify_off_multiplier; /* Multiplier for queue_notify_off. */
                     // };
-                    self.notify_off_multiplier = self.device.read_u32(cap_next + CAP_LEN);
+                    self.notify_off_multiplier = self.device.read_u32(cap_next + CAP_LEN)?;
                 }
 
                 fn device_length_check(device_id: u16, length: u32) -> Option<u32> {
@@ -312,15 +312,17 @@ impl VirtioTransport for VirtioPciTransport {
                     )?;
                 }
             } else if capability == MSIX_CAPABILITY_ID {
-                let mcr = self.device.read_u16(cap_next + MSIX_MESSAGE_CONTROL_OFFSET);
-                let bir = (self.device.read_u32(cap_next + MSIX_BIR_OFFSET) & 0x7) as u8;
+                let mcr = self
+                    .device
+                    .read_u16(cap_next + MSIX_MESSAGE_CONTROL_OFFSET)?;
+                let bir = (self.device.read_u32(cap_next + MSIX_BIR_OFFSET)? & 0x7) as u8;
 
                 // BIR specifies which BAR is used for the Message Table, which should be less than 6
                 if bir as usize >= self.device.bars.len() {
                     return Err(VirtioError::InvalidParameter);
                 }
 
-                let table_offset = self.device.read_u32(cap_next + MSIX_BIR_OFFSET) & 0xffff_fff8;
+                let table_offset = self.device.read_u32(cap_next + MSIX_BIR_OFFSET)? & 0xffff_fff8;
                 // Message Control:
                 // Bit 15 	Bit 14 	Bits 13-11 	Bits 10-0
                 // Enable 	Function Mask 	Reserved 	Table Size
@@ -341,14 +343,14 @@ impl VirtioTransport for VirtioPciTransport {
 
                 // Update Message Control to enable MSI-X
                 self.device
-                    .write_u16(cap_next + MSIX_MESSAGE_CONTROL_OFFSET, mcr | 1 << 15);
+                    .write_u16(cap_next + MSIX_MESSAGE_CONTROL_OFFSET, mcr | 1 << 15)?;
             }
 
             cycle_flag += 1;
             if cycle_flag >= CYCLE_LEN {
                 return Err(VirtioError::InvalidParameter);
             }
-            cap_next = self.device.read_u8(cap_next + 1)
+            cap_next = self.device.read_u8(cap_next + 1)?
         }
 
         // According to virtio-v1.1 section 4.1.4 Virtio Structure PCI Capabilities

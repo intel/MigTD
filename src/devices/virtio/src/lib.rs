@@ -6,6 +6,7 @@
 extern crate alloc;
 use core::fmt::Display;
 use mem::MemoryRegionError;
+use pci::PciError;
 
 pub mod consts;
 mod mem;
@@ -47,6 +48,8 @@ pub enum VirtioError {
     InvalidRingIndex,
     /// Invalid index for ring
     InvalidDescriptor,
+    /// Pci related error
+    Pci(PciError),
 }
 
 impl Display for VirtioError {
@@ -69,6 +72,7 @@ impl Display for VirtioError {
             VirtioError::InvalidDescriptorIndex => write!(f, "InvalidDescriptorIndex"),
             VirtioError::InvalidRingIndex => write!(f, "InvalidRingIndex"),
             VirtioError::InvalidDescriptor => write!(f, "InvalidDescriptor"),
+            VirtioError::Pci(_) => write!(f, "Pci"),
         }
     }
 }
@@ -76,6 +80,12 @@ impl Display for VirtioError {
 impl From<mem::MemoryRegionError> for VirtioError {
     fn from(e: mem::MemoryRegionError) -> Self {
         VirtioError::InvalidOffset(e)
+    }
+}
+
+impl From<PciError> for VirtioError {
+    fn from(e: PciError) -> Self {
+        VirtioError::Pci(e)
     }
 }
 
