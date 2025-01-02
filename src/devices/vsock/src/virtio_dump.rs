@@ -65,7 +65,7 @@ struct BarAddress {
 impl BarAddress {
     pub fn read<T: Copy + Clone>(&self, offset: u16) -> T {
         let device = 1;
-        pci::ConfigSpacePciEx::read::<T>(0, device, 0, offset)
+        pci::ConfigSpacePciEx::read::<T>(0, device, 0, offset).expect("Invalid PCI read")
     }
 
     pub fn bars(&mut self) {

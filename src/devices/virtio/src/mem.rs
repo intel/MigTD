@@ -179,11 +179,14 @@ impl MemoryRegion {
 
     #[cfg(feature = "fuzz")]
     fn mmio_read<T: Copy + Clone>(&self, offset: u64) -> Result<T, MemoryRegionError> {
-        unsafe {
-            Ok(core::ptr::read_volatile(
-                (pci::get_fuzz_seed_address() + 0x10c + offset) as *const T,
-            ))
+        let address = pci::get_fuzz_seed_address() + 0x10c + offset;
+        if address as usize % align_of::<T>() != 0 {
+            return Err(MemoryRegionError {
+                region: *self,
+                offset,
+            });
         }
+        unsafe { Ok(core::ptr::read_volatile(address as *const T)) }
     }
     #[cfg(not(feature = "fuzz"))]
     /// Read a value at given offset with a mechanism suitable for MMIO
@@ -193,6 +196,7 @@ impl MemoryRegion {
                 .checked_add(size_of::<T>() as u64)
                 .and_then(|end| if end > self.length { None } else { Some(end) })
                 .is_none()
+            || (self.base + offset) % align_of::<T>() as u64 != 0
         {
             return Err(MemoryRegionError {
                 region: *self,
@@ -233,11 +237,15 @@ impl MemoryRegion {
 
     #[cfg(feature = "fuzz")]
     fn mmio_write<T>(&self, offset: u64, value: T) -> Result<(), MemoryRegionError> {
+        let address = pci::get_fuzz_seed_address() + 0x10c + offset;
+        if address as usize % align_of::<T>() != 0 {
+            return Err(MemoryRegionError {
+                region: *self,
+                offset,
+            });
+        }
         unsafe {
-            core::ptr::write_volatile(
-                (pci::get_fuzz_seed_address() + 0x10c + offset) as *mut T,
-                value,
-            );
+            core::ptr::write_volatile(address as *mut T, value);
         }
 
         Ok(())
@@ -250,6 +258,7 @@ impl MemoryRegion {
                 .checked_add(size_of::<T>() as u64)
                 .and_then(|end| if end > self.length { None } else { Some(end) })
                 .is_none()
+            || (self.base + offset) % align_of::<T>() as u64 != 0
         {
             return Err(MemoryRegionError {
                 region: *self,

@@ -21,8 +21,10 @@ pub fn get_fuzz_seed_address() -> u64 {
 
 pub type Result<T> = core::result::Result<T, PciError>;
 
+#[derive(Debug)]
 pub enum PciError {
     InvalidParameter,
     MmioOutofResource,
     InvalidBarType,
+    Misaligned,
 }

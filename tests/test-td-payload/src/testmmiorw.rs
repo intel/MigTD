@@ -51,13 +51,29 @@ impl TestCase for Tdmmiorw {
             return;
         };
 
-        let mut command = pci_device.read_u16(0x4);
+        let mut command = match pci_device.read_u16(0x4) {
+            Ok(command) => command,
+            Err(e) => {
+                print!("Failed to read command: {:?}\n", e);
+                return;
+            }
+        };
         print!("Frist time read command is: {}\n", command);
 
         command |= PciCommand::NTERRUPT_DISABLE.bits();
-        pci_device.write_u16(0x4, command);
 
-        let command2 = pci_device.read_u16(0x4);
+        if pci_device.write_u16(0x4, command).is_err() {
+            print!("Invalid PCI write\n");
+            return;
+        }
+
+        let command2 = match pci_device.read_u16(0x4) {
+            Ok(command) => command,
+            Err(e) => {
+                print!("Failed to read command: {:?}\n", e);
+                return;
+            }
+        };
         print!("Second time read command is: {}\n", command2);
 
         if (command2 != command) {
