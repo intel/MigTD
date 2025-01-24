@@ -11,5 +11,5 @@ clap = { version = "4.0", features = ["derive"] }
 crypto = { path = "../../src/crypto" }
 migtd = { path = "../../src/migtd", default-features = false }
 serde_json = "1.0"
-td-shim-tools = { path = "../../deps/td-shim/td-shim-tools", default-feature = false, features = ["tee"] }
+td-shim-tools = { path = "../../deps/td-shim/td-shim-tools", default-features = false, features = ["tee"] }
 td-shim-interface = { path = "../../deps/td-shim/td-shim-interface" }

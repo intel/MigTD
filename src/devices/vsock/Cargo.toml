@@ -16,7 +16,7 @@ log = "0.4.13"
 rust_std_stub = { path = "../../std-support/rust-std-stub" }
 spin = "0.9.2"
 tdx-tdcall = { path = "../../../deps/td-shim/tdx-tdcall" }
-td-payload = { path = "../../../deps/td-shim/td-payload", feature = "tdx" }
+td-payload = { path = "../../../deps/td-shim/td-payload", features = ["tdx"] }
 td-shim-interface = { path = "../../../deps/td-shim/td-shim-interface", optional = true }
 
 [features]
