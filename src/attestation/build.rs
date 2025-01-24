@@ -29,16 +29,21 @@ fn main() {
         .to_string();
 
     // make servtd_attest_preparation
-    Command::new("make")
+    let status = Command::new("make")
         .args(["-C", &lib_path, "servtd_attest_preparation"])
         .status()
         .expect("failed to run make servtd_attest_preparation for attestation library!");
+    assert!(
+        status.success(),
+        "failed to build servtd_attest_preparation: {status}"
+    );
 
     // make servtd_attest
-    Command::new("make")
+    let status = Command::new("make")
         .args(["-C", &lib_path, "servtd_attest"])
         .status()
         .expect("failed to run make servtd_attest for attestation library!");
+    assert!(status.success(), "failed to build servtd_attest: {status}");
 
     let search_dir = format!(
         "{}/external/dcap_source/QuoteGeneration/quote_wrapper/servtd_attest/linux",
