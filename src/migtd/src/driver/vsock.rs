@@ -66,11 +66,11 @@ pub fn vmcall_vsock_device_init(mid: u64, cid: u64) {
 }
 
 #[cfg(feature = "virtio-vsock")]
-pub fn virtio_vsock_device_init(end_of_ram: u64) {
+pub fn virtio_vsock_device_init() {
     pci_ex_bar_initialization();
 
     // Initialize MMIO space
-    pci::init_mmio(end_of_ram);
+    pci::init_mmio();
 
     // Enumerate the virtio device
     let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID).unwrap();
@@ -95,7 +95,7 @@ pub fn virtio_vsock_device_init(end_of_ram: u64) {
 
 #[cfg(feature = "virtio-vsock")]
 pub fn pci_ex_bar_initialization() {
-    const PCI_EX_BAR_BASE_ADDRESS: u64 = 0xE0000000u64;
+    use pci::PCI_EX_BAR_BASE_ADDRESS;
 
     // PcdPciExpressBaseAddress TBD
     let pci_exbar_base = PCI_EX_BAR_BASE_ADDRESS;

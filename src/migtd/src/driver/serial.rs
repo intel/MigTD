@@ -4,6 +4,7 @@
 
 use alloc::boxed::Box;
 use core::sync::atomic::AtomicBool;
+use pci::PCI_EX_BAR_BASE_ADDRESS;
 use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
 use virtio_serial::*;
 
@@ -48,12 +49,12 @@ impl Timer for SerailTimer {
     }
 }
 
-// #[cfg(feature = "virtio-serial")]
-pub fn virtio_serial_device_init(end_of_ram: u64) {
+#[cfg(feature = "virtio-serial")]
+pub fn virtio_serial_device_init() {
     pci_ex_bar_initialization();
 
     // Initialize MMIO space
-    pci::init_mmio(end_of_ram);
+    pci::init_mmio();
 
     // Enumerate the virtio device
     let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID).unwrap();
@@ -74,8 +75,6 @@ pub fn virtio_serial_device_init(end_of_ram: u64) {
 }
 
 pub fn pci_ex_bar_initialization() {
-    const PCI_EX_BAR_BASE_ADDRESS: u64 = 0xE0000000u64;
-
     // PcdPciExpressBaseAddress TBD
     let pci_exbar_base = PCI_EX_BAR_BASE_ADDRESS;
 

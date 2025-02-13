@@ -6,11 +6,10 @@ use bitflags::bitflags;
 use core::convert::From;
 
 use crate::mmio::{alloc_mmio32, alloc_mmio64};
-use crate::{PciCommand, PciError, Result};
+use crate::{PciCommand, PciError, Result, PCI_EX_BAR_BASE_ADDRESS};
 
 pub const PCI_CONFIGURATION_ADDRESS_PORT: u16 = 0xCF8;
 pub const PCI_CONFIGURATION_DATA_PORT: u16 = 0xCFC;
-const PCI_EX_BAR_BASE_ADDRESS: u64 = 0xE0000000u64;
 const PCI_MEM32_BASE_ADDRESS_MASK: u32 = 0xFFFF_FFF0;
 const PCI_MEM64_BASE_ADDRESS_MASK: u64 = 0xFFFF_FFFF_FFFF_FFF0;
 

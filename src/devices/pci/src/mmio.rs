@@ -4,11 +4,9 @@
 
 use lazy_static::lazy_static;
 use spin::Mutex;
+use td_payload::mm::MEMORY_MAP;
 
-use crate::{PciError, Result};
-
-pub const MMIO32_START: u32 = 0xC000_0000;
-pub const MMIO32_SIZE: u32 = 0x2000_0000;
+use crate::{PciError, Result, MMIO32_SIZE, MMIO32_START, MMIO64_SIZE, MMIO64_START};
 
 lazy_static! {
     static ref MMIO32: Mutex<u32> = Mutex::new(0);
@@ -20,16 +18,24 @@ lazy_static! {
     static ref MMIO_OFFSET: Mutex<u64> = Mutex::new(0);
 }
 
-pub fn init_mmio(end_of_ram: u64) {
+pub fn init_mmio() {
+    let memory_map = MEMORY_MAP.lock();
+
+    // Iterate through each region in the memory map and check if it overlaps with the MMIO32 or MMIO64 space.
+    // If an overlap is detected, panic with an error message indicating an invalid MMIO configuration.
+    // This ensures that the MMIO space does not conflict with the RAM space.
+    for region in memory_map.iter() {
+        if (region.addr < (MMIO32_START + MMIO32_SIZE) as u64
+            && region.addr + region.size > MMIO32_START as u64)
+            || (region.addr < MMIO64_START + MMIO64_SIZE
+                && region.addr + region.size > MMIO64_START)
+        {
+            panic!("Invalid MMIO configuration: MMIO space overlaps with the RAM space.");
+        }
+    }
+
     *MMIO32.lock() = MMIO32_START;
-
-    let mmio64_start = if end_of_ram > u32::MAX as u64 {
-        end_of_ram
-    } else {
-        u32::MAX as u64 + 1
-    };
-
-    *MMIO64.lock() = mmio64_start;
+    *MMIO64.lock() = MMIO64_START;
 }
 
 #[cfg(feature = "fuzz")]
@@ -45,6 +51,8 @@ pub fn alloc_mmio32(size: u32) -> Result<u32> {
 
 #[cfg(not(feature = "fuzz"))]
 pub fn alloc_mmio32(size: u32) -> Result<u32> {
+    use crate::MMIO32_SIZE;
+
     let cur = *MMIO32.lock();
     let addr = align_up(cur as u64, size as u64).ok_or(PciError::InvalidParameter)?;
 

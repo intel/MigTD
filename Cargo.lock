@@ -101,7 +101,7 @@ name = "attestation"
 version = "0.1.0"
 dependencies = [
  "crypto",
- "der 0.7.9",
+ "der",
  "policy",
  "spin 0.9.8",
  "td-payload",
@@ -143,15 +143,6 @@ name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
-dependencies = [
- "generic-array",
-]
-
-[[package]]
-name = "block-padding"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93"
 dependencies = [
  "generic-array",
 ]
@@ -248,12 +239,6 @@ checksum = "e763eef8846b13b380f37dfecda401770b0ca4e56e95170237bd7c25c7db3582"
 
 [[package]]
 name = "const-oid"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d6f2aa4d0537bcc1c74df8755072bd31c1ef1a3a1b85a68e8404a8c353b7b8b"
-
-[[package]]
-name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
@@ -272,7 +257,7 @@ name = "crypto"
 version = "0.1.0"
 dependencies = [
  "cfg-if",
- "der 0.7.9",
+ "der",
  "ring",
  "rust_std_stub",
  "rustls",
@@ -323,20 +308,11 @@ dependencies = [
 
 [[package]]
 name = "der"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79b71cca7d95d7681a4b3b9cdf63c8dbc3730d0584c2c74e31416d64a90493f4"
-dependencies = [
- "const-oid 0.6.2",
-]
-
-[[package]]
-name = "der"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f55bf8e7b65898637379c1b74eb1551107c8294ed26d855ceb9fd1a09cfc9bc0"
 dependencies = [
- "const-oid 0.9.6",
+ "const-oid",
  "der_derive",
  "zeroize",
 ]
@@ -623,15 +599,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num-traits"
-version = "0.2.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39e3200413f237f41ab11ad6d161bc7239c84dcb631773ccd7de3dfe4b5c267c"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -656,15 +623,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "parse_int"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d695b79916a2c08bcff7be7647ab60d1402885265005a6658ffe6d763553c5a"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "pci"
 version = "0.1.0"
 dependencies = [
@@ -673,6 +631,7 @@ dependencies = [
  "lazy_static",
  "log",
  "spin 0.9.8",
+ "td-payload",
  "tdx-tdcall",
  "x86",
 ]
@@ -1097,7 +1056,7 @@ dependencies = [
  "anyhow",
  "cc",
  "cc-measurement",
- "der 0.7.9",
+ "der",
  "lazy_static",
  "r-efi",
  "ring",
@@ -1123,26 +1082,20 @@ dependencies = [
 name = "td-shim-tools"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "argparse",
- "block-padding",
  "byteorder",
  "cfg-if",
  "clap",
- "der 0.4.5",
  "env_logger",
  "hex",
  "log",
- "parse_int",
  "r-efi",
  "regex",
- "ring",
  "scroll",
  "serde",
  "serde_json",
  "sha2",
  "td-layout",
- "td-loader",
  "td-shim",
  "td-shim-interface",
  "zeroize",
@@ -1548,6 +1501,8 @@ dependencies = [
  "anyhow",
  "clap",
  "lazy_static",
+ "serde",
+ "serde_json",
  "xshell",
 ]
 
