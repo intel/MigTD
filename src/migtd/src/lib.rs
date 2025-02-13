@@ -23,8 +23,6 @@ pub mod ratls;
 #[cfg(target_os = "none")]
 pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     use td_payload::arch;
-    #[cfg(any(feature = "virtio-serial", feature = "virtio-vsock"))]
-    use td_payload::mm::end_of_ram;
     use td_payload::mm::layout::*;
 
     const STACK_SIZE: usize = 0x1_0000;
@@ -57,11 +55,11 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     driver::timer::init_timer();
 
     #[cfg(feature = "virtio-serial")]
-    driver::serial::virtio_serial_device_init(end_of_ram() as u64);
+    driver::serial::virtio_serial_device_init();
 
     // Init the vsock-virtio device
     #[cfg(feature = "virtio-vsock")]
-    driver::vsock::virtio_vsock_device_init(end_of_ram() as u64);
+    driver::vsock::virtio_vsock_device_init();
 
     arch::init::init(&layout, main);
 }

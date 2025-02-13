@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 mod build;
+mod config;
 mod library;
 mod servtd_info_hash;
 

@@ -6,9 +6,11 @@
 
 mod config;
 mod consts;
+mod layout;
 mod mmio;
 pub use config::*;
 pub use consts::*;
+pub use layout::*;
 pub use mmio::*;
 
 #[cfg(feature = "fuzz")]

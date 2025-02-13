@@ -11,6 +11,8 @@ use std::{
 };
 use xshell::{cmd, Shell};
 
+use crate::config;
+
 const MIGTD_DEFAULT_FEATURES: &str = "stack-guard,virtio-vsock";
 const MIGTD_KVM_FEATURES: &str = MIGTD_DEFAULT_FEATURES;
 const DEFAULT_IMAGE_NAME: &str = "migtd.bin";
@@ -27,6 +29,7 @@ lazy_static! {
     static ref DEFAULT_SHIM_LAYOUT: PathBuf = PROJECT_ROOT.join("config/shim_layout.json");
     static ref DEFAULT_IMAGE_LAYOUT: PathBuf = PROJECT_ROOT.join("config/image_layout.json");
     static ref DEFAULT_SERVTD_INFO: PathBuf = PROJECT_ROOT.join("config/servtd_info.json");
+    static ref MMIO_LAYOUT_SOURCE: PathBuf = PROJECT_ROOT.join("src/devices/pci/src/layout.rs");
 }
 
 #[derive(Clone, Args)]
@@ -66,6 +69,9 @@ pub(crate) struct BuildArgs {
     /// Log level control in migtd, default value is `off` for release and `info` for debug
     #[clap(short, long)]
     log_level: Option<LogLevel>,
+    /// MMIO space layout configuration for migtd
+    #[clap(long)]
+    mmio_config: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -112,6 +118,7 @@ impl LogLevel {
 
 impl BuildArgs {
     pub fn build(&self) -> Result<PathBuf> {
+        self.create_mmio_config()?;
         let (reset_vector, shim) = self.build_shim()?;
         let migtd = self.build_migtd()?;
         let bin = self.build_final(reset_vector.as_path(), shim.as_path(), migtd.as_path())?;
@@ -162,6 +169,13 @@ impl BuildArgs {
                     .unwrap(),
             ])
             .run()?;
+        Ok(())
+    }
+
+    fn create_mmio_config(&self) -> Result<()> {
+        if let Some(json_path) = &self.mmio_config {
+            config::generate_mmio_config(json_path, &MMIO_LAYOUT_SOURCE)?;
+        }
         Ok(())
     }
 
