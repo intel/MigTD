@@ -1244,7 +1244,6 @@ version = "0.1.0"
 dependencies = [
  "atomic_refcell",
  "byteorder",
- "cfg-if",
  "conquer-once",
  "lazy_static",
  "log",

@@ -6,9 +6,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use td_payload::arch::apic::*;
 use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
 
-/// A simple apic timer notification handler used to handle the
-/// time out events
-
+// A simple apic timer notification handler used to handle the
+// time out events
 static TIMEOUT_FLAG: AtomicBool = AtomicBool::new(false);
 
 const TIMEOUT_VECTOR: u8 = 33;

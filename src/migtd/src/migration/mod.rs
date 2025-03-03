@@ -4,6 +4,7 @@
 
 pub mod data;
 pub mod event;
+#[cfg(feature = "main")]
 pub mod session;
 
 use crate::ratls::RatlsError;

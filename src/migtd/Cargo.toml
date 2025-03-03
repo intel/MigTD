@@ -8,6 +8,9 @@ edition = "2021"
 name = "migtd"
 required-features = ["main"]
 
+[dev-dependencies]
+attestation = { path = "../attestation", default-features = false, features = ["test"] }
+
 [dependencies]
 bitfield = "0.13.2"
 anyhow = { version = "1.0.68", default-features = false }

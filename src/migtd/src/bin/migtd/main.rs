@@ -13,9 +13,9 @@ use migtd::{config, event_log, migration};
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+// Event IDs that will be used to tag the event log
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
-#[cfg(feature = "test_disable_ra_and_accept_all")]
 const TAGGED_EVENT_ID_TEST: u32 = 0x32;
 
 #[no_mangle]
@@ -33,19 +33,8 @@ pub fn runtime_main() {
     // Dump basic information of MigTD
     basic_info();
 
-    // Get the event log recorded by firmware
-    let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
-
-    #[cfg(feature = "test_disable_ra_and_accept_all")]
-    measure_test_feature(event_log);
-
-    // Get migration td policy from CFV and measure it into RMTR
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-    get_policy_and_measure(event_log);
-
-    // Get root certificate from CFV and measure it into RMTR
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-    get_ca_and_measure(event_log);
+    // Measure the input data
+    do_measurements();
 
     // Handle the migration request from VMM
     handle_pre_mig();
@@ -55,7 +44,22 @@ fn basic_info() {
     info!("MigTD Version - {}\n", MIGTD_VERSION);
 }
 
-#[cfg(feature = "test_disable_ra_and_accept_all")]
+fn do_measurements() {
+    // Get the event log recorded by firmware
+    let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
+
+    if cfg!(feature = "test_disable_ra_and_accept_all") {
+        measure_test_feature(event_log);
+        return;
+    }
+
+    // Get migration td policy from CFV and measure it into RMTR
+    get_policy_and_measure(event_log);
+
+    // Get root certificate from CFV and measure it into RMTR
+    get_ca_and_measure(event_log);
+}
+
 fn measure_test_feature(event_log: &mut [u8]) {
     // Measure and extend the migtd test feature to RTMR
     event_log::write_tagged_event_log(
@@ -82,7 +86,7 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_ROOT_CA, root_ca)
         .expect("Failed to log SGX root CA\n");
 
-    attestation::root_ca::set_ca(root_ca).expect("Invalid root certificate\n");
+    attestation::set_ca(root_ca).expect("Invalid root certificate\n");
 }
 
 fn handle_pre_mig() {
@@ -111,6 +115,10 @@ fn handle_pre_mig() {
                 .map(|_| MigrationResult::Success)
                 .unwrap_or_else(|e| e);
             let _ = session.report_status(status as u8);
+
+            #[cfg(any(feature = "test_stack_size", feature = "test_heap_size"))]
+            test_memory();
+
             #[cfg(all(feature = "coverage", feature = "tdx"))]
             {
                 const MAX_COVERAGE_DATA_PAGE_COUNT: usize = 0x200;
@@ -129,8 +137,6 @@ fn handle_pre_mig() {
 
                 loop {}
             }
-            #[cfg(any(feature = "test_stack_size", feature = "test_heap_size"))]
-            test_memory()
         };
     }
 }
