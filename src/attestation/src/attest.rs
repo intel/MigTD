@@ -4,7 +4,7 @@
 
 use crate::{
     binding::get_quote as get_quote_inner, binding::init_heap, binding::verify_quote_integrity,
-    binding::AttestLibError, root_ca::ROOT_CA, Error,
+    binding::AttestLibError, root_ca::ROOT_CA, Error, TD_VERIFIED_REPORT_SIZE,
 };
 use alloc::{vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void, ops::Range};
@@ -13,7 +13,6 @@ use tdx_tdcall::tdreport::*;
 const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
 const ATTEST_HEAP_SIZE: usize = 0x80000;
-const TD_VERIFIED_REPORT_SIZE: usize = 734;
 
 pub fn attest_init_heap() -> Option<usize> {
     unsafe {

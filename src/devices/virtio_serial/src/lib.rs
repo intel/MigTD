@@ -714,9 +714,8 @@ impl VirtioSerial {
                 }
             }
 
-            self.pop_used_rx(port_id).map_err(|e| {
+            self.pop_used_rx(port_id).inspect(|_| {
                 self.timer.reset_timeout();
-                e
             })?;
             if let Some(data) = Self::port_queue_pop(port_id) {
                 self.timer.reset_timeout();
