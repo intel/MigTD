@@ -94,9 +94,9 @@ pub fn write_tagged_event_log(
     tagged_event_data: &[u8],
 ) -> Result<usize> {
     let mut log_size = event_log_size(event_log).ok_or_else(|| anyhow!("Parsing event log"))?;
-    let event = TaggedEvent::new(tagged_event_id, tagged_event_data);
-
     let digest = calculate_digest(tagged_event_data)?;
+    let event = TaggedEvent::new(tagged_event_id, &digest);
+
     extend_rtmr(&digest, 3)?;
 
     let event_header = CcEventHeader {
