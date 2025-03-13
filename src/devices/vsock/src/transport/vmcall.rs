@@ -306,7 +306,7 @@ impl VsockTransport for VmcallVsock {
 
     /// Whether can receive packet.
     fn can_recv(&self) -> bool {
-        true
+        false
     }
 }
 
