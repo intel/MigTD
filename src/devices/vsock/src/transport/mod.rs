@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use cfg_if::cfg_if;
 use core::fmt::{self, Display};
 use rust_std_stub::error;
 #[cfg(feature = "vmcall-vsock")]
@@ -11,15 +10,14 @@ use tdx_tdcall::TdVmcallError;
 use virtio::VirtioError;
 
 mod event;
-cfg_if! {
-    if #[cfg(feature = "vmcall-vsock")] {
-        mod vmcall;
-        pub use vmcall::*;
-    } else if #[cfg(feature = "virtio-vsock")] {
-        mod virtio_pci;
-        pub use virtio_pci::*;
-    }
-}
+#[cfg(feature = "vmcall-vsock")]
+mod vmcall;
+#[cfg(feature = "vmcall-vsock")]
+pub use vmcall::*;
+#[cfg(feature = "virtio-vsock")]
+mod virtio_pci;
+#[cfg(feature = "virtio-vsock")]
+pub use virtio_pci::*;
 
 type Result<T> = core::result::Result<T, VsockTransportError>;
 

@@ -135,7 +135,7 @@ impl VmcallVsock {
 
         self.timer.set_timeout(timeout);
         tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout)
-            .map_err(|e| VsockTransportError::Vmcall(e))?;
+            .map_err(VsockTransportError::Vmcall)?;
 
         if !wait_for_event(&VMCALL_FLAG, self.timer.as_ref()) {
             return Err(VsockTransportError::Timeout);
@@ -171,7 +171,7 @@ impl VmcallVsock {
 
         self.timer.set_timeout(timeout);
         tdx::tdvmcall_service(command, response, VMCALL_VECTOR as u64, timeout)
-            .map_err(|e| VsockTransportError::Vmcall(e))?;
+            .map_err(VsockTransportError::Vmcall)?;
 
         // TO DO:
         // Refactor the waiting logic
@@ -270,10 +270,9 @@ impl VsockTransport for VmcallVsock {
 
         // Request sending out the message
         self.vmcall_service_migtd_send(command, response, hdr, buf, timeout)
-            .map(|res| {
+            .inspect(|_| {
                 self.free_dma(command);
                 self.free_dma(response);
-                res
             })
     }
 
@@ -292,10 +291,9 @@ impl VsockTransport for VmcallVsock {
         };
 
         self.vmcall_service_migtd_receive(command, response, &stream.addr(), timeout)
-            .map(|res| {
+            .inspect(|_| {
                 self.free_dma(command);
                 self.free_dma(response);
-                res
             })
     }
 
