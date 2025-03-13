@@ -306,7 +306,11 @@ impl VsockTransport for VmcallVsock {
 
     /// Whether can receive packet.
     fn can_recv(&self) -> bool {
-        true
+        // It always returns false because the implementation of vsock stream checks if there is
+        // available data after `dequeue` returns. For vmcall-vsock, `dequeue` will return all
+        // the data and the stream will be empty. If true is returned and dequeue is called again,
+        // it will block into VMM until new data is available.
+        false
     }
 }
 
