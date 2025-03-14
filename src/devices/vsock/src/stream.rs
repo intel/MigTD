@@ -4,22 +4,23 @@
 
 use crate::protocol::field::{FLAG_SHUTDOWN_READ, FLAG_SHUTDOWN_WRITE, HEADER_LEN};
 use crate::protocol::{field, Packet};
-use crate::{VsockAddr, VsockAddrPair, VsockError, VsockTransport, VSOCK_BUF_ALLOC};
-
-use alloc::{
-    boxed::Box, collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec,
+use crate::{
+    vsock_transport_can_recv, vsock_transport_dequeue, vsock_transport_enqueue,
+    vsock_transport_get_cid, VsockAddr, VsockAddrPair, VsockError, VSOCK_BUF_ALLOC,
 };
+
+use alloc::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec};
+use async_io::{AsyncRead, AsyncWrite};
 use lazy_static::lazy_static;
-use rust_std_stub::io::{self, Read, Write};
-use spin::{Mutex, Once};
+use rust_std_stub::io;
+use spin::Mutex;
 
 type Result<T = ()> = core::result::Result<T, VsockError>;
 
 // Timeouts in millisecond
-const DEFAULT_TIMEOUT: u64 = 8000;
+const DEFAULT_TIMEOUT: u32 = 8000;
 
 lazy_static! {
-    static ref VSOCK_DEVICE: Mutex<Once<VsockDevice>> = Mutex::new(Once::new());
     pub(crate) static ref CONNECTION_PKT_QUEUES: Mutex<BTreeMap<VsockAddrPair, VecDeque<Vec<u8>>>> =
         Mutex::new(BTreeMap::new());
     pub(crate) static ref BINDING_PKT_QUEUES: Mutex<BTreeMap<VsockAddr, VecDeque<Vec<u8>>>> =
@@ -46,31 +47,6 @@ fn remove_stream_from_binding_map(stream: &VsockStream) {
     BINDING_PKT_QUEUES.lock().remove(&stream.addr.local);
 }
 
-pub fn register_vsock_device(dev: VsockDevice) -> Result {
-    let mut vsock_device = VSOCK_DEVICE.lock();
-    vsock_device.call_once(|| dev);
-    vsock_device
-        .get_mut()
-        .ok_or(VsockError::Initialization)?
-        .transport
-        .init()?;
-    Ok(())
-}
-
-pub struct VsockDevice {
-    pub transport: Box<dyn VsockTransport>,
-}
-
-// Safety: We are in a single thread context for now
-unsafe impl Send for VsockDevice {}
-unsafe impl Sync for VsockDevice {}
-
-impl VsockDevice {
-    pub fn new(transport: Box<dyn VsockTransport>) -> Self {
-        Self { transport }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum State {
     #[default]
@@ -83,6 +59,7 @@ pub enum State {
 
 pub struct VsockStream {
     state: State,
+    transport_context: u64,
     listen_backlog: u32,
     addr: VsockAddrPair,
     data_queue: VecDeque<Vec<u8>>,
@@ -92,35 +69,30 @@ pub struct VsockStream {
     peer_buf_alloc: u32,
 }
 
-impl Read for VsockStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.recv(buf, 0).map_err(|e| e.into())
+impl AsyncRead for VsockStream {
+    async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.recv(buf, 0).await.map_err(|e| e.into())
     }
 }
 
-impl Write for VsockStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.send(buf, 0).map(|_| buf.len()).map_err(|e| e.into())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+impl AsyncWrite for VsockStream {
+    async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.send(buf, 0).await.map_err(|e| e.into())
     }
 }
 
 impl VsockStream {
     pub fn new() -> Result<Self> {
+        VsockStream::new_with_cid(vsock_transport_get_cid()?, 0)
+    }
+
+    pub fn new_with_cid(cid: u64, transport_context: u64) -> Result<Self> {
         Ok(VsockStream {
             state: State::default(),
             listen_backlog: 0,
             addr: VsockAddrPair {
                 local: VsockAddr {
-                    cid: VSOCK_DEVICE
-                        .lock()
-                        .get_mut()
-                        .ok_or(VsockError::DeviceNotAvailable)?
-                        .transport
-                        .get_cid()?,
+                    cid,
                     port: get_unused_port().ok_or(VsockError::NoAvailablePort)?,
                 },
                 remote: VsockAddr::default(),
@@ -130,6 +102,7 @@ impl VsockStream {
             tx_cnt: 0,
             peer_fwd_cnt: 0,
             peer_buf_alloc: 0,
+            transport_context,
         })
     }
 
@@ -156,17 +129,12 @@ impl VsockStream {
         }
     }
 
-    pub fn accept(&self) -> Result<VsockStream> {
+    pub async fn accept(&self) -> Result<VsockStream> {
         if self.state != State::Listening {
             return Err(VsockError::Illegal);
         }
 
-        let recv = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
+        let recv = vsock_transport_dequeue(self, DEFAULT_TIMEOUT).await?;
 
         let packet = Packet::new_checked(recv.as_slice())?;
         if packet.op() != field::OP_REQUEST {
@@ -189,12 +157,7 @@ impl VsockStream {
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-        let _ = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
+        let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
 
         let peer_addr = VsockAddr::new(request.src_cid() as u32, request.src_port());
 
@@ -210,6 +173,7 @@ impl VsockStream {
             tx_cnt: 0,
             peer_fwd_cnt: packet.fwd_cnt(),
             peer_buf_alloc: packet.buf_alloc(),
+            transport_context: 0,
         };
 
         add_stream_to_connection_map(&new_stream);
@@ -217,7 +181,7 @@ impl VsockStream {
         Ok(new_stream)
     }
 
-    pub fn connect(&mut self, addr: &VsockAddr) -> Result {
+    pub async fn connect(&mut self, addr: &VsockAddr) -> Result {
         if self.state != State::Closed {
             return Err(VsockError::Illegal);
         }
@@ -238,20 +202,10 @@ impl VsockStream {
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-        let _ = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
+        let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
 
         self.state = State::RequestSend;
-        let recv = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
+        let recv = vsock_transport_dequeue(self, DEFAULT_TIMEOUT).await?;
 
         let packet = Packet::new_checked(recv.as_slice())?;
 
@@ -271,7 +225,7 @@ impl VsockStream {
         }
     }
 
-    pub fn shutdown(&mut self) -> Result {
+    pub async fn shutdown(&mut self) -> Result {
         if self.state == State::Listening {
             self.state = State::Closed;
             remove_stream_from_binding_map(self);
@@ -289,28 +243,23 @@ impl VsockStream {
             packet.set_flags(FLAG_SHUTDOWN_READ | FLAG_SHUTDOWN_WRITE);
             packet.set_fwd_cnt(self.rx_cnt);
             packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-            let _ = VSOCK_DEVICE
-                .lock()
-                .get_mut()
-                .ok_or(VsockError::DeviceNotAvailable)?
-                .transport
-                .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
+            let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
 
             self.state = State::Closing;
-            self.reset()
+            self.reset().await
         } else {
             Err(VsockError::Illegal)
         }
     }
 
-    pub fn send(&mut self, buf: &[u8], _flags: u32) -> Result<usize> {
+    pub async fn send(&mut self, buf: &[u8], _flags: u32) -> Result<usize> {
         let state = self.state;
         if state != State::Establised {
             return Err(VsockError::Illegal);
         }
 
         while self.has_free_space() == 0 {
-            self.recv_packet_connected()?;
+            self.recv_packet_connected().await?;
         }
 
         let mut header_buf = [0u8; HEADER_LEN];
@@ -325,18 +274,13 @@ impl VsockStream {
         packet.set_flags(0);
         packet.set_fwd_cnt(self.rx_cnt);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-        let _ = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .enqueue(self, packet.as_ref(), buf, DEFAULT_TIMEOUT)?;
+        let _ = vsock_transport_enqueue(self, packet.as_ref(), buf, DEFAULT_TIMEOUT).await?;
         self.tx_cnt += buf.len() as u32;
 
         Ok(buf.len())
     }
 
-    pub fn recv(&mut self, buf: &mut [u8], _flags: u32) -> Result<usize> {
+    pub async fn recv(&mut self, buf: &mut [u8], _flags: u32) -> Result<usize> {
         let state = self.state;
         if state != State::Establised {
             return Err(VsockError::Illegal);
@@ -344,17 +288,11 @@ impl VsockStream {
 
         if self.data_queue.is_empty() {
             loop {
-                self.recv_packet_connected()?;
+                self.recv_packet_connected().await?;
 
                 // If there are received vsock packets, continue to pop them out and insert to the
                 // `data_queue`. If there is no vsock packet left in the device, break the loop.
-                if !VSOCK_DEVICE
-                    .lock()
-                    .get_mut()
-                    .ok_or(VsockError::DeviceNotAvailable)?
-                    .transport
-                    .can_recv()
-                {
+                if !vsock_transport_can_recv()? {
                     break;
                 }
             }
@@ -378,14 +316,17 @@ impl VsockStream {
         Ok(used)
     }
 
-    fn reset(&mut self) -> Result {
+    pub fn transport_context(&self) -> u64 {
+        self.transport_context
+    }
+
+    pub fn set_transport_context(&mut self, context: u64) {
+        self.transport_context = context
+    }
+
+    async fn reset(&mut self) -> Result {
         if self.state == State::Closing {
-            let recv = VSOCK_DEVICE
-                .lock()
-                .get_mut()
-                .ok_or(VsockError::DeviceNotAvailable)?
-                .transport
-                .dequeue(self, DEFAULT_TIMEOUT)?;
+            let recv = vsock_transport_dequeue(self, DEFAULT_TIMEOUT).await?;
             let packet = Packet::new_checked(recv.as_slice())?;
             if packet.op() == field::OP_RST {
                 let mut buf = [0; HEADER_LEN];
@@ -401,12 +342,8 @@ impl VsockStream {
                 packet.set_fwd_cnt(self.rx_cnt);
                 packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-                let _ = VSOCK_DEVICE
-                    .lock()
-                    .get_mut()
-                    .ok_or(VsockError::DeviceNotAvailable)?
-                    .transport
-                    .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
+                let _ =
+                    vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
                 self.state = State::Closed;
 
                 remove_stream_from_connection_map(self);
@@ -420,33 +357,23 @@ impl VsockStream {
         }
     }
 
-    fn recv_packet_connected(&mut self) -> Result<()> {
-        let recv = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .dequeue(self, DEFAULT_TIMEOUT)?;
+    async fn recv_packet_connected(&mut self) -> Result<()> {
+        let recv = vsock_transport_dequeue(self, DEFAULT_TIMEOUT).await?;
         let packet = Packet::new_checked(recv.as_slice())?;
 
         self.peer_buf_alloc = packet.buf_alloc();
         self.peer_fwd_cnt = packet.fwd_cnt();
         match packet.op() {
             field::OP_SHUTDOWN => {
-                self.shutdown()?;
+                self.shutdown().await?;
             }
             field::OP_RST => {
-                self.reset()?;
+                self.reset().await?;
                 return Err(VsockError::Illegal);
             }
             field::OP_RW => {
                 if packet.data_len() > 0 {
-                    let mut recv = VSOCK_DEVICE
-                        .lock()
-                        .get_mut()
-                        .ok_or(VsockError::DeviceNotAvailable)?
-                        .transport
-                        .dequeue(self, DEFAULT_TIMEOUT)?;
+                    let mut recv = vsock_transport_dequeue(self, DEFAULT_TIMEOUT).await?;
 
                     self.rx_cnt += packet.data_len();
                     if packet.data_len() as usize <= recv.len() {
@@ -463,14 +390,14 @@ impl VsockStream {
                 self.peer_buf_alloc = packet.buf_alloc();
             }
             field::OP_CREDIT_REQUEST => {
-                self.send_credit_update()?;
+                self.send_credit_update().await?;
             }
             _ => return Err(VsockError::Illegal),
         }
         Ok(())
     }
 
-    fn send_credit_update(&self) -> Result<()> {
+    async fn send_credit_update(&self) -> Result<()> {
         let mut header_buf = [0u8; HEADER_LEN];
         let mut packet = Packet::new_unchecked(&mut header_buf[..]);
         packet.set_src_cid(self.addr.local.cid() as u64);
@@ -483,12 +410,7 @@ impl VsockStream {
         packet.set_flags(0);
         packet.set_fwd_cnt(self.rx_cnt);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-        let _ = VSOCK_DEVICE
-            .lock()
-            .get_mut()
-            .ok_or(VsockError::DeviceNotAvailable)?
-            .transport
-            .enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT)?;
+        let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
         Ok(())
     }
 
@@ -499,12 +421,6 @@ impl VsockStream {
 
     pub(crate) fn addr(&self) -> VsockAddrPair {
         self.addr
-    }
-}
-
-impl Drop for VsockStream {
-    fn drop(&mut self) {
-        let _ = self.shutdown();
     }
 }
 

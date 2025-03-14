@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async_io = { path = "../../async/async_io" }
 virtio = { path = "../virtio" }
 lazy_static = { version = "1.0", features = ["spin_no_std"] }
 log = "0.4.13"

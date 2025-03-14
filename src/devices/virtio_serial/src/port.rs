@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{collections::VecDeque, vec::Vec};
+use async_io::{AsyncRead, AsyncWrite};
+use core::future::poll_fn;
 use rust_std_stub::io::{self, Read, Write};
 
 use crate::{Result, VirtioSerialError, SERIAL_DEVICE};
 
-const DEFAULT_TIMEOUT: u64 = 8000;
+const DEFAULT_TIMEOUT: u32 = 8000;
 
 pub struct VirtioSerialPort {
     port_id: u32,
@@ -27,6 +29,32 @@ impl Write for VirtioSerialPort {
 impl Read for VirtioSerialPort {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.recv(buf).map_err(|e| e.into())
+    }
+}
+
+impl AsyncRead for VirtioSerialPort {
+    async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        poll_fn(|_cx| match self.recv(buf) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VirtioSerialError::NotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        })
+        .await
+    }
+}
+
+impl AsyncWrite for VirtioSerialPort {
+    async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        poll_fn(|_cx| match self.send(buf) {
+            Ok(size) => core::task::Poll::Ready(Ok(size)),
+            Err(e) => match e {
+                VirtioSerialError::NotReady => core::task::Poll::Pending,
+                _ => core::task::Poll::Ready(Err(e.into())),
+            },
+        })
+        .await
     }
 }
 

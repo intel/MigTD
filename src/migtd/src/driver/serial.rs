@@ -13,8 +13,6 @@ use crate::driver::timer;
 pub const VIRTIO_PCI_VENDOR_ID: u16 = 0x1af4;
 pub const VIRTIO_PCI_DEVICE_ID: u16 = 0x1043;
 
-pub static TIMEOUT: AtomicBool = AtomicBool::new(false);
-
 // Implement a DMA allocator for vsock device
 struct Allocator;
 
@@ -39,7 +37,7 @@ impl Timer for SerailTimer {
         timer::reset_timer()
     }
 
-    fn set_timeout(&self, timeout: u64) -> Option<u64> {
+    fn set_timeout(&self, timeout: u32) -> Option<u32> {
         timer::schedule_timeout(timeout)?;
 
         // enable the interrupt to accept the timeout event
