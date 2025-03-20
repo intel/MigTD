@@ -245,7 +245,7 @@ function final_migtd() {
 }
 
 function build_migtd() {
-    cargo build -p migtd --target x86_64-unknown-none --release --features=${MIGTD_FEATURE}
+    cargo build -p migtd --target x86_64-unknown-none --release --no-default-features --features=${MIGTD_FEATURE}
     check_file_exist "./target/x86_64-unknown-none/release/migtd"    
 }
 

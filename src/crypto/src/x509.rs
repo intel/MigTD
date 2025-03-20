@@ -207,7 +207,7 @@ impl<'a> Decode<'a> for Version<'a> {
     }
 }
 
-impl<'a> Encode for Version<'a> {
+impl Encode for Version<'_> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
@@ -234,7 +234,7 @@ impl<'a> Encode for Version<'a> {
     }
 }
 
-impl<'a> Tagged for Version<'a> {
+impl Tagged for Version<'_> {
     fn tag(&self) -> Tag {
         Tag::ContextSpecific {
             constructed: true,
@@ -265,7 +265,7 @@ pub struct DistinguishedName<'a> {
     value: AnyRef<'a>,
 }
 
-impl<'a> DerOrd for DistinguishedName<'a> {
+impl DerOrd for DistinguishedName<'_> {
     fn der_cmp(&self, other: &Self) -> der::Result<core::cmp::Ordering> {
         Ok(self.attribute_type.cmp(&other.attribute_type))
     }
@@ -317,7 +317,7 @@ impl<'a, const N: u8> Decode<'a> for UniqueIdentifier<'a, N> {
     }
 }
 
-impl<'a, const N: u8> Encode for UniqueIdentifier<'a, N> {
+impl<const N: u8> Encode for UniqueIdentifier<'_, N> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
@@ -344,7 +344,7 @@ impl<'a, const N: u8> Encode for UniqueIdentifier<'a, N> {
     }
 }
 
-impl<'a, const N: u8> Tagged for UniqueIdentifier<'a, N> {
+impl<const N: u8> Tagged for UniqueIdentifier<'_, N> {
     fn tag(&self) -> Tag {
         Tag::ContextSpecific {
             constructed: true,
@@ -380,7 +380,7 @@ impl<'a> Decode<'a> for Extensions<'a> {
     }
 }
 
-impl<'a> Encode for Extensions<'a> {
+impl Encode for Extensions<'_> {
     fn encoded_len(&self) -> der::Result<der::Length> {
         let len = self.0.encoded_len()?;
         let explicit = Header::new(
@@ -407,7 +407,7 @@ impl<'a> Encode for Extensions<'a> {
     }
 }
 
-impl<'a> Tagged for Extensions<'a> {
+impl Tagged for Extensions<'_> {
     fn tag(&self) -> Tag {
         Tag::ContextSpecific {
             constructed: true,

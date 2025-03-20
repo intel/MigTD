@@ -4,6 +4,7 @@
 
 pub mod data;
 pub mod event;
+#[cfg(feature = "main")]
 pub mod session;
 
 use crate::driver::ticks::TimeoutError;
@@ -21,6 +22,7 @@ use tdx_tdcall::TdCallError;
 use tdx_tdcall::TdVmcallError;
 #[cfg(feature = "virtio-serial")]
 use virtio_serial::VirtioSerialError;
+#[cfg(any(feature = "virtio-vsock", feature = "vmcall-vsock"))]
 use vsock::VsockError;
 
 pub const VMCALL_SERVICE_COMMON_GUID: Guid = Guid::from_fields(
@@ -143,6 +145,7 @@ pub enum MigrationResult {
     InvalidPolicyError = 9,
 }
 
+#[cfg(any(feature = "virtio-vsock", feature = "vmcall-vsock"))]
 impl From<VsockError> for MigrationResult {
     fn from(_: VsockError) -> Self {
         MigrationResult::NetworkError
