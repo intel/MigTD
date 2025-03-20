@@ -118,7 +118,6 @@ pub fn find_device(vendor_id: u16, device_id: u16) -> Option<(u8, u8, u8)> {
 }
 
 /// Configure Space Access Mechanism #1
-
 /// 32-bit I/O locations  CONFIG_ADDRESS (0xCF8)
 /// 0-7     register offset
 /// 8-10    funtion number

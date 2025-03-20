@@ -1,35 +1,19 @@
 //! Traits, helpers, and type definitions for core I/O functionality.
+use super::sys;
 use core::cmp;
 use core::fmt;
-// use super::memchr;
-use super::sys;
 use core::ops::{Deref, DerefMut};
 use core::ptr;
 use core::slice;
 use core::str;
 
-// pub use self::buffered::IntoInnerError;
-// pub use self::buffered::{BufReader, BufWriter, LineWriter};
-// pub use self::cursor::Cursor;
 pub use self::error::{Error, ErrorKind, Result};
-
-pub use self::util::{copy, empty, repeat, sink, Empty, Repeat, Sink};
-
-// pub(crate) use self::stdio::clone_io;
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// mod buffered;
-// mod cursor;
 mod error;
 mod impls;
-// pub mod prelude;
-// mod stdio;
-mod util;
-
-// const DEFAULT_BUF_SIZE: usize = crate::sys_common::io::DEFAULT_BUF_SIZE;
-const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
 struct Guard<'a> {
     buf: &'a mut Vec<u8>,
@@ -535,50 +519,12 @@ pub trait Read {
     ///     Ok(())
     /// }
     /// ```
-
     fn bytes(self) -> Bytes<Self>
     where
         Self: Sized,
     {
         Bytes { inner: self }
     }
-
-    /// Creates an adaptor which will chain this stream with another.
-    ///
-    /// The returned `Read` instance will first read all bytes from this object
-    /// until EOF is encountered. Afterwards the output is equivalent to the
-    /// output of `next`.
-    ///
-    /// # Examples
-    ///
-    /// [`File`]s implement `Read`:
-    ///
-    /// [`File`]: crate::fs::File
-    ///
-    /// ```no_run
-    /// use crate::io;
-    /// use crate::io::prelude::*;
-    /// use std::fs::File;
-    ///
-    /// fn main() -> io::Result<()> {
-    ///     let mut f1 = File::open("foo.txt")?;
-    ///     let mut f2 = File::open("bar.txt")?;
-    ///
-    ///     let mut handle = f1.chain(f2);
-    ///     let mut buffer = String::new();
-    ///
-    ///     // read the value into a String. We could use any Read method here,
-    ///     // this is just one example.
-    ///     handle.read_to_string(&mut buffer)?;
-    ///     Ok(())
-    /// }
-    /// ```
-    // fn chain<R: Read>(self, next: R) -> Chain<Self, R>
-    // where
-    //     Self: Sized,
-    // {
-    //     Chain { first: self, second: next, done_first: false }
-    // }
 
     /// Creates an adaptor which will read at most `limit` bytes from it.
     ///
@@ -611,7 +557,6 @@ pub trait Read {
     ///     Ok(())
     /// }
     /// ```
-
     fn take(self, limit: u64) -> Take<Self>
     where
         Self: Sized,
@@ -625,15 +570,14 @@ pub trait Read {
 /// It is semantically a wrapper around an `&mut [u8]`, but is guaranteed to be
 /// ABI compatible with the `iovec` type on Unix platforms and `WSABUF` on
 /// Windows.
-
 #[repr(transparent)]
 pub struct IoSliceMut<'a>(sys::io::IoSliceMut<'a>);
 
-unsafe impl<'a> Send for IoSliceMut<'a> {}
+unsafe impl Send for IoSliceMut<'_> {}
 
-unsafe impl<'a> Sync for IoSliceMut<'a> {}
+unsafe impl Sync for IoSliceMut<'_> {}
 
-impl<'a> fmt::Debug for IoSliceMut<'a> {
+impl fmt::Debug for IoSliceMut<'_> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.0.as_slice(), fmt)
     }
@@ -645,14 +589,13 @@ impl<'a> IoSliceMut<'a> {
     /// # Panics
     ///
     /// Panics on Windows if the slice is larger than 4GB.
-
     #[inline]
     pub fn new(buf: &'a mut [u8]) -> IoSliceMut<'a> {
         IoSliceMut(sys::io::IoSliceMut::new(buf))
     }
 }
 
-impl<'a> Deref for IoSliceMut<'a> {
+impl Deref for IoSliceMut<'_> {
     type Target = [u8];
 
     #[inline]
@@ -661,7 +604,7 @@ impl<'a> Deref for IoSliceMut<'a> {
     }
 }
 
-impl<'a> DerefMut for IoSliceMut<'a> {
+impl DerefMut for IoSliceMut<'_> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [u8] {
         self.0.as_mut_slice()
@@ -673,16 +616,15 @@ impl<'a> DerefMut for IoSliceMut<'a> {
 /// It is semantically a wrapper around an `&[u8]`, but is guaranteed to be
 /// ABI compatible with the `iovec` type on Unix platforms and `WSABUF` on
 /// Windows.
-
 #[derive(Copy, Clone)]
 #[repr(transparent)]
 pub struct IoSlice<'a>(sys::io::IoSlice<'a>);
 
-unsafe impl<'a> Send for IoSlice<'a> {}
+unsafe impl Send for IoSlice<'_> {}
 
-unsafe impl<'a> Sync for IoSlice<'a> {}
+unsafe impl Sync for IoSlice<'_> {}
 
-impl<'a> fmt::Debug for IoSlice<'a> {
+impl fmt::Debug for IoSlice<'_> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.0.as_slice(), fmt)
     }
@@ -694,14 +636,13 @@ impl<'a> IoSlice<'a> {
     /// # Panics
     ///
     /// Panics on Windows if the slice is larger than 4GB.
-
     #[inline]
     pub fn new(buf: &'a [u8]) -> IoSlice<'a> {
         IoSlice(sys::io::IoSlice::new(buf))
     }
 }
 
-impl<'a> Deref for IoSlice<'a> {
+impl Deref for IoSlice<'_> {
     type Target = [u8];
 
     #[inline]
@@ -717,7 +658,6 @@ pub struct Initializer(bool);
 
 impl Initializer {
     /// Returns a new `Initializer` which will zero out buffers.
-
     #[inline]
     pub fn zeroing() -> Initializer {
         Initializer(true)
@@ -731,21 +671,18 @@ impl Initializer {
     /// read from buffers passed to `Read` methods, and that the return value of
     /// the method accurately reflects the number of bytes that have been
     /// written to the head of the buffer.
-
     #[inline]
     pub unsafe fn nop() -> Initializer {
         Initializer(false)
     }
 
     /// Indicates if a buffer should be initialized.
-
     #[inline]
     pub fn should_initialize(&self) -> bool {
         self.0
     }
 
     /// Initializes a buffer if necessary.
-
     #[inline]
     pub fn initialize(&self, buf: &mut [u8]) {
         if self.should_initialize() {
@@ -755,7 +692,6 @@ impl Initializer {
 }
 
 /// A trait for objects which are byte-oriented sinks.
-
 pub trait Write {
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
 
@@ -769,7 +705,6 @@ pub trait Write {
     /// buffer provided, or an empty one if none exists.
     ///
     /// [`write`]: Write::write
-
     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
         default_write_vectored(|b| self.write(b), bufs)
     }
@@ -784,7 +719,6 @@ pub trait Write {
     /// The default implementation returns `false`.
     ///
     /// [`write_vectored`]: Write::write_vectored
-
     fn is_write_vectored(&self) -> bool {
         false
     }
@@ -812,7 +746,6 @@ pub trait Write {
     ///     Ok(())
     /// }
     /// ```
-
     fn flush(&mut self) -> Result<()>;
 
     /// Attempts to write an entire buffer into this writer.
@@ -846,7 +779,6 @@ pub trait Write {
     ///     Ok(())
     /// }
     /// ```
-
     fn write_all(&mut self, mut buf: &[u8]) -> Result<()> {
         while !buf.is_empty() {
             match self.write(buf) {
@@ -863,71 +795,6 @@ pub trait Write {
         }
         Ok(())
     }
-
-    /// Attempts to write multiple buffers into this writer.
-    ///
-    /// This method will continuously call [`write_vectored`] until there is no
-    /// more data to be written or an error of non-[`ErrorKind::Interrupted`]
-    /// kind is returned. This method will not return until all buffers have
-    /// been successfully written or such an error occurs. The first error that
-    /// is not of [`ErrorKind::Interrupted`] kind generated from this method
-    /// will be returned.
-    ///
-    /// If the buffer contains no data, this will never call [`write_vectored`].
-    ///
-    /// # Notes
-    ///
-    /// Unlike [`write_vectored`], this takes a *mutable* reference to
-    /// a slice of [`IoSlice`]s, not an immutable one. That's because we need to
-    /// modify the slice to keep track of the bytes already written.
-    ///
-    /// Once this function returns, the contents of `bufs` are unspecified, as
-    /// this depends on how many calls to [`write_vectored`] were necessary. It is
-    /// best to understand this function as taking ownership of `bufs` and to
-    /// not use `bufs` afterwards. The underlying buffers, to which the
-    /// [`IoSlice`]s point (but not the [`IoSlice`]s themselves), are unchanged and
-    /// can be reused.
-    ///
-    /// [`write_vectored`]: Write::write_vectored
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(write_all_vectored)]
-    /// # fn main() -> std::io::Result<()> {
-    ///
-    /// use crate::io::{Write, IoSlice};
-    ///
-    /// let mut writer = Vec::new();
-    /// let bufs = &mut [
-    ///     IoSlice::new(&[1]),
-    ///     IoSlice::new(&[2, 3]),
-    ///     IoSlice::new(&[4, 5, 6]),
-    /// ];
-    ///
-    /// writer.write_all_vectored(bufs)?;
-    /// // Note: the contents of `bufs` is now undefined, see the Notes section.
-    ///
-    /// assert_eq!(writer, &[1, 2, 3, 4, 5, 6]);
-    /// # Ok(()) }
-    /// ```
-
-    // fn write_all_vectored(&mut self, mut bufs: &mut [IoSlice<'_>]) -> Result<()> {
-    //     // Guarantee that bufs is empty if it contains no data,
-    //     // to avoid calling write_vectored if there is no data to be written.
-    //     bufs = IoSlice::advance(bufs, 0);
-    //     while !bufs.is_empty() {
-    //         match self.write_vectored(bufs) {
-    //             Ok(0) => {
-    //                 return Err(Error::new(ErrorKind::WriteZero, "failed to write whole buffer"));
-    //             }
-    //             Ok(n) => bufs = IoSlice::advance(bufs, n),
-    //             Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
-    //             Err(e) => return Err(e),
-    //         }
-    //     }
-    //     Ok(())
-    // }
 
     /// Writes a formatted string into this writer, returning any error
     /// encountered.
@@ -964,7 +831,6 @@ pub trait Write {
     ///     Ok(())
     /// }
     /// ```
-
     fn write_fmt(&mut self, fmt: fmt::Arguments<'_>) -> Result<()> {
         // Create a shim which translates a Write to a fmt::Write and saves
         // off I/O errors. instead of discarding them
@@ -1023,7 +889,6 @@ pub trait Write {
     ///     Ok(())
     /// }
     /// ```
-
     fn by_ref(&mut self) -> &mut Self
     where
         Self: Sized,
@@ -1071,7 +936,6 @@ impl<T> Take<T> {
     ///     Ok(())
     /// }
     /// ```
-
     pub fn limit(&self) -> u64 {
         self.limit
     }
@@ -1099,7 +963,6 @@ impl<T> Take<T> {
     ///     Ok(())
     /// }
     /// ```
-
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
@@ -1124,7 +987,6 @@ impl<T> Take<T> {
     ///     Ok(())
     /// }
     /// ```
-
     pub fn into_inner(self) -> T {
         self.inner
     }
@@ -1149,7 +1011,6 @@ impl<T> Take<T> {
     ///     Ok(())
     /// }
     /// ```
-
     pub fn get_ref(&self) -> &T {
         &self.inner
     }
@@ -1178,7 +1039,6 @@ impl<T> Take<T> {
     ///     Ok(())
     /// }
     /// ```
-
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.inner
     }

@@ -6,18 +6,14 @@
 
 extern crate alloc;
 
-#[cfg(not(test))]
-mod ghci;
-
-#[cfg(not(test))]
-mod binding;
-
-#[cfg(not(test))]
 mod attest;
-#[cfg(not(test))]
+mod binding;
+mod ghci;
+pub mod root_ca;
+
 pub use attest::*;
 
-pub mod root_ca;
+pub const TD_VERIFIED_REPORT_SIZE: usize = 734;
 
 #[derive(Debug)]
 pub enum Error {
