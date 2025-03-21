@@ -18,9 +18,9 @@ use spin::Mutex;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+// Event IDs that will be used to tag the event log
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
-#[cfg(feature = "test_disable_ra_and_accept_all")]
 const TAGGED_EVENT_ID_TEST: u32 = 0x32;
 
 #[no_mangle]
@@ -38,19 +38,8 @@ pub fn runtime_main() {
     // Dump basic information of MigTD
     basic_info();
 
-    // Get the event log recorded by firmware
-    let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
-
-    #[cfg(feature = "test_disable_ra_and_accept_all")]
-    measure_test_feature(event_log);
-
-    // Get migration td policy from CFV and measure it into RMTR
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-    get_policy_and_measure(event_log);
-
-    // Get root certificate from CFV and measure it into RMTR
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-    get_ca_and_measure(event_log);
+    // Measure the input data
+    do_measurements();
 
     migration::event::register_callback();
     // Query the capability of VMM
@@ -66,7 +55,22 @@ fn basic_info() {
     info!("MigTD Version - {}\n", MIGTD_VERSION);
 }
 
-#[cfg(feature = "test_disable_ra_and_accept_all")]
+fn do_measurements() {
+    // Get the event log recorded by firmware
+    let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
+
+    if cfg!(feature = "test_disable_ra_and_accept_all") {
+        measure_test_feature(event_log);
+        return;
+    }
+
+    // Get migration td policy from CFV and measure it into RMTR
+    get_policy_and_measure(event_log);
+
+    // Get root certificate from CFV and measure it into RMTR
+    get_ca_and_measure(event_log);
+}
+
 fn measure_test_feature(event_log: &mut [u8]) {
     // Measure and extend the migtd test feature to RTMR
     event_log::write_tagged_event_log(
@@ -155,7 +159,7 @@ fn sleep() {
 #[cfg(test)]
 fn main() {}
 // FIXME: remove when https://github.com/Amanieu/minicov/issues/12 is fixed.
-#[cfg(all(feature = "coverage", feature = "tdx", target_os = "none"))]
+#[cfg(all(feature = "coverage", target_os = "none"))]
 #[no_mangle]
 static __llvm_profile_runtime: u32 = 0;
 

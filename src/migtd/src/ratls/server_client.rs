@@ -2,25 +2,22 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{string::ToString, vec::Vec};
+use alloc::vec::Vec;
 use async_io::{AsyncRead, AsyncWrite};
 use crypto::{
-    ecdsa::{ecdsa_verify, EcdsaPk},
+    ecdsa::EcdsaPk,
     hash::digest_sha384,
     tls::{SecureChannel, TlsConfig},
     x509::{
         AlgorithmIdentifier, AnyRef, BitStringRef, Certificate, CertificateBuilder, Decode, Encode,
         ExtendedKeyUsage, Extension, Extensions, Tag,
     },
-    Error as CryptoError, Result as CryptoResult,
+    Error as CryptoError,
 };
-use log::error;
-use policy::PolicyError;
 
 use super::*;
-use crate::{event_log::get_event_log, mig_policy};
-
-const PUBLIC_KEY_HASH_SIZE: usize = 48;
+use crate::event_log::get_event_log;
+use verify::*;
 
 type Result<T> = core::result::Result<T, RatlsError>;
 
@@ -103,14 +100,7 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
     let td_report = tdx_tdcall::tdreport::tdcall_report(&additional_data)?;
 
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-    {
-        attestation::get_quote(td_report.as_bytes()).map_err(|_| RatlsError::GetQuote)
-    }
-
-    // Only for test purpose to bypass the remote attestation
-    #[cfg(feature = "test_disable_ra_and_accept_all")]
-    Ok(td_report.as_bytes().to_vec())
+    attestation::get_quote(td_report.as_bytes()).map_err(|_| RatlsError::GetQuote)
 }
 
 fn verify_server_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), CryptoError> {
@@ -122,72 +112,118 @@ fn verify_client_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), Cry
 }
 
 #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-fn verify_peer_cert(
-    is_client: bool,
-    cert: &[u8],
-    quote_local: &[u8],
-) -> core::result::Result<(), CryptoError> {
-    let verified_report_local = attestation::verify_quote(quote_local)
-        .map_err(|_| CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string()))?;
-    let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
+mod verify {
+    use super::*;
+    use crate::mig_policy;
 
-    let extensions = cert
-        .tbs_certificate
-        .extensions
-        .as_ref()
-        .ok_or(CryptoError::ParseCertificate)?;
+    use alloc::string::ToString;
+    use crypto::ecdsa::ecdsa_verify;
+    use crypto::{Error as CryptoError, Result as CryptoResult};
+    use policy::PolicyError;
 
-    let (quote_report, event_log) =
-        parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
+    pub fn verify_peer_cert(
+        is_client: bool,
+        cert: &[u8],
+        quote_local: &[u8],
+    ) -> core::result::Result<(), CryptoError> {
+        let verified_report_local = attestation::verify_quote(quote_local)
+            .map_err(|_| CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string()))?;
+        let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
 
-    if let Ok(verified_report_peer) = attestation::verify_quote(quote_report) {
-        verify_signature(&cert, verified_report_peer.as_slice())?;
+        let extensions = cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .ok_or(CryptoError::ParseCertificate)?;
 
-        // MigTD-src acts as TLS client
-        let policy_check_result = mig_policy::authenticate_policy(
-            is_client,
-            verified_report_local.as_slice(),
-            verified_report_peer.as_slice(),
-            event_log,
-        );
+        let (quote_report, event_log) =
+            parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
 
-        if let Err(e) = &policy_check_result {
-            error!("Policy check failed, below is the detail information:\n");
-            error!("{:x?}\n", e);
-        }
+        if let Ok(verified_report_peer) = attestation::verify_quote(quote_report) {
+            verify_signature(&cert, verified_report_peer.as_slice())?;
 
-        return policy_check_result.map_err(|e| match e {
-            PolicyError::InvalidPolicy => {
-                CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string())
+            // MigTD-src acts as TLS client
+            let policy_check_result = mig_policy::authenticate_policy(
+                is_client,
+                verified_report_local.as_slice(),
+                verified_report_peer.as_slice(),
+                event_log,
+            );
+
+            if let Err(e) = &policy_check_result {
+                log::error!("Policy check failed, below is the detail information:\n");
+                log::error!("{:x?}\n", e);
             }
-            _ => CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string()),
-        });
-    } else {
-        Err(CryptoError::TlsVerifyPeerCert(
-            MUTUAL_ATTESTATION_ERROR.to_string(),
-        ))
+
+            policy_check_result.map_err(|e| match e {
+                PolicyError::InvalidPolicy => {
+                    CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string())
+                }
+                _ => CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string()),
+            })
+        } else {
+            Err(CryptoError::TlsVerifyPeerCert(
+                MUTUAL_ATTESTATION_ERROR.to_string(),
+            ))
+        }
+    }
+
+    fn verify_signature(cert: &Certificate, verified_report: &[u8]) -> CryptoResult<()> {
+        let public_key = cert
+            .tbs_certificate
+            .subject_public_key_info
+            .subject_public_key
+            .as_bytes()
+            .ok_or(CryptoError::ParseCertificate)?;
+        let tbs = cert.tbs_certificate.to_der()?;
+        let signature = cert
+            .signature_value
+            .as_bytes()
+            .ok_or(CryptoError::ParseCertificate)?;
+
+        verify_public_key(verified_report, public_key)?;
+        ecdsa_verify(public_key, &tbs, signature)
+    }
+
+    fn verify_public_key(verified_report: &[u8], public_key: &[u8]) -> CryptoResult<()> {
+        const PUBLIC_KEY_HASH_SIZE: usize = 48;
+
+        let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];
+        let digest = digest_sha384(public_key)?;
+
+        if report_data == digest.as_slice() {
+            Ok(())
+        } else {
+            Err(CryptoError::TlsVerifyPeerCert(
+                MISMATCH_PUBLIC_KEY.to_string(),
+            ))
+        }
     }
 }
 
 // Only for test to bypass the quote verification
 #[cfg(feature = "test_disable_ra_and_accept_all")]
-fn verify_peer_cert(
-    _is_client: bool,
-    cert: &[u8],
-    _quote_local: &[u8],
-) -> core::result::Result<(), CryptoError> {
-    let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
+mod verify {
+    use super::*;
 
-    let extensions = cert
-        .tbs_certificate
-        .extensions
-        .as_ref()
-        .ok_or(CryptoError::ParseCertificate)?;
-    let _ = parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
+    pub fn verify_peer_cert(
+        _is_client: bool,
+        cert: &[u8],
+        _quote_local: &[u8],
+    ) -> core::result::Result<(), CryptoError> {
+        let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
 
-    // As the remote attestation is disabled, the certificate can't be verified. Aways return
-    // success for test purpose.
-    Ok(())
+        let extensions = cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .ok_or(CryptoError::ParseCertificate)?;
+        let _ = parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
+
+        // As the remote attestation is disabled, the certificate can't be verified. Aways return
+        // success for test purpose.
+        Ok(())
+    }
 }
 
 fn parse_extensions<'a>(extensions: &'a Extensions) -> Option<(&'a [u8], &'a [u8])> {
@@ -218,35 +254,5 @@ fn parse_extensions<'a>(extensions: &'a Extensions) -> Option<(&'a [u8], &'a [u8
         Some((quote_report, eventlog))
     } else {
         None
-    }
-}
-
-fn verify_signature(cert: &Certificate, verified_report: &[u8]) -> CryptoResult<()> {
-    let public_key = cert
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_bytes()
-        .ok_or(CryptoError::ParseCertificate)?;
-    let tbs = cert.tbs_certificate.to_der()?;
-    let signature = cert
-        .signature_value
-        .as_bytes()
-        .ok_or(CryptoError::ParseCertificate)?;
-
-    verify_public_key(verified_report, public_key)?;
-    ecdsa_verify(public_key, &tbs, signature)
-}
-
-fn verify_public_key(verified_report: &[u8], public_key: &[u8]) -> CryptoResult<()> {
-    let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];
-    let digest = digest_sha384(public_key)?;
-
-    if report_data == digest.as_slice() {
-        Ok(())
-    } else {
-        Err(CryptoError::TlsVerifyPeerCert(
-            MISMATCH_PUBLIC_KEY.to_string(),
-        ))
     }
 }

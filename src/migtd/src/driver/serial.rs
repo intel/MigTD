@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::boxed::Box;
-use core::sync::atomic::AtomicBool;
 use pci::PCI_EX_BAR_BASE_ADDRESS;
 use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
 use virtio_serial::*;
