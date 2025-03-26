@@ -192,6 +192,9 @@ class MigtdTest:
         """
         Execute pre migration
         """
+        LOG.debug(f"Check TD status before pre migration")
+        self._exec_shell_cmd("ps aux | grep qemu")
+
         LOG.debug(f"Start pre migration")
         command = f"sudo bash {self.pre_mig_script}"
         if is_pre_binding:
