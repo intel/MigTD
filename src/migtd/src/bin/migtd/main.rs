@@ -11,6 +11,7 @@ use core::future::poll_fn;
 use core::task::Poll;
 
 use log::info;
+use migtd::migration::data::MigrationInformation;
 use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
