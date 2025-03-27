@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use migtd::migration::data::{ServiceQueryResponse, VmcallServiceResponse};
+use migtd::migration::data::{ServiceQueryResponse, VmcallServiceResponse, read_mig_info};
 use r_efi::efi::Guid;
 
 type Result<T> = core::result::Result<T, MigrationError>;
@@ -34,5 +34,10 @@ pub fn fuzz_service_response(data: &[u8]) -> Result<()> {
         .read_data::<ServiceQueryResponse>(0)
         .ok_or(MigrationError::ParseResponse)?;
 
+    Ok(())
+}
+
+pub fn fuzz_read_mig_info(data: &[u8]) -> Result<()> {
+    let _ = read_mig_info(data).ok_or(MigrationError::ParseResponse)?;
     Ok(())
 }

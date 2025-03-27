@@ -40,3 +40,15 @@ name = "afl_service_response"
 path = "fuzz_targets/afl_service_response.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "migration_info_hob"
+path = "fuzz_targets/migration_info_hob.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "afl_migration_info_hob"
+path = "fuzz_targets/afl_migration_info_hob.rs"
+test = false
+doc = false
