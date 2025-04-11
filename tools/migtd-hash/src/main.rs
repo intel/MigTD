@@ -21,6 +21,9 @@ struct Config {
     /// Output binary of tee info hash
     #[clap(short, long)]
     pub output_file: Option<PathBuf>,
+    /// The input MigTD image enables the `test_disable_ra_and_accept_all` feature
+    #[clap(short, long)]
+    pub test_disable_ra_and_accept_all: bool,
 }
 
 fn main() {
@@ -35,10 +38,11 @@ fn main() {
         exit(1);
     });
 
-    let hash = calculate_servtd_hash(&manifest, image).unwrap_or_else(|e| {
-        eprintln!("Failed to calculate hash: {:?}", e);
-        exit(1);
-    });
+    let hash = calculate_servtd_hash(&manifest, image, config.test_disable_ra_and_accept_all)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to calculate hash: {:?}", e);
+            exit(1);
+        });
 
     if let Some(output_file) = config.output_file {
         fs::write(output_file, &hash).unwrap_or_else(|e| {

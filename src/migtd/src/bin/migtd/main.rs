@@ -11,6 +11,7 @@ use core::future::poll_fn;
 use core::task::Poll;
 
 use log::info;
+use migtd::event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT;
 use migtd::migration::data::MigrationInformation;
 use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
@@ -77,7 +78,7 @@ fn measure_test_feature(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(
         event_log,
         TAGGED_EVENT_ID_TEST,
-        b"test_disable_ra_and_accept_all",
+        TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     )
     .expect("Failed to log migtd test feature");
 }
