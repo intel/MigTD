@@ -19,6 +19,7 @@ use tdx_tdcall::tdx;
 use zerocopy::{AsBytes, FromBytes};
 
 pub const EV_EVENT_TAG: u32 = 0x00000006;
+pub const TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT: &[u8] = b"test_disable_ra_and_accept_all";
 
 static CCEL: Once<Ccel> = Once::new();
 
