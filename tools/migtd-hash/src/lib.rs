@@ -4,7 +4,10 @@
 
 use anyhow::{anyhow, Error, Result};
 use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
-use migtd::config::{CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_ROOT_CA_FFS_GUID};
+use migtd::{
+    config::{CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_ROOT_CA_FFS_GUID},
+    event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
+};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -15,7 +18,11 @@ use td_shim_tools::tee_info_hash::{Manifest, TdInfoStruct};
 
 const MIGTD_IMAGE_SIZE: u64 = 0x100_0000;
 
-pub fn calculate_servtd_hash(manifest: &[u8], mut image: File) -> Result<Vec<u8>, Error> {
+pub fn calculate_servtd_hash(
+    manifest: &[u8],
+    mut image: File,
+    is_ra_disabled: bool,
+) -> Result<Vec<u8>, Error> {
     // Initialize the configurable fields of TD info structure.
     let manifest = serde_json::from_slice::<Manifest>(&manifest)?;
     let mut td_info = TdInfoStruct {
@@ -35,7 +42,9 @@ pub fn calculate_servtd_hash(manifest: &[u8], mut image: File) -> Result<Vec<u8>
     let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
     image.seek(SeekFrom::Start(0))?;
     image.read(&mut cfv)?;
-    td_info.rtmr2.copy_from_slice(rtmr2(&cfv)?.as_slice());
+    td_info
+        .rtmr2
+        .copy_from_slice(rtmr2(&cfv, is_ra_disabled)?.as_slice());
 
     // Convert the TD info structure to bytes.
     let mut buffer = [0u8; size_of::<TdInfoStruct>()];
@@ -45,16 +54,19 @@ pub fn calculate_servtd_hash(manifest: &[u8], mut image: File) -> Result<Vec<u8>
     digest_sha384(&buffer).map_err(|_| anyhow!("Calculate digest"))
 }
 
-fn rtmr2(cfv: &[u8]) -> Result<Vec<u8>, Error> {
-    let policy = fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_POLICY_FFS_GUID)
-        .ok_or(anyhow!("Unable to get policy from image"))?;
-    let root_ca = fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_ROOT_CA_FFS_GUID)
-        .ok_or(anyhow!("Unable to get root CA from image"))?;
-
+fn rtmr2(cfv: &[u8], is_ra_disabled: bool) -> Result<Vec<u8>, Error> {
     let mut rtmr2 = Rtmr::new();
-    rtmr2.extend_with_raw_data(policy)?;
-    rtmr2.extend_with_raw_data(root_ca)?;
+    if !is_ra_disabled {
+        let policy = fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_POLICY_FFS_GUID)
+            .ok_or(anyhow!("Unable to get policy from image"))?;
+        let root_ca = fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_ROOT_CA_FFS_GUID)
+            .ok_or(anyhow!("Unable to get root CA from image"))?;
 
+        rtmr2.extend_with_raw_data(policy)?;
+        rtmr2.extend_with_raw_data(root_ca)?;
+    } else {
+        rtmr2.extend_with_raw_data(TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT)?;
+    }
     Ok(rtmr2.as_bytes().to_vec())
 }
 

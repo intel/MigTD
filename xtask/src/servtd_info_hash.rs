@@ -26,6 +26,8 @@ pub(crate) struct ServtdInfoHashArgs {
     servtd_info: Option<PathBuf>,
     #[clap(short, long)]
     output: Option<PathBuf>,
+    #[clap(short, long)]
+    test_disable_ra_and_accept_all: bool,
 }
 
 impl ServtdInfoHashArgs {
@@ -37,6 +39,12 @@ impl ServtdInfoHashArgs {
 
         let cmd = if self.output.is_some() {
             cmd.args(&["--output-file", self.output()?.to_str().unwrap()])
+        } else {
+            cmd
+        };
+
+        let cmd = if self.test_disable_ra_and_accept_all {
+            cmd.args(&["--test-disable-ra-and-accept-all"])
         } else {
             cmd
         };
