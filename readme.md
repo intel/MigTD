@@ -145,8 +145,6 @@ or `migtd-attr=0x0000000000000000` shall be set by `-object` subcommand.
 
 1. Linux Kernel (KVM) and QEMU with with TDX 1.5 support
 
-* [qemu-kvm-configuration](doc/qemu_kvm_configuration.md) lists the versions of dependencies that MigTD has been tested on.
-
 2. TDX Attestation Software Stack
 
 * MigTD depends on `sgx-dcap-pccs` and `tdx-qgs` to do remote attestation. Please refer to [linux-sgx](https://github.com/intel/linux-sgx/tree/sgx_2.21) for details.
