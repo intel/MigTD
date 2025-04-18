@@ -14,7 +14,7 @@ permissions:
 jobs:
   clippy:
     name: Clippy
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
       security-events: write
@@ -31,6 +31,9 @@ jobs:
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
+      
+      - name: Install libtinfo5
+        run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
 
       - name: install NASM
         uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
@@ -67,7 +70,7 @@ jobs:
 
   rustfmt:
     name: Format
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
 
       # Install first since it's needed to build NASM
@@ -76,6 +79,9 @@ jobs:
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
+      
+      - name: Install libtinfo5
+        run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
 
       - name: install NASM
         uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
