@@ -20,7 +20,7 @@ permissions:
 jobs:
   build_migtd_release:
     name: Build final migtd - release
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
 
     steps:
@@ -30,6 +30,9 @@ jobs:
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
+      
+      - name: Install libtinfo5
+        run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
 
       - name: Install NASM
         uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
@@ -70,7 +73,7 @@ jobs:
 
   build_migtd_debug:
     name: Build final migtd - debug
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
 
     steps:
@@ -80,6 +83,9 @@ jobs:
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
+      
+      - name: Install libtinfo5
+        run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
 
       - name: Install NASM
         uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
