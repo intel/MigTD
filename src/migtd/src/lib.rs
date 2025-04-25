@@ -1,4 +1,4 @@
-// Copyright (c) 2022 Intel Corporation
+// Copyright (c) 2022-2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
@@ -64,6 +64,10 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     // Init the vmcall-vsock device
     #[cfg(feature = "vmcall-vsock")]
     driver::vsock::vmcall_vsock_device_init();
+
+    // Init the vmcall-raw device
+    #[cfg(feature = "vmcall-raw")]
+    driver::vmcall_raw::vmcall_raw_device_init();
 
     // Initilize the system ticks
     driver::ticks::init_sys_tick();

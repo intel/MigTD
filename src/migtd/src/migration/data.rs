@@ -1,10 +1,11 @@
-// Copyright (c) 2022 Intel Corporation
+// Copyright (c) 2022-2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use core::convert::TryInto;
 use core::{mem::size_of, slice::from_raw_parts, slice::from_raw_parts_mut};
 use r_efi::efi::Guid;
+#[cfg(not(feature = "vmcall-raw"))]
 use td_shim_interface::td_uefi_pi::{
     hob::{self as hob_lib, align_to_next_hob_offset},
     pi::hob::{GuidExtension, Header, HOB_TYPE_END_OF_HOB_LIST, HOB_TYPE_GUID_EXTENSION},
@@ -163,11 +164,25 @@ pub struct ServiceQueryResponse {
 
 #[repr(packed)]
 #[derive(FromZeroes, FromBytes, AsBytes)]
+#[cfg(not(feature = "vmcall-raw"))]
 pub struct ServiceMigWaitForReqResponse {
     pub version: u8,
     pub command: u8,
     pub operation: u8,
     pub reserved: u8,
+}
+
+#[repr(C)]
+#[derive(FromZeroes, FromBytes, AsBytes)]
+#[cfg(feature = "vmcall-raw")]
+pub struct ServiceMigWaitForReqResponse {
+    pub data_status: u32,
+    pub request_type: u32,
+    pub mig_request_id: u64,
+    pub migration_source: u8,
+    pub reserved: [u8; 7],
+    pub target_td_uuid: [u64; 4],
+    pub binding_handle: u64,
 }
 
 #[repr(packed)]
@@ -216,7 +231,9 @@ impl Default for MigrationSessionKey {
 
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
+    #[cfg(not(feature = "vmcall-raw"))]
     pub mig_socket_info: MigtdStreamSocketInfo,
+    #[cfg(not(feature = "vmcall-raw"))]
     pub mig_policy: Option<MigtdMigpolicy>,
 }
 
@@ -226,6 +243,7 @@ impl MigrationInformation {
     }
 }
 
+#[cfg(not(feature = "vmcall-raw"))]
 pub fn read_mig_info(hob: &[u8]) -> Option<MigrationInformation> {
     let mut offset = 0;
     let mut mig_info_hob = None;
@@ -278,6 +296,7 @@ pub fn read_mig_info(hob: &[u8]) -> Option<MigrationInformation> {
     create_migration_information(mig_info_hob, mig_socket_hob, policy_info_hob)
 }
 
+#[cfg(not(feature = "vmcall-raw"))]
 fn get_next_hob<'a>(hob: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
     if *offset >= hob.len() {
         return None;
@@ -291,6 +310,7 @@ fn get_next_hob<'a>(hob: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
     Some(hob_slice)
 }
 
+#[cfg(not(feature = "vmcall-raw"))]
 fn create_migration_information(
     mig_info_hob: Option<&[u8]>,
     mig_socket_hob: Option<&[u8]>,

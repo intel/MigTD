@@ -1,8 +1,12 @@
-// Copyright (c) 2022 Intel Corporation
+// Copyright (c) 2022-2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+#[cfg(feature = "vmcall-raw")]
+use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
 use alloc::collections::BTreeSet;
+#[cfg(feature = "vmcall-raw")]
+use core::sync::atomic::AtomicBool;
 #[cfg(feature = "vmcall-interrupt")]
 use core::sync::atomic::Ordering;
 use core::{future::poll_fn, mem::size_of, task::Poll};
@@ -32,6 +36,8 @@ const GSM_FIELD_MIN_EXPORT_VERSION: u64 = 0x2000000100000001;
 const GSM_FIELD_MAX_EXPORT_VERSION: u64 = 0x2000000100000002;
 const GSM_FIELD_MIN_IMPORT_VERSION: u64 = 0x2000000100000003;
 const GSM_FIELD_MAX_IMPORT_VERSION: u64 = 0x2000000100000004;
+#[cfg(feature = "vmcall-raw")]
+const TDX_VMCALL_VMM_SUCCESS: u32 = 1;
 
 lazy_static! {
     pub static ref REQUESTS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
@@ -121,65 +127,67 @@ pub fn query() -> Result<()> {
 }
 
 pub async fn wait_for_request() -> Result<MigrationInformation> {
-    // Allocate shared page for command and response buffer
-    let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-    let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
-
-    // Set Migration wait for request command buffer
-    let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-        .ok_or(MigrationResult::InvalidParameter)?;
-    let wfr = ServiceMigWaitForReqCommand {
-        version: 0,
-        command: MIG_COMMAND_WAIT,
-        reserved: [0; 2],
-    };
-    cmd.write(wfr.as_bytes())?;
-    let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-        .ok_or(MigrationResult::InvalidParameter)?;
-
-    #[cfg(feature = "vmcall-interrupt")]
+    #[cfg(feature = "vmcall-raw")]
     {
-        tdx::tdvmcall_service(
-            cmd_mem.as_bytes(),
-            rsp_mem.as_mut_bytes(),
-            event::VMCALL_SERVICE_VECTOR as u64,
-            0,
-        )?;
-    }
+        let num_rsp_pages: usize = 1;
+        let mut rsp_mem = SharedMemory::new(num_rsp_pages).ok_or(MigrationResult::OutOfResource)?;
 
-    poll_fn(|_cx| {
-        #[cfg(not(feature = "vmcall-interrupt"))]
-        tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
-
-        #[cfg(feature = "vmcall-interrupt")]
-        if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
-            VMCALL_SERVICE_FLAG.store(false, Ordering::SeqCst);
-        } else {
-            return Poll::Pending;
-        }
-
-        let private_mem = rsp_mem
-            .copy_to_private_shadow()
-            .ok_or(MigrationResult::OutOfResource)?;
-
-        // Parse out the response data
-        let rsp = VmcallServiceResponse::try_read(private_mem)
+        let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
             .ok_or(MigrationResult::InvalidParameter)?;
-        // Check the GUID of the reponse
-        if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
-            return Poll::Ready(Err(MigrationResult::InvalidParameter));
-        }
-        let wfr = rsp
-            .read_data::<ServiceMigWaitForReqResponse>(0)
-            .ok_or(MigrationResult::InvalidParameter)?;
-        if wfr.command != MIG_COMMAND_WAIT {
-            return Poll::Ready(Err(MigrationResult::InvalidParameter));
-        }
-        if wfr.operation == 1 {
-            let mig_info =
-                read_mig_info(&private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..])
-                    .ok_or(MigrationResult::InvalidParameter)?;
-            let request_id = mig_info.mig_info.mig_request_id;
+
+        tdx::tdvmcall_migtd_waitforrequest(rsp_mem.as_mut_bytes(), event::VMCALL_SERVICE_VECTOR)?;
+
+        poll_fn(|_cx| {
+            if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
+                VMCALL_SERVICE_FLAG.store(false, Ordering::SeqCst);
+            } else {
+                return Poll::Pending;
+            }
+
+            let private_mem = rsp_mem
+                .copy_to_private_shadow()
+                .ok_or(MigrationResult::OutOfResource)?;
+
+            // Parse out the response data
+            let rsp = VmcallServiceResponse::try_read(private_mem)
+                .ok_or(MigrationResult::InvalidParameter)?;
+            // Check the GUID of the reponse
+            if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
+                return Poll::Ready(Err(MigrationResult::InvalidParameter));
+            }
+
+            let wfr = rsp
+                .read_data::<ServiceMigWaitForReqResponse>(0)
+                .ok_or(MigrationResult::InvalidParameter)?;
+
+            if wfr.data_status != TDX_VMCALL_VMM_SUCCESS {
+                return Poll::Pending;
+            }
+
+            if wfr.request_type != 0 {
+                return Poll::Ready(Err(MigrationResult::InvalidParameter));
+            }
+
+            let request_id = wfr.mig_request_id;
+            VMCALL_MIG_REPORTSTATUS_FLAGS
+                .lock()
+                .insert(request_id, AtomicBool::new(false));
+
+            let mut mig_info = MigtdMigrationInformation {
+                mig_request_id: request_id,
+                migration_source: wfr.migration_source,
+                _pad: [0, 0, 0, 0, 0, 0, 0],
+                target_td_uuid: [0, 0, 0, 0],
+                binding_handle: wfr.binding_handle,
+                mig_policy_id: 0,
+                communication_id: 0,
+            };
+
+            for i in 0..4 {
+                mig_info.target_td_uuid[i] = wfr.target_td_uuid[i];
+            }
+
+            let mig_info = MigrationInformation { mig_info };
 
             if REQUESTS.lock().contains(&request_id) {
                 Poll::Pending
@@ -187,13 +195,86 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
                 REQUESTS.lock().insert(request_id);
                 Poll::Ready(Ok(mig_info))
             }
-        } else if wfr.operation == 0 {
-            Poll::Pending
-        } else {
-            Poll::Ready(Err(MigrationResult::InvalidParameter))
+        })
+        .await
+    }
+
+    #[cfg(not(feature = "vmcall-raw"))]
+    {
+        // Allocate shared page for command and response buffer
+        let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+        let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+
+        // Set Migration wait for request command buffer
+        let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+            .ok_or(MigrationResult::InvalidParameter)?;
+        let wfr = ServiceMigWaitForReqCommand {
+            version: 0,
+            command: MIG_COMMAND_WAIT,
+            reserved: [0; 2],
+        };
+        cmd.write(wfr.as_bytes())?;
+        let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+            .ok_or(MigrationResult::InvalidParameter)?;
+
+        #[cfg(feature = "vmcall-interrupt")]
+        {
+            tdx::tdvmcall_service(
+                cmd_mem.as_bytes(),
+                rsp_mem.as_mut_bytes(),
+                event::VMCALL_SERVICE_VECTOR as u64,
+                0,
+            )?;
         }
-    })
-    .await
+
+        poll_fn(|_cx| {
+            #[cfg(not(feature = "vmcall-interrupt"))]
+            tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+
+            #[cfg(feature = "vmcall-interrupt")]
+            if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
+                VMCALL_SERVICE_FLAG.store(false, Ordering::SeqCst);
+            } else {
+                return Poll::Pending;
+            }
+
+            let private_mem = rsp_mem
+                .copy_to_private_shadow()
+                .ok_or(MigrationResult::OutOfResource)?;
+
+            // Parse out the response data
+            let rsp = VmcallServiceResponse::try_read(private_mem)
+                .ok_or(MigrationResult::InvalidParameter)?;
+            // Check the GUID of the reponse
+            if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
+                return Poll::Ready(Err(MigrationResult::InvalidParameter));
+            }
+            let wfr = rsp
+                .read_data::<ServiceMigWaitForReqResponse>(0)
+                .ok_or(MigrationResult::InvalidParameter)?;
+            if wfr.command != MIG_COMMAND_WAIT {
+                return Poll::Ready(Err(MigrationResult::InvalidParameter));
+            }
+            if wfr.operation == 1 {
+                let mig_info =
+                    read_mig_info(&private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..])
+                        .ok_or(MigrationResult::InvalidParameter)?;
+                let request_id = mig_info.mig_info.mig_request_id;
+
+                if REQUESTS.lock().contains(&request_id) {
+                    Poll::Pending
+                } else {
+                    REQUESTS.lock().insert(request_id);
+                    Poll::Ready(Ok(mig_info))
+                }
+            } else if wfr.operation == 0 {
+                Poll::Pending
+            } else {
+                Poll::Ready(Err(MigrationResult::InvalidParameter))
+            }
+        })
+        .await
+    }
 }
 
 pub fn shutdown() -> Result<()> {
@@ -215,6 +296,60 @@ pub fn shutdown() -> Result<()> {
     Ok(())
 }
 
+fn process_buffer(buffer: &mut [u8]) -> (u32, u32) {
+    assert!(buffer.len() >= 8, "Buffer too small!");
+    let (header, _payload_buffer) = buffer.split_at_mut(8); // Split at 8th byte
+
+    let data_status = u32::from_le_bytes(header[0..4].try_into().unwrap()); // First 4 bytes
+    let data_length = u32::from_le_bytes(header[4..8].try_into().unwrap()); // Next 4 bytes
+
+    (data_status, data_length)
+}
+
+#[cfg(feature = "vmcall-raw")]
+pub async fn report_status(status: u8, request_id: u64) -> Result<()> {
+    let data_status: u32 = 0;
+    let data_length: u32 = 0;
+
+    let mut data_buffer = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
+
+    let data_buffer = data_buffer.as_mut_bytes();
+
+    data_buffer[0..4].copy_from_slice(&u32::to_le_bytes(data_status));
+    data_buffer[4..8].copy_from_slice(&u32::to_le_bytes(data_length));
+
+    tdx::tdvmcall_migtd_reportstatus(
+        request_id,
+        status,
+        data_buffer,
+        event::VMCALL_SERVICE_VECTOR,
+    )?;
+
+    poll_fn(|_cx| -> Poll<Result<()>> {
+        if let Some(flag) = VMCALL_MIG_REPORTSTATUS_FLAGS.lock().get(&request_id) {
+            if flag.load(Ordering::SeqCst) {
+                flag.store(false, Ordering::SeqCst);
+            } else {
+                return Poll::Pending;
+            }
+        } else {
+            return Poll::Pending;
+        }
+
+        let (data_status, _data_length) = process_buffer(data_buffer);
+
+        if data_status != TDX_VMCALL_VMM_SUCCESS {
+            return Poll::Pending;
+        }
+
+        VMCALL_MIG_REPORTSTATUS_FLAGS.lock().remove(&request_id);
+
+        Poll::Ready(Ok(()))
+    })
+    .await
+}
+
+#[cfg(not(feature = "vmcall-raw"))]
 pub fn report_status(status: u8, request_id: u64) -> Result<()> {
     // Allocate shared page for command and response buffer
     let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
@@ -247,6 +382,7 @@ pub fn report_status(status: u8, request_id: u64) -> Result<()> {
     // Check the GUID of the reponse
     let rsp =
         VmcallServiceResponse::try_read(private_mem).ok_or(MigrationResult::InvalidParameter)?;
+
     if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
         return Err(MigrationResult::InvalidParameter);
     }
@@ -269,6 +405,20 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
     let transport;
+
+    #[cfg(feature = "vmcall-raw")]
+    {
+        use vmcall_raw::stream::VmcallRaw;
+        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(info.mig_info.mig_request_id)
+            .map_err(|_e| MigrationResult::InvalidParameter)?;
+
+        vmcall_raw_instance
+            .connect()
+            .await
+            .map_err(|_e| MigrationResult::InvalidParameter)?;
+        transport = vmcall_raw_instance;
+    }
+
     #[cfg(feature = "virtio-serial")]
     {
         use virtio_serial::VirtioSerialPort;
@@ -280,6 +430,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     };
 
     #[cfg(not(feature = "virtio-serial"))]
+    #[cfg(not(feature = "vmcall-raw"))]
     {
         use vsock::{stream::VsockStream, VsockAddr};
 
@@ -325,8 +476,15 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         if size < size_of::<ExchangeInformation>() {
             return Err(MigrationResult::NetworkError);
         }
-        #[cfg(not(feature = "virtio-serial"))]
+        #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
         ratls_client.transport_mut().shutdown().await?;
+
+        #[cfg(feature = "vmcall-raw")]
+        ratls_client
+            .transport_mut()
+            .shutdown()
+            .await
+            .map_err(|_e| MigrationResult::InvalidParameter)?;
     } else {
         // TLS server
         let mut ratls_server =
@@ -345,8 +503,15 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         if size < size_of::<ExchangeInformation>() {
             return Err(MigrationResult::NetworkError);
         }
-        #[cfg(not(feature = "virtio-serial"))]
+        #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
         ratls_server.transport_mut().shutdown().await?;
+
+        #[cfg(feature = "vmcall-raw")]
+        ratls_server
+            .transport_mut()
+            .shutdown()
+            .await
+            .map_err(|_e| MigrationResult::InvalidParameter)?;
     }
 
     let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
