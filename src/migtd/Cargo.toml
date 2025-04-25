@@ -1,6 +1,6 @@
 [package]
 name = "migtd"
-version = "0.4.8"
+version = "0.4.9"
 license = "BSD-2-Clause-Patent"
 edition = "2021"
 
