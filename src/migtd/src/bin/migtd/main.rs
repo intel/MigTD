@@ -1,4 +1,4 @@
-// Copyright (c) 2022 Intel Corporation
+// Copyright (c) 2022-2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
@@ -103,9 +103,9 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
 }
 
 fn handle_pre_mig() {
-    #[cfg(feature = "vmcall-interrupt")]
+    #[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
     const MAX_CONCURRENCY_REQUESTS: usize = 16;
-    #[cfg(not(feature = "vmcall-interrupt"))]
+    #[cfg(not(any(feature = "vmcall-interrupt", feature = "vmcall-raw")))]
     const MAX_CONCURRENCY_REQUESTS: usize = 1;
 
     // Set by `wait_for_request` async task when getting new request from VMM.
@@ -142,7 +142,17 @@ fn handle_pre_mig() {
                         .await
                         .map(|_| MigrationResult::Success)
                         .unwrap_or_else(|e| e);
-                    let _ = report_status(status as u8, request.mig_info.mig_request_id);
+
+                    #[cfg(feature = "vmcall-raw")]
+                    {
+                        let _ = report_status(status as u8, request.mig_info.mig_request_id).await;
+                    }
+
+                    #[cfg(not(feature = "vmcall-raw"))]
+                    {
+                        let _ = report_status(status as u8, request.mig_info.mig_request_id);
+                    }
+
                     REQUESTS.lock().remove(&request.mig_info.mig_request_id);
                 });
             }

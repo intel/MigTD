@@ -601,6 +601,7 @@ dependencies = [
  "tdx-tdcall",
  "virtio",
  "virtio_serial",
+ "vmcall_raw",
  "vsock",
  "x86",
  "x86_64",
@@ -1287,6 +1288,24 @@ dependencies = [
  "spin 0.9.8",
  "td-payload",
  "virtio",
+]
+
+[[package]]
+name = "vmcall_raw"
+version = "0.1.0"
+dependencies = [
+ "async_io",
+ "atomic_refcell",
+ "byteorder",
+ "cfg-if",
+ "conquer-once",
+ "lazy_static",
+ "log",
+ "rust_std_stub",
+ "spin 0.9.8",
+ "td-payload",
+ "td-shim-interface",
+ "tdx-tdcall",
 ]
 
 [[package]]

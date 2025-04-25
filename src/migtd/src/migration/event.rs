@@ -1,16 +1,28 @@
-// Copyright (c) 2022 Intel Corporation
+// Copyright (c) 2022-2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use alloc::collections::BTreeMap;
 use core::sync::atomic::{AtomicBool, Ordering};
+use lazy_static::lazy_static;
+use spin::Mutex;
 use td_payload::arch::apic::*;
 use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
 
 pub const VMCALL_SERVICE_VECTOR: u8 = 0x50;
 pub static VMCALL_SERVICE_FLAG: AtomicBool = AtomicBool::new(false);
 
+lazy_static! {
+    pub static ref VMCALL_MIG_REPORTSTATUS_FLAGS: Mutex<BTreeMap<u64, AtomicBool>> =
+        Mutex::new(BTreeMap::new());
+}
+
 fn vmcall_service_callback(_stack: &mut InterruptStack) {
     VMCALL_SERVICE_FLAG.store(true, Ordering::SeqCst);
+
+    for (_key, flag) in VMCALL_MIG_REPORTSTATUS_FLAGS.lock().iter() {
+        flag.store(true, Ordering::SeqCst);
+    }
 }
 
 pub fn register_callback() {

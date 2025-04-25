@@ -1,0 +1,22 @@
+[package]
+name = "vmcall_raw"
+version = "0.1.0"
+license = "BSD-2-Clause-Patent"
+edition = "2021"
+
+[dependencies]
+async_io = { path = "../../async/async_io" }
+atomic_refcell = "0.1.7"
+byteorder = { version = "1.0", default-features = false }
+cfg-if = "1.0"
+conquer-once = { version = "0.3.2", default-features = false }
+lazy_static = { version = "1.0", features = ["spin_no_std"] }
+log = "0.4.13"
+rust_std_stub = { path = "../../std-support/rust-std-stub" }
+spin = "0.9.2"
+tdx-tdcall = { path = "../../../deps/td-shim/tdx-tdcall" }
+td-payload = { path = "../../../deps/td-shim/td-payload", features = ["tdx"] }
+td-shim-interface = { path = "../../../deps/td-shim/td-shim-interface", optional = true }
+
+[features]
+vmcall-raw = ["td-shim-interface"]
