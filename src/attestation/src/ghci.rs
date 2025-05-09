@@ -14,6 +14,8 @@ use crate::binding::AttestLibError;
 pub const NOTIFY_VALUE: u8 = 1;
 const NOTIFY_VECTOR: u8 = 0x51;
 const GET_QUOTE_MAX_SIZE: u64 = 32 * 0x1000;
+const GET_QUOTE_SUCCESS: u64 = 0;
+const GET_QUOTE_IN_FLIGHT: u64 = 0xFFFFFFFF_FFFFFFFF;
 
 pub static NOTIFIER: AtomicU8 = AtomicU8::new(0);
 
@@ -32,14 +34,15 @@ pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i3
     };
     shared.as_mut_bytes()[..len as usize].copy_from_slice(input);
 
-    set_vmm_notification();
+    let notify_registered = set_vmm_notification();
 
     if tdvmcall_get_quote(shared.as_mut_bytes()).is_err() {
         return AttestLibError::QuoteFailure as i32;
     }
 
-    wait_for_vmm_notification();
-
+    if let Err(err) = wait_for_quote_completion(notify_registered, shared.as_bytes()) {
+        return err as i32;
+    }
     input.copy_from_slice(&shared.as_bytes()[..len as usize]);
 
     // Success
@@ -50,7 +53,7 @@ fn vmm_notification(_: &mut InterruptStack) {
     NOTIFIER.store(NOTIFY_VALUE, Ordering::SeqCst);
 }
 
-pub fn set_vmm_notification() {
+fn set_vmm_notification() -> bool {
     // Setup interrupt handler
     if register_interrupt_callback(
         NOTIFY_VECTOR as usize,
@@ -62,12 +65,32 @@ pub fn set_vmm_notification() {
     }
 
     // Setup event notifier
-    if tdx_tdcall::tdx::tdvmcall_setup_event_notify(NOTIFY_VECTOR as u64).is_err() {
-        panic!("Fail to setup VMM event notifier\n");
+    tdx_tdcall::tdx::tdvmcall_setup_event_notify(NOTIFY_VECTOR as u64).is_ok()
+}
+
+fn wait_for_quote_completion(notify_registered: bool, buffer: &[u8]) -> Result<(), AttestLibError> {
+    // If the VMM notification is successfully registered, wait for VMM injecting the interrupt.
+    if notify_registered {
+        wait_for_vmm_notification();
+        return Ok(());
+    }
+
+    let mut status_code = GET_QUOTE_IN_FLIGHT;
+    while status_code == GET_QUOTE_IN_FLIGHT {
+        status_code = match buffer.get(8..16) {
+            Some(bytes) => u64::from_le_bytes(bytes.try_into().unwrap()),
+            None => return Err(AttestLibError::InvalidParameter),
+        };
+    }
+
+    if status_code == GET_QUOTE_SUCCESS {
+        Ok(())
+    } else {
+        Err(AttestLibError::QuoteFailure)
     }
 }
 
-pub fn wait_for_vmm_notification() {
+fn wait_for_vmm_notification() {
     while NOTIFIER.load(Ordering::SeqCst) == 0 {
         // Halt to wait until interrupt comming
         enable_and_hlt();
