@@ -231,7 +231,7 @@ impl Default for MigrationSessionKey {
 
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
-    #[cfg(not(feature = "vmcall-raw"))]
+    #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
     pub mig_socket_info: MigtdStreamSocketInfo,
     #[cfg(not(feature = "vmcall-raw"))]
     pub mig_policy: Option<MigtdMigpolicy>,
@@ -310,6 +310,7 @@ fn get_next_hob<'a>(hob: &'a [u8], offset: &mut usize) -> Option<&'a [u8]> {
     Some(hob_slice)
 }
 
+#[allow(unused)]
 #[cfg(not(feature = "vmcall-raw"))]
 fn create_migration_information(
     mig_info_hob: Option<&[u8]>,
@@ -320,6 +321,7 @@ fn create_migration_information(
         .pread::<MigtdMigrationInformation>(0)
         .ok()?;
 
+    #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
     let mig_socket_info = hob_lib::get_guid_data(mig_socket_hob?)?
         .pread::<MigtdStreamSocketInfo>(0)
         .ok()?;
@@ -339,6 +341,7 @@ fn create_migration_information(
 
     Some(MigrationInformation {
         mig_info,
+        #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
         mig_socket_info,
         mig_policy,
     })
@@ -577,7 +580,10 @@ mod test {
         // Call the function
         let result = read_mig_info(&hob_data);
 
+        #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
         assert!(result.is_none());
+        #[cfg(feature = "virtio-serial")]
+        assert!(result.is_some());
     }
 
     #[test]
