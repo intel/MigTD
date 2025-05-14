@@ -296,6 +296,7 @@ pub fn shutdown() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "vmcall-raw")]
 fn process_buffer(buffer: &mut [u8]) -> (u32, u32) {
     assert!(buffer.len() >= 8, "Buffer too small!");
     let (header, _payload_buffer) = buffer.split_at_mut(8); // Split at 8th byte
