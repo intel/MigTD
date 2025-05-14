@@ -27,7 +27,7 @@ jobs:
 
       # Install first since it's needed to build NASM
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@6ba6e2cd3813def9879be378609d87cb3ef3bac3 # v2.0.6
+        uses: KyleMayes/install-llvm-action@a7a1a882e2d06ebe05d5bb97c3e1f8c984ae96fc # v2.0.7
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
@@ -60,7 +60,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload analysis results to GitHub
-        uses: github/codeql-action/upload-sarif@45775bd8235c68ba998cffa5171334d58593da47 # v3.28.15
+        uses: github/codeql-action/upload-sarif@60168efe1c415ce0f5521ea06d5c2062adbeed1b # v3.28.17
         with:
           sarif_file: rust-clippy-results.sarif
           wait-for-processing: true
@@ -75,7 +75,7 @@ jobs:
 
       # Install first since it's needed to build NASM
       - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@6ba6e2cd3813def9879be378609d87cb3ef3bac3 # v2.0.6
+        uses: KyleMayes/install-llvm-action@a7a1a882e2d06ebe05d5bb97c3e1f8c984ae96fc # v2.0.7
         with:
           version: "10.0"
           directory: ${{ runner.temp }}/llvm
