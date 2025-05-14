@@ -81,6 +81,12 @@ impl From<TdVmcallError> for VmcallRawError {
     }
 }
 
+/// Trait to allow separation of transport from block driver
+pub trait VmcallRawDmaPageAllocator {
+    fn alloc_pages(&self, page_num: usize) -> Option<u64>;
+    fn free_pages(&self, addr: u64, page_num: usize);
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct VmcallRawAddr {
     pub transport_context: u64,

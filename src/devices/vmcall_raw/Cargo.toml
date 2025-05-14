@@ -20,3 +20,4 @@ td-shim-interface = { path = "../../../deps/td-shim/td-shim-interface", optional
 
 [features]
 vmcall-raw = ["td-shim-interface"]
+fuzz = []
