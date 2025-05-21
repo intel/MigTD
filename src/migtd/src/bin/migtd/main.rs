@@ -44,9 +44,13 @@ pub fn runtime_main() {
     do_measurements();
 
     migration::event::register_callback();
+
     // Query the capability of VMM
-    if query().is_err() {
-        panic!("Migration is not supported by VMM");
+    #[cfg(not(feature = "vmcall-raw"))]
+    {
+        if query().is_err() {
+            panic!("Migration is not supported by VMM");
+        }
     }
 
     // Handle the migration request from VMM
