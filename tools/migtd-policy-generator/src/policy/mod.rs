@@ -17,11 +17,11 @@ pub mod tcb_info;
 const PRODUCTION_POLICY_GUID: &str = "F65CD566-4D67-45EF-88E3-79963901B292";
 const PRE_PRODUCTION_POLICY_GUID: &str = "B87BFE45-9CC7-46F9-8F2C-A6CB55BF7101";
 
-pub fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
+pub(crate) fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
     let platform_tcb_list = get_platform_tcb_list(for_production)?;
     let qe_identity = fetch_qe_identity(for_production)?;
     let (platform_policy, tdx_module) = create_platform_policy(&platform_tcb_list)?;
-    let qe_policy = create_qe_identity_policy(&qe_identity)?;
+    let qe_policy = create_qe_identity_policy(&qe_identity.0)?;
     let migtd = MigTdInfoPolicy::default();
 
     let mut mig_policy = MigPolicy {
@@ -32,17 +32,14 @@ pub fn generate_policy(for_production: bool) -> Result<Vec<u8>> {
         },
         policy: platform_policy
             .into_iter()
-            .map(|p| PolicyTypes::Platform(p))
+            .map(PolicyTypes::Platform)
             .collect(),
     };
 
     mig_policy.policy.push(PolicyTypes::Qe(qe_policy));
-    mig_policy.policy.append(
-        &mut tdx_module
-            .into_iter()
-            .map(|t| PolicyTypes::TdxModule(t))
-            .collect(),
-    );
+    mig_policy
+        .policy
+        .append(&mut tdx_module.into_iter().map(PolicyTypes::TdxModule).collect());
     mig_policy.policy.push(PolicyTypes::Migtd(migtd));
 
     let mut data = Vec::new();

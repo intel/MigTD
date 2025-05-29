@@ -4,67 +4,146 @@
 
 use anyhow::{anyhow, Result};
 use curl::easy::Easy;
+use percent_encoding::percent_decode_str;
 use serde::Deserialize;
+use std::collections::HashMap;
 
-const TCB_INFO_URL: &str = "https://api.trustedservices.intel.com/tdx/certification/v4/tcb";
-const SBX_TCB_INFO_URL: &str = "https://sbx.api.trustedservices.intel.com/tdx/certification/v4/tcb";
-const QE_IDENTITY_URL: &str =
-    "https://api.trustedservices.intel.com/tdx/certification/v4/qe/identity?update=";
-const SBX_QE_IDENTITY_URL: &str =
-    "https://sbx.api.trustedservices.intel.com/tdx/certification/v4/qe/identity?update=";
-const FMSPC_LIST_URL: &str = "https://api.trustedservices.intel.com/sgx/certification/v4/fmspcs";
-const SBX_FMSPC_LIST_URL: &str =
-    "https://sbx.api.trustedservices.intel.com/sgx/certification/v4/fmspcs";
+const PCS_PROD_URL: &str = "https://api.trustedservices.intel.com/";
+const PCS_SBX_URL: &str = "https://sbx.api.trustedservices.intel.com/";
+const PCK_CRL_ISSUER_CHAIN: &str = "SGX-PCK-CRL-Issuer-Chain";
+const QE_IDENTITY_ISSUER_CHAIN: &str = "SGX-Enclave-Identity-Issuer-Chain";
+const TCB_INFO_ISSUER_CHAIN: &str = "TCB-Info-Issuer-Chain";
 
-pub fn fetch_qe_identity(for_production: bool) -> Result<Vec<u8>> {
-    let url = if for_production {
-        QE_IDENTITY_URL
-    } else {
-        SBX_QE_IDENTITY_URL
-    };
+struct PcsRequest {
+    url: String,
+}
 
-    let (response_code, data) = fetch_data_from_url(&url).unwrap();
-    match response_code {
+impl PcsRequest {
+    fn new(for_production: bool, path: &str) -> Self {
+        let base = if for_production {
+            PCS_PROD_URL
+        } else {
+            PCS_SBX_URL
+        };
+        Self {
+            url: format!("{}/{}", base, path),
+        }
+    }
+
+    fn add_param(&mut self, key: &str, value: &str) {
+        if self.url.contains('?') {
+            self.url.push('&');
+        } else {
+            self.url.push('?');
+        }
+        self.url.push_str(&format!("{}={}", key, value));
+    }
+
+    fn as_str(&self) -> &str {
+        &self.url
+    }
+}
+
+pub fn fetch_pck_crl(for_production: bool) -> Result<(Vec<u8>, String)> {
+    let mut req = PcsRequest::new(for_production, "sgx/certification/v4/pckcrl");
+    req.add_param("ca", "platform");
+    req.add_param("encoding", "der");
+    let mut pcs_response = fetch_data_from_url(req.as_str())?;
+    match pcs_response.response_code {
         200 => {
-            println!("Got enclave identity");
-            Ok(data)
+            println!("Got PCK CRL");
+            let issuer_chain = pcs_response
+                .header_map
+                .remove(PCK_CRL_ISSUER_CHAIN)
+                .ok_or_else(|| anyhow!("Missing PCK CRL issuer chain header"))?;
+            Ok((pcs_response.data, issuer_chain))
         }
         _ => {
-            eprintln!("Error fetching enclave identity - {:?}", response_code);
+            eprintln!("Error fetching PCK CRL - {:?}", pcs_response.response_code);
             Err(anyhow!("AccessException"))
         }
     }
 }
 
-pub fn get_platform_tcb_list(for_production: bool) -> Result<Vec<Vec<u8>>> {
+pub fn fetch_root_ca_crl(root_ca_url: &str) -> Result<Vec<u8>> {
+    let pcs_response = fetch_data_from_url(root_ca_url)?;
+    match pcs_response.response_code {
+        200 => Ok(pcs_response.data),
+        _ => {
+            eprintln!(
+                "Error fetching root CA CRL - {:?}",
+                pcs_response.response_code
+            );
+            Err(anyhow!("AccessException"))
+        }
+    }
+}
+
+pub fn fetch_qe_identity(for_production: bool) -> Result<(Vec<u8>, String)> {
+    let req = PcsRequest::new(for_production, "tdx/certification/v4/qe/identity");
+    let mut pcs_response = fetch_data_from_url(req.as_str())?;
+    match pcs_response.response_code {
+        200 => {
+            println!("Got enclave identity");
+            let issuer_chain = pcs_response
+                .header_map
+                .remove(QE_IDENTITY_ISSUER_CHAIN)
+                .ok_or_else(|| anyhow!("Missing PCK CRL issuer chain header"))?;
+            Ok((
+                pcs_response.data,
+                percent_decode_str(&issuer_chain).decode_utf8()?.to_string(),
+            ))
+        }
+        _ => {
+            eprintln!(
+                "Error fetching enclave identity - {:?}",
+                pcs_response.response_code
+            );
+            Err(anyhow!("AccessException"))
+        }
+    }
+}
+
+pub struct PlatformTcbRaw {
+    pub fmspc: String,
+    pub tcb: Vec<u8>,
+    pub tcb_issuer_chain: String,
+}
+
+pub fn get_platform_tcb_list(for_production: bool) -> Result<Vec<PlatformTcbRaw>> {
     let fmspc_list = fetch_fmspc_list(for_production)?;
     let mut platform_tcb_list = Vec::new();
     for platform in get_all_e5_platform(&fmspc_list) {
-        let _ = fetch_platform_tcb(for_production, &platform.fmspc)?
-            .and_then(|raw_tcb| Some(platform_tcb_list.push(raw_tcb)));
+        let _ = fetch_platform_tcb(for_production, &platform.fmspc)?.map(|raw_tcb| {
+            platform_tcb_list.push(PlatformTcbRaw {
+                fmspc: platform.fmspc.clone(),
+                tcb: raw_tcb.0,
+                tcb_issuer_chain: raw_tcb.1,
+            });
+        });
     }
     Ok(platform_tcb_list)
 }
 
-pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<Vec<u8>>> {
-    let tcb_info_url = if for_production {
-        TCB_INFO_URL
-    } else {
-        SBX_TCB_INFO_URL
-    };
-    let url = format!("{}?fmspc={}", tcb_info_url, fmspc);
-    let (response_code, data) = fetch_data_from_url(&url)?;
+pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<(Vec<u8>, String)>> {
+    let mut req = PcsRequest::new(for_production, "tdx/certification/v4/tcb");
+    req.add_param("fmspc", fmspc);
+    let mut pcs_response = fetch_data_from_url(req.as_str())?;
 
-    let result = if response_code == 200 {
+    let result = if pcs_response.response_code == 200 {
         println!("Got TCB info of fmspc - {}", fmspc,);
-        Some(data)
-    } else if response_code == 404 {
+        let issuer_chain = pcs_response
+            .header_map
+            .remove(TCB_INFO_ISSUER_CHAIN)
+            .ok_or_else(|| anyhow!("Missing TCB info issuer chain header"))?;
+        Some((pcs_response.data, issuer_chain))
+    } else if pcs_response.response_code == 404 {
         // Ignore 404 errors
         None
     } else {
         eprintln!(
             "Error fetching details for fmspc {}: {:?}",
-            fmspc, response_code
+            fmspc, pcs_response.response_code
         );
         None
     };
@@ -72,13 +151,24 @@ pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<Ve
     Ok(result)
 }
 
-pub(crate) fn fetch_data_from_url(url: &str) -> Result<(u32, Vec<u8>), curl::Error> {
+pub struct PcsResponse {
+    pub response_code: u32,
+    pub header_map: HashMap<String, String>,
+    pub data: Vec<u8>,
+}
+
+pub fn fetch_data_from_url(url: &str) -> Result<PcsResponse> {
     let mut handle = Easy::new();
     let mut data = Vec::new();
+    let mut http_header = Vec::new();
 
     handle.url(url)?;
     {
         let mut transfer = handle.transfer();
+        transfer.header_function(|header_bytes| {
+            http_header.extend_from_slice(header_bytes);
+            true
+        })?;
         transfer.write_function(|new_data| {
             data.extend_from_slice(new_data);
             Ok(new_data.len())
@@ -86,27 +176,43 @@ pub(crate) fn fetch_data_from_url(url: &str) -> Result<(u32, Vec<u8>), curl::Err
         transfer.perform()?;
     }
 
-    Ok((handle.response_code()?, data))
+    Ok(PcsResponse {
+        response_code: handle.response_code()?,
+        header_map: parse_http_headers(http_header)?,
+        data,
+    })
+}
+
+// Converts raw HTTP header bytes to a key-value map.
+fn parse_http_headers(header_bytes: Vec<u8>) -> Result<HashMap<String, String>> {
+    let mut headers = HashMap::new();
+    let header_str = String::from_utf8(header_bytes)?;
+
+    for line in header_str.lines() {
+        if let Some((key, value)) = line.split_once(": ") {
+            headers.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+
+    Ok(headers)
 }
 
 pub fn fetch_fmspc_list(for_production: bool) -> Result<Vec<Fmspc>> {
-    let fmspc_list_url = if for_production {
-        FMSPC_LIST_URL
-    } else {
-        SBX_FMSPC_LIST_URL
-    };
-
-    let (response_code, data) = fetch_data_from_url(fmspc_list_url)?;
-    match response_code {
-        200 => Ok(serde_json::from_slice::<Vec<Fmspc>>(&data)?),
+    let req = PcsRequest::new(for_production, "sgx/certification/v4/fmspcs");
+    let pcs_response = fetch_data_from_url(req.as_str())?;
+    match pcs_response.response_code {
+        200 => Ok(serde_json::from_slice::<Vec<Fmspc>>(&pcs_response.data)?),
         _ => {
-            eprintln!("Error fetching fmspc list - {:?}", response_code);
+            eprintln!(
+                "Error fetching fmspc list - {:?}",
+                pcs_response.response_code
+            );
             Err(anyhow!("AccessException"))
         }
     }
 }
 
-pub fn get_all_e5_platform(list: &Vec<Fmspc>) -> Vec<&Fmspc> {
+pub fn get_all_e5_platform(list: &[Fmspc]) -> Vec<&Fmspc> {
     list.iter()
         .filter(|p| p.platform.as_str() == "E5")
         .collect()

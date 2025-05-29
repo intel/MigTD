@@ -7,10 +7,10 @@ use serde::Serialize;
 use std::collections::HashSet;
 
 use super::{Property, Reference};
-use crate::pcs_types::PlatformTcb;
+use crate::{pcs_client::PlatformTcbRaw, pcs_types::PlatformTcb};
 
 pub fn create_platform_policy(
-    platform_tcb_list: &Vec<Vec<u8>>,
+    platform_tcb_list: &[PlatformTcbRaw],
 ) -> Result<(Vec<PlatformPolicy>, Vec<TdxModulePolicy>)> {
     let tcbs = deserialize_tcb_info(platform_tcb_list)?;
 
@@ -22,11 +22,11 @@ pub fn create_platform_policy(
     Ok((platform_tcb_policies, TdxModulePolicy::new(&tcbs)))
 }
 
-fn deserialize_tcb_info(platform_tcb_list: &Vec<Vec<u8>>) -> Result<Vec<PlatformTcb>> {
+fn deserialize_tcb_info(platform_tcb_list: &[PlatformTcbRaw]) -> Result<Vec<PlatformTcb>> {
     platform_tcb_list
         .iter()
-        .map(|tcb| {
-            serde_json::from_slice::<PlatformTcb>(tcb)
+        .map(|platform_tcb| {
+            serde_json::from_slice::<PlatformTcb>(&platform_tcb.tcb)
                 .map_err(|e| anyhow::anyhow!("Failed to parse platform TCB: {}", e))
         })
         .collect::<Result<Vec<_>>>()
