@@ -1,40 +1,8 @@
-// Copyright (c) 2023 Intel Corporation
+// Copyright (c) 2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use anyhow::Result;
 use serde::Deserialize;
-
-use crate::fetch_data_from_url;
-
-const TCB_INFO_URL: &str = "https://api.trustedservices.intel.com/tdx/certification/v4/tcb";
-const SBX_TCB_INFO_URL: &str = "https://sbx.api.trustedservices.intel.com/tdx/certification/v4/tcb";
-
-pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<PlatformTcb>> {
-    let tcb_info_url = if for_production {
-        TCB_INFO_URL
-    } else {
-        SBX_TCB_INFO_URL
-    };
-    let url = format!("{}?fmspc={}", tcb_info_url, fmspc);
-    let (response_code, data) = fetch_data_from_url(&url)?;
-
-    let result = if response_code == 200 {
-        println!("Got TCB info of fmspc - {}", fmspc,);
-        Some(serde_json::from_slice::<PlatformTcb>(&data)?)
-    } else if response_code == 404 {
-        // Ignore 404 errors
-        None
-    } else {
-        eprintln!(
-            "Error fetching details for fmspc {}: {:?}",
-            fmspc, response_code
-        );
-        None
-    };
-
-    Ok(result)
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,13 +67,52 @@ pub struct Svn {
     svn: u8,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QeInfo {
+    pub enclave_identity: EnalaveIdentity,
+    pub signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnalaveIdentity {
+    pub miscselect: String,
+    pub attributes: String,
+    pub mrsigner: String,
+    pub isvprodid: u64,
+    pub tcb_levels: Vec<EnclaveTcbLevel>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnclaveTcbLevel {
+    pub tcb: EnclaveTcb,
+    pub tcb_status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnclaveTcb {
+    pub isvsvn: u64,
+}
+
 mod test {
     #[test]
-    fn test_deserialize() {
+    fn test_pcs_tcb_info_deserialize() {
         use super::PlatformTcb;
 
-        let example = include_str!("../../test/tcb_info.json");
+        let example = include_str!("../test/tcb_info.json");
         let result = serde_json::from_str::<PlatformTcb>(example);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pcs_qe_info_deserialize() {
+        use super::QeInfo;
+
+        let list = include_str!("../test/qe_identity.json");
+        let result = serde_json::from_str::<QeInfo>(list);
+        assert!(result.is_ok())
     }
 }
