@@ -9,8 +9,8 @@ pub use der::asn1::{
     PrintableString, PrintableStringRef, SequenceOf, SetOfVec, UintRef, UtcTime, Utf8StringRef,
 };
 pub use der::{
-    Choice, Decode, DerOrd, Encode, Error as DerError, Header, Reader, Sequence, Tag, TagNumber,
-    Tagged,
+    Choice, Decode, DerOrd, Encode, Error as DerError, Header, Reader, Result as DerResult,
+    Sequence, Tag, TagNumber, Tagged,
 };
 use der::{ErrorKind, TagMode};
 
