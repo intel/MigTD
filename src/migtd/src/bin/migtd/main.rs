@@ -16,6 +16,7 @@ use migtd::migration::data::MigrationInformation;
 use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
+use policy::v2::collateral::get_fmspc_from_quote;
 use spin::Mutex;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -23,7 +24,20 @@ const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Event IDs that will be used to tag the event log
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
+const TAGGED_EVENT_ID_COLLATERALS: u32 = 0x3;
+const TAGGED_EVENT_ID_ENGINE: u32 = 0x4;
+const TAGGED_EVENT_ID_SIGNER_POLICY: u32 = 0x3;
+const TAGGED_EVENT_ID_SIGNER_ENGINE: u32 = 0x4;
 const TAGGED_EVENT_ID_TEST: u32 = 0x32;
+
+// MR index the event will be measured into
+const MR_INDEX_SIGNER_POLICY: u32 = 0x1;
+const MR_INDEX_SIGNER_ENGINE: u32 = 0x1;
+const MR_INDEX_POLICY: u32 = 0x3;
+const MR_INDEX_ROOT_CA: u32 = 0x3;
+const MR_INDEX_TEST_FEATURE: u32 = 0x3;
+const MR_INDEX_COLLATERALS: u32 = 0x4;
+const MR_INDEX_ENGINE: u32 = 0x4;
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -43,18 +57,27 @@ pub fn runtime_main() {
     // Measure the input data
     do_measurements();
 
-    migration::event::register_callback();
+    // migration::event::register_callback();
 
-    // Query the capability of VMM
-    #[cfg(not(feature = "vmcall-raw"))]
-    {
-        if query().is_err() {
-            panic!("Migration is not supported by VMM");
-        }
-    }
+    // // Query the capability of VMM
+    // #[cfg(not(feature = "vmcall-raw"))]
+    // {
+    //     if query().is_err() {
+    //         panic!("Migration is not supported by VMM");
+    //     }
+    // }
 
-    // Handle the migration request from VMM
-    handle_pre_mig();
+    // // Handle the migration request from VMM
+    // handle_pre_mig();
+
+    let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64]).expect("Failed to get TD report");
+    let quote = attestation::get_quote(report.as_bytes()).expect("Failed to get quote");
+
+    let collaterals = config::get_collaterals().expect("Collaterals not found");
+    let fmspc = get_fmspc_from_quote(&quote).unwrap();
+    let collateral = policy::v2::collateral::get_collateral_with_fmspc(&fmspc, &collaterals)
+        .expect("Failed to get collateral with FMSPC");
+    let verify = attestation::verify_quote_with_collaterals(&quote, &collateral).unwrap();
 }
 
 fn basic_info() {
@@ -83,6 +106,7 @@ fn measure_test_feature(event_log: &mut [u8]) {
         event_log,
         TAGGED_EVENT_ID_TEST,
         TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
+        MR_INDEX_TEST_FEATURE,
     )
     .expect("Failed to log migtd test feature");
 }
@@ -92,7 +116,7 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
     let policy = config::get_policy().expect("Fail to get policy from CFV\n");
 
     // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_POLICY, policy)
+    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_POLICY, policy, MR_INDEX_POLICY)
         .expect("Failed to log migration policy");
 }
 
@@ -100,10 +124,61 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
     let root_ca = config::get_root_ca().expect("Fail to get root certificate from CFV\n");
 
     // Measure and extend the root certificate to RTMR
-    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_ROOT_CA, root_ca)
-        .expect("Failed to log SGX root CA\n");
+    event_log::write_tagged_event_log(
+        event_log,
+        TAGGED_EVENT_ID_ROOT_CA,
+        root_ca,
+        MR_INDEX_ROOT_CA,
+    )
+    .expect("Failed to log SGX root CA\n");
 
     attestation::root_ca::set_ca(root_ca).expect("Invalid root certificate\n");
+}
+
+fn verify_policy_signatures(event_log: &mut [u8]) {
+    // Log the public key of the migration policy
+    let policy_signer = config::get_policy_public_key().expect("Policy public key not found");
+    event_log::write_tagged_event_log(
+        event_log,
+        TAGGED_EVENT_ID_SIGNER_POLICY,
+        policy_signer,
+        MR_INDEX_SIGNER_POLICY,
+    )
+    .expect("Failed to log migration policy signer");
+
+    // Log the public key of the engine-svn map
+    let engine_signer = config::get_engine_public_key().expect("Engine public key not found");
+    event_log::write_tagged_event_log(
+        event_log,
+        TAGGED_EVENT_ID_SIGNER_ENGINE,
+        engine_signer,
+        MR_INDEX_SIGNER_ENGINE,
+    )
+    .expect("Failed to log migration engine signer");
+
+    // Verify the migration policy signature
+    let policy = config::get_policy().expect("Policy not found");
+    policy::v2::verify_policy_signature(policy, policy_signer).expect("Invalid policy signature");
+    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_POLICY, policy, MR_INDEX_POLICY)
+        .expect("Failed to log migration policy");
+
+    // Verify the engine-svn map signature
+    let engine = config::get_engine().expect("Engine not found");
+    policy::v2::verify_engine_signature(engine, engine_signer).expect("Invalid engine signature");
+    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_ENGINE, engine, MR_INDEX_ENGINE)
+        .expect("Failed to log engine-svn map");
+}
+
+fn measure_collaterals(event_log: &mut [u8]) {
+    // Log the collaterals
+    let collaterals = config::get_collaterals().expect("Collaterals not found");
+    event_log::write_tagged_event_log(
+        event_log,
+        TAGGED_EVENT_ID_COLLATERALS,
+        collaterals,
+        MR_INDEX_COLLATERALS,
+    )
+    .expect("Failed to log collaterals");
 }
 
 fn handle_pre_mig() {
