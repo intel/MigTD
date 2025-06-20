@@ -26,3 +26,8 @@ popd
   ```
   ./target/debug/migtd-policy-generator -o config/policy_pre_production_fmspc.json --pre-production
   ```
+
+- Sign the policy (only for policy v2):
+```
+./target/debug/migtd-policy-generator -o config/policy_v2.json -p /path/to/private_key --policy config/policy_v2.json --privkey /path/to/private_key
+```

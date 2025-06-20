@@ -5,9 +5,23 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+name = "migtd-policy-generator"
+required-features = ["generator"]
+
+[[bin]]
+name = "migtd-policy-signer"
+required-features = ["signer"]
+
+[features]
+default = ["generator", "signer"]
+generator = []
+signer = ["policy"]
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
 curl = "0.4.44"
+policy = { path = "../../src/policy", optional = true }
 serde = { version = "1.0", features = ["derive"]}
 serde_json = "1.0"
