@@ -4,6 +4,7 @@ fuzz_folder=(
     "src/crypto"
     "src/devices/vsock"
     "src/devices/virtio"
+    "src/devices/virtio_serial"
     "src/policy"
     "src/migtd"
 )
