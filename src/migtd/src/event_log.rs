@@ -93,15 +93,16 @@ pub fn write_tagged_event_log(
     event_log: &mut [u8],
     tagged_event_id: u32,
     tagged_event_data: &[u8],
+    mr_index: u32,
 ) -> Result<usize> {
     let mut log_size = event_log_size(event_log).ok_or_else(|| anyhow!("Parsing event log"))?;
     let event = TaggedEvent::new(tagged_event_id, tagged_event_data);
 
     let digest = calculate_digest(tagged_event_data)?;
-    extend_rtmr(&digest, 3)?;
+    extend_rtmr(&digest, mr_index)?;
 
     let event_header = CcEventHeader {
-        mr_index: 3,
+        mr_index,
         event_type: EV_EVENT_TAG,
         digest: TpmlDigestValues {
             count: 1,

@@ -111,7 +111,7 @@ fn verify_client_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), Cry
     verify_peer_cert(false, cert, quote)
 }
 
-#[cfg(not(feature = "test_disable_ra_and_accept_all"))]
+// #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
 mod verify {
     use super::*;
     use crate::mig_policy;
@@ -121,6 +121,7 @@ mod verify {
     use crypto::{Error as CryptoError, Result as CryptoResult};
     use policy::PolicyError;
 
+    #[cfg(not(feature = "policy_v2"))]
     pub fn verify_peer_cert(
         is_client: bool,
         cert: &[u8],
@@ -128,16 +129,9 @@ mod verify {
     ) -> core::result::Result<(), CryptoError> {
         let verified_report_local = attestation::verify_quote(quote_local)
             .map_err(|_| CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string()))?;
+
         let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
-
-        let extensions = cert
-            .tbs_certificate
-            .extensions
-            .as_ref()
-            .ok_or(CryptoError::ParseCertificate)?;
-
-        let (quote_report, event_log) =
-            parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)?;
+        let (quote_report, event_log) = get_quote_and_event_log(&cert)?;
 
         if let Ok(verified_report_peer) = attestation::verify_quote(quote_report) {
             verify_signature(&cert, verified_report_peer.as_slice())?;
@@ -148,6 +142,54 @@ mod verify {
                 verified_report_local.as_slice(),
                 verified_report_peer.as_slice(),
                 event_log,
+            );
+
+            if let Err(e) = &policy_check_result {
+                log::error!("Policy check failed, below is the detail information:\n");
+                log::error!("{:x?}\n", e);
+            }
+
+            policy_check_result.map_err(|e| match e {
+                PolicyError::InvalidPolicy => {
+                    CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string())
+                }
+                _ => CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string()),
+            })
+        } else {
+            Err(CryptoError::TlsVerifyPeerCert(
+                MUTUAL_ATTESTATION_ERROR.to_string(),
+            ))
+        }
+    }
+
+    #[cfg(feature = "policy_v2")]
+    pub fn verify_peer_cert(
+        is_client: bool,
+        cert: &[u8],
+        quote_local: &[u8],
+    ) -> core::result::Result<(), CryptoError> {
+        use crate::config::get_collaterals;
+        use policy::v2::collateral::{get_collateral_with_fmspc, get_fmspc_from_quote};
+
+        let (quote_report, event_log) = get_quote_and_event_log(&cert)?;
+
+        let fmspc = get_fmspc_from_quote(quote_report)
+            .map_err(|_| CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string()))?;
+        let collaterals = get_collaterals().ok_or(CryptoError::TlsVerifyPeerCert(
+            MUTUAL_ATTESTATION_ERROR.to_string(),
+        ))?;
+        let collateral = get_collateral_with_fmspc(&fmspc, collaterals)
+            .map_err(|_| CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string()))?;
+        if let Ok(verified_report_peer) =
+            attestation::verify_quote_with_collaterals(quote_report, &collateral)
+        {
+            verify_signature(&cert, verified_report_peer.as_slice())?;
+
+            // MigTD-src acts as TLS client
+            let policy_check_result = mig_policy::authenticate_policy_v2(
+                "up-to-date",
+                verified_report_peer.as_slice(),
+                &collateral,
             );
 
             if let Err(e) = &policy_check_result {
@@ -183,6 +225,18 @@ mod verify {
 
         verify_public_key(verified_report, public_key)?;
         ecdsa_verify(public_key, &tbs, signature)
+    }
+
+    fn get_quote_and_event_log<'a>(
+        cert: &'a Certificate<'a>,
+    ) -> CryptoResult<(&'a [u8], &'a [u8])> {
+        let extensions = cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .ok_or(CryptoError::ParseCertificate)?;
+
+        parse_extensions(extensions).ok_or(CryptoError::ParseCertificate)
     }
 
     fn verify_public_key(verified_report: &[u8], public_key: &[u8]) -> CryptoResult<()> {
