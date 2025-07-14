@@ -5,8 +5,10 @@
 use crate::{CcEvent, EventName, PolicyError};
 use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 
-pub mod engine_svn;
+mod engine_svn;
 pub use engine_svn::*;
+mod policy;
+pub use policy::*;
 
 // Verify the hash of a specific event in the event log
 fn verify_event_hash(
