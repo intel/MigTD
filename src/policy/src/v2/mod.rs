@@ -5,6 +5,9 @@
 use crate::{CcEvent, EventName, PolicyError};
 use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 
+mod policy;
+pub use policy::*;
+
 // Verify the hash of a specific event in the event log
 fn verify_event_hash(
     events: &BTreeMap<EventName, CcEvent>,
