@@ -17,3 +17,4 @@ td-shim-interface = { path = "../../deps/td-shim/td-shim-interface"}
 
 [features]
 std = []
+policy_v2 = []
