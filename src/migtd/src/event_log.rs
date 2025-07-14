@@ -90,6 +90,7 @@ fn get_ccel() -> Option<&'static Ccel> {
 }
 
 pub fn write_tagged_event_log(
+    mr_index: u32,
     event_log: &mut [u8],
     tagged_event_id: u32,
     tagged_event_data: &[u8],
@@ -101,7 +102,7 @@ pub fn write_tagged_event_log(
     extend_rtmr(&digest, 3)?;
 
     let event_header = CcEventHeader {
-        mr_index: 3,
+        mr_index,
         event_type: EV_EVENT_TAG,
         digest: TpmlDigestValues {
             count: 1,
