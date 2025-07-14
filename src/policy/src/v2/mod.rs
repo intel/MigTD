@@ -5,6 +5,9 @@
 use crate::{CcEvent, EventName, PolicyError};
 use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 
+mod servtd_collateral;
+pub use servtd_collateral::*;
+
 // Verify the hash of a specific event in the event log
 fn verify_event_hash(
     events: &BTreeMap<EventName, CcEvent>,
@@ -62,36 +65,6 @@ fn hex_string_to_bytes(hex: &str) -> Result<Vec<u8>, PolicyError> {
 
 fn bytes_to_hex_string(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02X}", b)).collect()
-}
-
-// Convert ECDSA DER public key to raw bytes (04 || x || y)
-fn ecdsa_der_pubkey_to_raw(der_pubkey: &[u8]) -> Result<Vec<u8>, PolicyError> {
-    // Check for SEQUENCE tag
-    if der_pubkey.len() < 2 || der_pubkey[0] != 0x30 {
-        return Err(PolicyError::Crypto);
-    }
-
-    // Find the BIT STRING tag (0x03) that contains the actual key
-    let mut pos = 0;
-    while pos < der_pubkey.len() - 2 {
-        if der_pubkey[pos] == 0x03 {
-            // Found BIT STRING
-            pos += 1;
-
-            // Get length
-            let len = der_pubkey[pos] as usize;
-            pos += 1;
-
-            // Skip unused bits byte
-            pos += 1;
-
-            // The rest is the key data
-            return Ok(der_pubkey[pos..pos + len - 1].to_vec());
-        }
-        pos += 1;
-    }
-
-    Err(PolicyError::Crypto)
 }
 
 #[cfg(test)]
