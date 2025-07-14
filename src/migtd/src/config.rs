@@ -44,6 +44,16 @@ pub const MIGTD_ENGINE_PUBKEY_FFS_GUID: Guid = Guid::from_fields(
     &[0x4c, 0xa0, 0xb9, 0xec, 0x1, 0xa8],
 );
 
+// {B3C1DCFE-6BEF-449F-A183-63A84EA1E0B4}
+pub const MIGTD_POLICY_PUBKEY_FFS_GUID: Guid = Guid::from_fields(
+    0xb3c1dcfe,
+    0x6bef,
+    0x449f,
+    0xa1,
+    0x83,
+    &[0x63, 0xa8, 0x4e, 0xa1, 0xe0, 0xb4],
+);
+
 pub fn get_config_volume() -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(CONFIG_VOLUME_BASE as *const u8, CONFIG_VOLUME_SIZE) }
 }
@@ -66,4 +76,9 @@ pub fn get_engine() -> Option<&'static [u8]> {
 pub fn get_engine_public_key() -> Option<&'static [u8]> {
     let cfv = get_config_volume();
     fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_ENGINE_PUBKEY_FFS_GUID)
+}
+
+pub fn get_policy_public_key() -> Option<&'static [u8]> {
+    let cfv = get_config_volume();
+    fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_POLICY_PUBKEY_FFS_GUID)
 }
