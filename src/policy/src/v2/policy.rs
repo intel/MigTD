@@ -2,12 +2,16 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use core::convert::{TryFrom, TryInto};
 use alloc::{string::String, vec::Vec};
+use core::convert::{TryFrom, TryInto};
 use serde::{Deserialize, Serialize};
 use serde_json::{self, value::RawValue};
 
-use crate::{parse_events, v2::{bytes_to_hex_string, ecdsa_der_pubkey_to_raw, hex_string_to_bytes, verify_event_hash}, EventName, PolicyError};
+use crate::{
+    parse_events,
+    v2::{bytes_to_hex_string, ecdsa_der_pubkey_to_raw, hex_string_to_bytes, verify_event_hash},
+    EventName, PolicyError,
+};
 
 #[derive(Debug)]
 pub enum TcbStatus {
@@ -84,7 +88,8 @@ pub fn verify_policy_signature<'a>(
         &public_key,
         partial_mig_policy.policy.get().as_bytes(),
         &signature_bytes,
-    ).map_err(|_| PolicyError::SignatureVerificationFailed)?;
+    )
+    .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
     Ok(partial_mig_policy)
 }
@@ -120,7 +125,8 @@ impl<'a> PartialMigPolicy<'a> {
     }
 
     pub fn sign(&mut self, signing_key: &[u8]) -> Result<(), PolicyError> {
-        let signature = crypto::ecdsa::ecdsa_sign(self.policy.get().as_bytes(), signing_key).map_err(|_| PolicyError::Crypto)?;
+        let signature = crypto::ecdsa::ecdsa_sign(self.policy.get().as_bytes(), signing_key)
+            .map_err(|_| PolicyError::Crypto)?;
         self.signature = Some(bytes_to_hex_string(&signature));
 
         Ok(())
