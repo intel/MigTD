@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use core::convert::TryFrom;
+use core::convert::{TryFrom, TryInto};
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
+use serde_json::{self, value::RawValue};
 
-use crate::PolicyError;
+use crate::{parse_events, v2::{bytes_to_hex_string, ecdsa_der_pubkey_to_raw, hex_string_to_bytes, verify_event_hash}, EventName, PolicyError};
 
 #[derive(Debug)]
 pub enum TcbStatus {
@@ -63,6 +64,79 @@ pub struct PolicyEvaluationInfo {
 
     /// The engine SVN
     pub engine_svn: Option<u32>,
+}
+
+pub fn verify_policy_signature<'a>(
+    policy: &'a [u8],
+    public_key: &[u8],
+) -> Result<PartialMigPolicy<'a>, PolicyError> {
+    let partial_mig_policy = PartialMigPolicy::deserialize_from_json(policy)?;
+
+    let signature_bytes = hex_string_to_bytes(
+        partial_mig_policy
+            .signature
+            .as_ref()
+            .ok_or(PolicyError::SignatureVerificationFailed)?,
+    )?;
+    let public_key = ecdsa_der_pubkey_to_raw(public_key)?;
+
+    crypto::ecdsa::ecdsa_verify_with_raw_public_key(
+        &public_key,
+        partial_mig_policy.policy.get().as_bytes(),
+        &signature_bytes,
+    ).map_err(|_| PolicyError::SignatureVerificationFailed)?;
+
+    Ok(partial_mig_policy)
+}
+
+pub fn verify_policy_integrity(
+    policy: &[u8],
+    public_key: &[u8],
+    event_log: &[u8],
+) -> Result<MigPolicy, PolicyError> {
+    let partial_mig_policy = verify_policy_signature(policy, public_key)?;
+    let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
+
+    if !verify_event_hash(
+        &events,
+        &EventName::MigTdEngine,
+        partial_mig_policy.policy.get().as_bytes(),
+    )? {
+        return Err(PolicyError::InvalidEngineSvnMap);
+    }
+    partial_mig_policy.try_into()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PartialMigPolicy<'a> {
+    #[serde(borrow)]
+    policy: &'a RawValue,
+    signature: Option<String>,
+}
+
+impl<'a> PartialMigPolicy<'a> {
+    pub fn deserialize_from_json(slice: &'a [u8]) -> Result<Self, PolicyError> {
+        serde_json::from_slice::<PartialMigPolicy>(slice).map_err(|_| PolicyError::InvalidPolicy)
+    }
+
+    pub fn sign(&mut self, signing_key: &[u8]) -> Result<(), PolicyError> {
+        let signature = crypto::ecdsa::ecdsa_sign(self.policy.get().as_bytes(), signing_key).map_err(|_| PolicyError::Crypto)?;
+        self.signature = Some(bytes_to_hex_string(&signature));
+
+        Ok(())
+    }
+}
+
+impl TryInto<MigPolicy> for PartialMigPolicy<'_> {
+    type Error = PolicyError;
+    fn try_into(self) -> Result<MigPolicy, Self::Error> {
+        let policy =
+            serde_json::from_str(self.policy.get()).map_err(|_| PolicyError::InvalidPolicy)?;
+        Ok(MigPolicy {
+            policy,
+            signature: self.signature.ok_or(PolicyError::InvalidPolicy)?,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -597,6 +671,13 @@ impl PolicyProperty {
 mod test {
     use super::*;
     use alloc::{string::ToString, vec};
+
+    #[test]
+    fn test_verify_policy_signature() {
+        let policy_bytes = include_bytes!("../../test/policy_v2/policy.json");
+        let public_key = include_bytes!("../../test/policy_v2/policy-public.der");
+        verify_policy_signature(policy_bytes, public_key).unwrap();
+    }
 
     #[test]
     fn test_policy_tcb_date() {
