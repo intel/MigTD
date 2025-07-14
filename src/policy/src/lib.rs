@@ -328,6 +328,7 @@ impl From<&str> for EventName {
             "Digest.MigTdCoreSvn" => Self::MigTdCoreSvn,
             "Digest.MigTdPolicy" => Self::MigTdPolicy,
             "Digest.MigTdSgxRootKey" => Self::SgxRootKey,
+            "Digest.MigTdEngine" => Self::MigTdEngine,
             _ => Self::Unknown,
         }
     }
