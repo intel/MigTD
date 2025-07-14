@@ -71,6 +71,27 @@ pub fn ecdsa_verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<
     pk.verify(data, signature).map_err(|_e| Error::EcdsaVerify)
 }
 
+pub fn ecdsa_verify_with_raw_public_key(
+    public_key: &[u8],
+    data: &[u8],
+    signature: &[u8],
+) -> Result<()> {
+    let pk = UnparsedPublicKey::new(&signature::ECDSA_P384_SHA384_FIXED, public_key);
+    pk.verify(data, signature).map_err(|_e| Error::EcdsaVerify)
+}
+
+pub fn ecdsa_sign(pkcs8: &[u8], data: &[u8]) -> Result<Vec<u8>> {
+    let rand = SystemRandom::new();
+    let ecdsa_key =
+        EcdsaKeyPair::from_pkcs8(&signature::ECDSA_P384_SHA384_ASN1_SIGNING, pkcs8, &rand).unwrap();
+
+    ecdsa_key
+        .sign(&rand, data)
+        .as_ref()
+        .map(|s| s.as_ref().to_vec())
+        .map_err(|_| Error::EcdsaSign)
+}
+
 // Here is a workaround to cleanup the structures that contain sensitive
 // data, since some of the structure defined by ring do not implement the
 // trait 'drop' to zero the content
