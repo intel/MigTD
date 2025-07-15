@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
 use ring::signature::{self, EcdsaKeyPair, KeyPair, UnparsedPublicKey};
+use rustls_pemfile::Item;
 use zeroize::Zeroize;
 
 use crate::{Error, Result};
@@ -90,6 +91,16 @@ pub fn ecdsa_sign(pkcs8: &[u8], data: &[u8]) -> Result<Vec<u8>> {
         .as_ref()
         .map(|s| s.as_ref().to_vec())
         .map_err(|_| Error::EcdsaSign)
+}
+
+pub fn pem_to_der_from_slice(pem_data: &[u8]) -> Result<Vec<u8>> {
+    match rustls_pemfile::read_one_from_slice(pem_data).map_err(|_| Error::DecodePemCert)? {
+        Some((Item::X509Certificate(cert), _remaining)) => Ok(cert.to_vec()),
+        Some((Item::Pkcs8Key(key), _)) => Ok(key.secret_pkcs8_der().to_vec()),
+        Some((Item::Pkcs1Key(key), _)) => Ok(key.secret_pkcs1_der().to_vec()),
+        Some((Item::Sec1Key(key), _)) => Ok(key.secret_sec1_der().to_vec()),
+        _ => Err(Error::DecodePemCert),
+    }
 }
 
 // Here is a workaround to cleanup the structures that contain sensitive
