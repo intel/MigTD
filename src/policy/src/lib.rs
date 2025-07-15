@@ -316,6 +316,7 @@ enum EventName {
     MigTdPolicy,
     SgxRootKey,
     MigTdEngine,
+    Collaterals,
     Unknown,
 }
 

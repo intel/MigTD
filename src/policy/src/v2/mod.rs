@@ -9,6 +9,8 @@ mod engine_svn;
 pub use engine_svn::*;
 mod policy;
 pub use policy::*;
+mod collaterals;
+pub use collaterals::*;
 
 // Verify the hash of a specific event in the event log
 fn verify_event_hash(
