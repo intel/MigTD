@@ -7,6 +7,8 @@ use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 
 mod servtd_collateral;
 pub use servtd_collateral::*;
+mod collaterals;
+pub use collaterals::*;
 
 // Verify the hash of a specific event in the event log
 fn verify_event_hash(
