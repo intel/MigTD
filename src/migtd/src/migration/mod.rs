@@ -7,17 +7,24 @@ pub mod event;
 #[cfg(feature = "main")]
 pub mod session;
 
+use crate::config::get_policy;
 use crate::driver::ticks::TimeoutError;
-use crate::ratls::RatlsError;
+use crate::event_log::get_event_log;
+use crate::ratls::{
+    RatlsError, EXTNID_MIGTD_EVENTLOG_INIT, EXTNID_MIGTD_POLICY_INIT, EXTNID_MIGTD_TDREPORT_INIT,
+};
 use crate::ratls::{
     INVALID_MIG_POLICY_ERROR, MIG_POLICY_UNSATISFIED_ERROR, MUTUAL_ATTESTATION_ERROR,
 };
+use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 use alloc::vec::Vec;
+use crypto::x509::{Certificate, Decode};
 use crypto::Error as CryptoError;
 use r_efi::efi::Guid;
 use rust_std_stub::io;
 use scroll::{Pread, Pwrite};
+use spin::Mutex;
 use tdx_tdcall::TdCallError;
 use tdx_tdcall::TdVmcallError;
 #[cfg(feature = "virtio-serial")]
@@ -162,9 +169,10 @@ impl From<VirtioSerialError> for MigrationResult {
 impl From<RatlsError> for MigrationResult {
     fn from(e: RatlsError) -> Self {
         match e {
-            RatlsError::Crypto(_) | RatlsError::X509(_) | RatlsError::InvalidEventlog => {
-                MigrationResult::SecureSessionError
-            }
+            RatlsError::Crypto(_)
+            | RatlsError::X509(_)
+            | RatlsError::InvalidEventlog
+            | RatlsError::Config => MigrationResult::SecureSessionError,
             RatlsError::TdxModule(_) => MigrationResult::TdxModuleError,
             RatlsError::GetQuote | RatlsError::VerifyQuote => {
                 MigrationResult::MutualAttestationError
@@ -229,4 +237,131 @@ impl From<TimeoutError> for MigrationResult {
     fn from(_: TimeoutError) -> Self {
         MigrationResult::NetworkError
     }
+}
+
+/// Struct to store the initial migtd configurations for a migrated target TD
+#[derive(Debug, Clone)]
+pub struct InitMigtdConfig {
+    pub td_report: Vec<u8>,
+    pub event_log: Vec<u8>,
+    pub mig_policy: Vec<u8>,
+}
+
+/// Key for identifying a target TD (UUID + binding handle)
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InitConfigKey {
+    pub target_td_uuid: [u64; 4],
+    pub binding_handle: u64,
+}
+
+/// Map to store all migrated target TDs' init info
+pub type InitMigtdConfigMap = BTreeMap<InitConfigKey, InitMigtdConfig>;
+
+/// Global storage for migrated target TD initial configurations
+static INIT_MIGTD_CONFIG_MAP: Mutex<InitMigtdConfigMap> = Mutex::new(BTreeMap::new());
+
+/// Insert or update the initial configuration for a target TD
+pub fn put_init_migtd_config(mig_info: &MigtdMigrationInformation, config: InitMigtdConfig) {
+    let key = InitConfigKey {
+        target_td_uuid: mig_info.target_td_uuid,
+        binding_handle: mig_info.binding_handle,
+    };
+    let mut map = INIT_MIGTD_CONFIG_MAP.lock();
+    map.insert(key, config);
+}
+
+pub fn contains_init_migtd_config(mig_info: &MigtdMigrationInformation) -> bool {
+    let key = InitConfigKey {
+        target_td_uuid: mig_info.target_td_uuid,
+        binding_handle: mig_info.binding_handle,
+    };
+    let map = INIT_MIGTD_CONFIG_MAP.lock();
+    map.contains_key(&key)
+}
+
+/// Remove the initial configuration for a target TD
+pub fn remove_init_migtd_config(mig_info: &MigtdMigrationInformation) -> Option<InitMigtdConfig> {
+    let key = InitConfigKey {
+        target_td_uuid: mig_info.target_td_uuid,
+        binding_handle: mig_info.binding_handle,
+    };
+    let mut map = INIT_MIGTD_CONFIG_MAP.lock();
+    map.remove(&key)
+}
+
+/// Access the initial migtd configuration for a target TD with a closure
+/// This avoids cloning large data by providing temporary access via a closure
+pub fn with_init_migtd_config<T, F>(mig_info: &MigtdMigrationInformation, f: F) -> Option<T>
+where
+    F: FnOnce(&InitMigtdConfig) -> Option<T>,
+{
+    let key = InitConfigKey {
+        target_td_uuid: mig_info.target_td_uuid,
+        binding_handle: mig_info.binding_handle,
+    };
+    let map = INIT_MIGTD_CONFIG_MAP.lock();
+    map.get(&key).and_then(f)
+}
+
+pub fn parse_and_store_init_migtd_config(
+    mig_info: &MigtdMigrationInformation,
+    src_cert: &[&[u8]],
+) -> Result<(), MigrationResult> {
+    let cert = src_cert.get(0).ok_or(MigrationResult::SecureSessionError)?;
+    let config = parse_migtd_cert(cert).ok_or(MigrationResult::MutualAttestationError)?;
+    put_init_migtd_config(mig_info, config);
+    Ok(())
+}
+
+#[allow(unused)]
+fn parse_migtd_cert(cert: &[u8]) -> Option<InitMigtdConfig> {
+    let cert = Certificate::from_der(cert).ok()?;
+    let extensions = cert.tbs_certificate().extensions.as_ref()?;
+
+    let mut td_report = None;
+    let mut event_log = None;
+    let mut mig_policy = None;
+
+    for extn in extensions.get() {
+        if extn.extn_id == EXTNID_MIGTD_TDREPORT_INIT {
+            td_report = extn.extn_value.map(|v| v.as_bytes().to_vec());
+        } else if extn.extn_id == EXTNID_MIGTD_EVENTLOG_INIT {
+            event_log = extn.extn_value.map(|v| v.as_bytes().to_vec());
+        } else if extn.extn_id == EXTNID_MIGTD_POLICY_INIT {
+            mig_policy = extn.extn_value.map(|v| v.as_bytes().to_vec());
+        }
+    }
+
+    Some(InitMigtdConfig {
+        td_report: td_report?,
+        event_log: event_log?,
+        mig_policy: mig_policy?,
+    })
+}
+
+/// Store the current MigTD's own configuration in the map
+pub fn put_current_migtd_config(
+    mig_info: &MigtdMigrationInformation,
+) -> Result<(), MigrationResult> {
+    // Get the current MigTD's TD report
+    let td_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
+        .map_err(|_| MigrationResult::TdxModuleError)?
+        .as_bytes()
+        .to_vec();
+
+    let event_log = get_event_log()
+        .ok_or(MigrationResult::InvalidParameter)?
+        .to_vec();
+    let mig_policy = get_policy()
+        .ok_or(MigrationResult::InvalidParameter)?
+        .to_vec();
+
+    let config = InitMigtdConfig {
+        td_report,
+        event_log,
+        mig_policy,
+    };
+
+    put_init_migtd_config(mig_info, config);
+    Ok(())
 }

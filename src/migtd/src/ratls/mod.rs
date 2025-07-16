@@ -14,6 +14,7 @@ mod server_client;
 pub use server_client::*;
 
 pub enum RatlsError {
+    Config,
     GetQuote,
     VerifyQuote,
     TdxModule(TdCallError),
@@ -64,6 +65,20 @@ pub const KEY_USAGE_EXTENSION: ObjectIdentifier = ObjectIdentifier::new_unwrap("
 pub const SERVER_AUTH: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.1");
 pub const CLIENT_AUTH: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.2");
 pub const ID_EC_SIG_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
+pub const EXTNID_MIGTD_POLICY: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.4");
+pub const EXTNID_MIGTD_SVN_MAP: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.5");
+pub const EXTNID_MIGTD_SERVTD_EXT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.6");
+pub const EXTNID_MIGTD_TDREPORT_INIT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.7");
+pub const EXTNID_MIGTD_EVENTLOG_INIT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.8");
+pub const EXTNID_MIGTD_POLICY_INIT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.9");
+pub const EXTNID_MIGTD_COLLATERAL_INIT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.10");
 
 pub const MIG_POLICY_UNSATISFIED_ERROR: &str = "PolicyUnsatisfiedError";
 pub const INVALID_MIG_POLICY_ERROR: &str = "InvalidPolicyError";
