@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Intel Corporation
+// Copyright (c) 2023 - 2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
@@ -18,10 +18,24 @@ use td_shim_tools::tee_info_hash::{Manifest, TdInfoStruct};
 
 const MIGTD_IMAGE_SIZE: u64 = 0x100_0000;
 
-pub fn calculate_servtd_hash(
+pub const SERVTD_TYPE_MIGTD: u16 = 0;
+
+const SERVTD_ATTR_IGNORE_ATTRIBUTES: u64 = 0x1_0000_0000;
+const SERVTD_ATTR_IGNORE_XFAM: u64 = 0x2_0000_0000;
+const SERVTD_ATTR_IGNORE_MRTD: u64 = 0x4_0000_0000;
+const SERVTD_ATTR_IGNORE_MRCONFIGID: u64 = 0x8_0000_0000;
+const SERVTD_ATTR_IGNORE_MROWNER: u64 = 0x10_0000_0000;
+const SERVTD_ATTR_IGNORE_MROWNERCONFIG: u64 = 0x20_0000_0000;
+const SERVTD_ATTR_IGNORE_RTMR0: u64 = 0x40_0000_0000;
+const SERVTD_ATTR_IGNORE_RTMR1: u64 = 0x80_0000_0000;
+const SERVTD_ATTR_IGNORE_RTMR2: u64 = 0x100_0000_0000;
+const SERVTD_ATTR_IGNORE_RTMR3: u64 = 0x200_0000_0000;
+
+pub fn calculate_servtd_info_hash(
     manifest: &[u8],
     mut image: File,
     is_ra_disabled: bool,
+    servtd_attr: u64,
 ) -> Result<Vec<u8>, Error> {
     // Initialize the configurable fields of TD info structure.
     let manifest = serde_json::from_slice::<Manifest>(&manifest)?;
@@ -45,6 +59,37 @@ pub fn calculate_servtd_hash(
     td_info
         .rtmr2
         .copy_from_slice(rtmr2(&cfv, is_ra_disabled)?.as_slice());
+
+    if (servtd_attr & SERVTD_ATTR_IGNORE_ATTRIBUTES) != 0 {
+        td_info.attributes.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_XFAM) != 0 {
+        td_info.xfam.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_MRTD) != 0 {
+        td_info.mrtd.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_MRCONFIGID) != 0 {
+        td_info.mrconfig_id.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_MROWNER) != 0 {
+        td_info.mrowner.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_MROWNERCONFIG) != 0 {
+        td_info.mrownerconfig.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR0) != 0 {
+        td_info.rtmr0.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR1) != 0 {
+        td_info.rtmr1.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR2) != 0 {
+        td_info.rtmr2.fill(0);
+    }
+    if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR3) != 0 {
+        td_info.rtmr3.fill(0);
+    }
 
     // Convert the TD info structure to bytes.
     let mut buffer = [0u8; size_of::<TdInfoStruct>()];
@@ -94,6 +139,27 @@ impl Rtmr {
     fn as_bytes(&self) -> &[u8] {
         &self.reg[..SHA384_DIGEST_SIZE]
     }
+}
+
+pub fn calculate_servtd_hash(
+    servtd_info_hash: &[u8],
+    servtd_type: u16,
+    servtd_attr: u64,
+) -> Result<Vec<u8>, Error> {
+    let mut buffer = [0u8; SHA384_DIGEST_SIZE + size_of::<u16>() + size_of::<u64>()];
+    let mut packed_size = 0usize;
+
+    if servtd_info_hash.len() != SHA384_DIGEST_SIZE {
+        return Err(anyhow!("servtd_info_hash length mismatch"));
+    }
+
+    buffer[packed_size..packed_size + SHA384_DIGEST_SIZE].copy_from_slice(servtd_info_hash);
+    packed_size += SHA384_DIGEST_SIZE;
+    buffer[packed_size..packed_size + size_of::<u16>()].copy_from_slice(&servtd_type.to_le_bytes());
+    packed_size += size_of::<u16>();
+    buffer[packed_size..packed_size + size_of::<u64>()].copy_from_slice(&servtd_attr.to_le_bytes());
+
+    digest_sha384(&buffer).map_err(|_| anyhow!("Calculate digest"))
 }
 
 fn calculate_digest(data: &[u8]) -> Result<Vec<u8>, Error> {
