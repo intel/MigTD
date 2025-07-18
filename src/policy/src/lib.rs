@@ -50,6 +50,7 @@ pub enum PolicyError {
     InvalidOperation,
     InvalidReference,
     InvalidEngineSvnMap,
+    InvalidTdxReport,
     InvalidQuote,
     SvnMismatch,
     TcbEvaluation,
