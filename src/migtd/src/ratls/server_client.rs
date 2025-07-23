@@ -16,32 +16,108 @@ use crypto::{
 };
 
 use super::*;
-use crate::event_log::get_event_log;
+use crate::{config::get_policy, event_log::get_event_log, migration::data::MigrationInformation};
 use verify::*;
 
 type Result<T> = core::result::Result<T, RatlsError>;
 
 pub fn server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
-    let (certs, quote) = gen_cert(&signing_key)?;
-    let certs = vec![certs];
+    let pub_key = signing_key.public_key()?;
+    let quote = gen_quote(&pub_key)?;
+    let certs = vec![gen_cert_server(&signing_key, &pub_key, &quote)?];
 
     // Server verifies certificate of client
     let config = TlsConfig::new(certs, signing_key, verify_client_cert, quote)?;
     config.tls_server(stream).map_err(|e| e.into())
 }
 
-pub fn client<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
+pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
+    stream: T,
+    mig_info: &MigrationInformation,
+) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
-    let (certs, quote) = gen_cert(&signing_key)?;
-    let certs = vec![certs];
+    let pub_key = signing_key.public_key()?;
+    let quote = gen_quote(&pub_key)?;
+    #[cfg(not(feature = "policy_v2"))]
+    let certs = vec![gen_cert_client(mig_info, &signing_key, &pub_key, &quote)?];
+    #[cfg(feature = "policy_v2")]
+    let certs = vec![gen_cert_client_v2(
+        mig_info,
+        &signing_key,
+        &pub_key,
+        &quote,
+    )?];
 
     // Client verifies certificate of server
     let config = TlsConfig::new(certs, signing_key, verify_server_cert, quote)?;
     config.tls_client(stream).map_err(|e| e.into())
 }
 
-fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
+fn gen_cert_client(
+    _mig_info: &MigrationInformation,
+    signing_key: &EcdsaPk,
+    pub_key: &[u8],
+    quote: &[u8],
+) -> Result<Vec<u8>> {
+    build_x509_common(quote, pub_key, |builder| {
+        let cert = builder.build();
+        sign_certificate(cert, signing_key)
+    })
+}
+
+fn gen_cert_server(signing_key: &EcdsaPk, pub_key: &[u8], quote: &[u8]) -> Result<Vec<u8>> {
+    build_x509_common(quote, pub_key, |builder| {
+        let cert = builder.build();
+        sign_certificate(cert, signing_key)
+    })
+}
+
+#[cfg(feature = "policy_v2")]
+fn gen_cert_client_v2(
+    mig_info: &MigrationInformation,
+    signing_key: &EcdsaPk,
+    pub_key: &[u8],
+    quote: &[u8],
+) -> Result<Vec<u8>> {
+    use crate::migration::with_init_migtd_config;
+
+    let servtd_ext: &[u8] = &[];
+    with_init_migtd_config(&mig_info.mig_info, |init| {
+        build_x509_common(quote, pub_key, |builder| {
+            let cert = builder
+                .add_extension(Extension::new(
+                    EXTNID_MIGTD_SERVTD_EXT,
+                    Some(false),
+                    Some(servtd_ext),
+                )?)?
+                .add_extension(Extension::new(
+                    EXTNID_MIGTD_TDREPORT_INIT,
+                    Some(false),
+                    Some(&init.td_report),
+                )?)?
+                .add_extension(Extension::new(
+                    EXTNID_MIGTD_POLICY_INIT,
+                    Some(false),
+                    Some(&init.mig_policy),
+                )?)?
+                .add_extension(Extension::new(
+                    EXTNID_MIGTD_EVENTLOG_INIT,
+                    Some(false),
+                    Some(&init.event_log),
+                )?)?
+                .build();
+            sign_certificate(cert, signing_key)
+        })
+        .ok()
+    })
+    .ok_or(RatlsError::Config)
+}
+
+fn build_x509_common<F>(quote: &[u8], pub_key: &[u8], customizer: F) -> Result<Vec<u8>>
+where
+    F: FnOnce(CertificateBuilder<'_>) -> Result<Vec<u8>>,
+{
     let algorithm = AlgorithmIdentifier {
         algorithm: ID_EC_PUBKEY_OID,
         parameters: Some(AnyRef::new(
@@ -51,15 +127,15 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
     };
     let eku = vec![SERVER_AUTH, CLIENT_AUTH, MIGTD_EXTENDED_KEY_USAGE].to_der()?;
 
-    let pub_key = signing_key.public_key()?;
     let sig_alg = AlgorithmIdentifier {
         algorithm: ID_EC_SIG_OID,
         parameters: None,
     };
     let key_usage = BitStringRef::from_bytes(&[0x80])?.to_der()?;
-    let quote = gen_quote(&pub_key)?;
-    let event_log = get_event_log().ok_or(RatlsError::InvalidEventlog)?;
-    let mut x509_certificate = CertificateBuilder::new(sig_alg, algorithm, &pub_key)?
+    let event_log = get_event_log().ok_or(RatlsError::Config)?;
+    let mig_policy = get_policy().ok_or(RatlsError::Config)?;
+
+    let builder = CertificateBuilder::new(sig_alg, algorithm, pub_key)?
         // 1970-01-01T00:00:00Z
         .set_not_before(core::time::Duration::new(0, 0))?
         // 9999-12-31T23:59:59Z
@@ -77,19 +153,29 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         .add_extension(Extension::new(
             EXTNID_MIGTD_QUOTE_REPORT,
             Some(false),
-            Some(quote.as_slice()),
+            Some(quote),
         )?)?
         .add_extension(Extension::new(
             EXTNID_MIGTD_EVENT_LOG,
             Some(false),
             Some(event_log),
         )?)?
-        .build();
-    let tbs = x509_certificate.tbs_certificate.to_der()?;
-    let signature = signing_key.sign(&tbs)?;
-    x509_certificate.set_signature(&signature)?;
+        .add_extension(Extension::new(
+            EXTNID_MIGTD_POLICY,
+            Some(false),
+            Some(mig_policy),
+        )?)
+        .map_err(|e| RatlsError::X509(e))?;
 
-    Ok((x509_certificate.to_der().map_err(CryptoError::from)?, quote))
+    customizer(builder)
+}
+
+fn sign_certificate(cert: Certificate, signing_key: &EcdsaPk) -> Result<Vec<u8>> {
+    let tbs = cert.tbs_certificate.to_der()?;
+    let mut cert = cert;
+    let signature = signing_key.sign(&tbs)?;
+    cert.set_signature(&signature)?;
+    Ok(cert.to_der()?)
 }
 
 fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {

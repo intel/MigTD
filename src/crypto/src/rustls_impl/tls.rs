@@ -55,6 +55,19 @@ where
     pub async fn read(&mut self, data: &mut [u8]) -> Result<usize> {
         self.conn.read(data).await
     }
+
+    pub fn peer_certificates(&self) -> Option<&[CertificateDer<'static>]> {
+        match &self.conn {
+            TlsConnection::Server(server_conn) => server_conn.peer_certificates(),
+            TlsConnection::Client(client_conn) => client_conn.peer_certificates(),
+        }
+    }
+
+    /// Get peer certificates as byte vectors
+    pub fn peer_certificates_bytes(&self) -> Option<Vec<&[u8]>> {
+        self.peer_certificates()
+            .map(|certs| certs.iter().map(|cert| cert.as_ref()).collect())
+    }
 }
 
 enum TlsConnection<T: AsyncRead + AsyncWrite + Unpin> {
@@ -98,6 +111,14 @@ impl<T: AsyncRead + AsyncWrite + Unpin> TlsConnection<T> {
         match self {
             Self::Server(conn) => &mut conn.transport,
             Self::Client(conn) => &mut conn.transport,
+        }
+    }
+
+    #[allow(unused)]
+    fn peer_certificates(&self) -> Option<&[CertificateDer<'static>]> {
+        match self {
+            Self::Server(conn) => conn.peer_certificates(),
+            Self::Client(conn) => conn.peer_certificates(),
         }
     }
 }
@@ -374,6 +395,7 @@ impl ClientCertVerifier for Verifier {
 pub(crate) mod connection {
     use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
     use async_io::{AsyncRead, AsyncWrite};
+    use pki_types::CertificateDer;
     use rust_std_stub::io;
     use rustls::{
         client::UnbufferedClientConnection,
@@ -680,6 +702,10 @@ pub(crate) mod connection {
                 _ => Ok(()),
             }
         }
+
+        pub fn peer_certificates(&self) -> Option<&[CertificateDer<'static>]> {
+            self.conn.peer_certificates()
+        }
     }
 
     // Derived from `rustls::vecbuf`
@@ -938,6 +964,10 @@ pub(crate) mod connection {
                 }
                 _ => Ok(()),
             }
+        }
+
+        pub fn peer_certificates(&self) -> Option<&[CertificateDer<'static>]> {
+            self.conn.peer_certificates()
         }
     }
 }
