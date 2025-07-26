@@ -11,7 +11,10 @@ use core::future::poll_fn;
 use core::task::Poll;
 
 use log::info;
-use migtd::event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT;
+use migtd::event_log::{
+    MR_INDEX_ROOT_CA, MR_INDEX_TEST_FEATURE, TAGGED_EVENT_ID_ROOT_CA, TAGGED_EVENT_ID_TEST,
+    TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
+};
 use migtd::migration::data::MigrationInformation;
 use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
@@ -19,11 +22,6 @@ use migtd::{config, event_log, migration};
 use spin::Mutex;
 
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-// Event IDs that will be used to tag the event log
-const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
-const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
-const TAGGED_EVENT_ID_TEST: u32 = 0x32;
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -75,11 +73,18 @@ fn do_measurements() {
 
     // Get root certificate from CFV and measure it into RMTR
     get_ca_and_measure(event_log);
+
+    #[cfg(feature = "policy_v2")]
+    {
+        // Verify the engine-svn map signature and measure it into RTMR
+        verify_engine_signatures(event_log);
+    }
 }
 
 fn measure_test_feature(event_log: &mut [u8]) {
     // Measure and extend the migtd test feature to RTMR
     event_log::write_tagged_event_log(
+        MR_INDEX_TEST_FEATURE,
         event_log,
         TAGGED_EVENT_ID_TEST,
         TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
@@ -88,11 +93,13 @@ fn measure_test_feature(event_log: &mut [u8]) {
 }
 
 fn get_policy_and_measure(event_log: &mut [u8]) {
+    use event_log::{MR_INDEX_POLICY, TAGGED_EVENT_ID_POLICY};
+
     // Read migration policy from CFV
     let policy = config::get_policy().expect("Fail to get policy from CFV\n");
 
     // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_POLICY, policy)
+    event_log::write_tagged_event_log(MR_INDEX_POLICY, event_log, TAGGED_EVENT_ID_POLICY, policy)
         .expect("Failed to log migration policy");
 }
 
@@ -100,10 +107,39 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
     let root_ca = config::get_root_ca().expect("Fail to get root certificate from CFV\n");
 
     // Measure and extend the root certificate to RTMR
-    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_ROOT_CA, root_ca)
-        .expect("Failed to log SGX root CA\n");
+    event_log::write_tagged_event_log(
+        MR_INDEX_ROOT_CA,
+        event_log,
+        TAGGED_EVENT_ID_ROOT_CA,
+        root_ca,
+    )
+    .expect("Failed to log SGX root CA\n");
 
     attestation::root_ca::set_ca(root_ca).expect("Invalid root certificate\n");
+}
+
+#[cfg(feature = "policy_v2")]
+fn verify_engine_signatures(event_log: &mut [u8]) {
+    use event_log::{
+        MR_INDEX_ENGINE, MR_INDEX_SIGNER_ENGINE, TAGGED_EVENT_ID_ENGINE,
+        TAGGED_EVENT_ID_SIGNER_ENGINE,
+    };
+
+    // Log the public key of the engine-svn map
+    let engine_signer = config::get_engine_public_key().expect("Engine public key not found");
+    event_log::write_tagged_event_log(
+        TAGGED_EVENT_ID_SIGNER_ENGINE,
+        event_log,
+        engine_signer,
+        MR_INDEX_SIGNER_ENGINE,
+    )
+    .expect("Failed to log migration engine signer");
+
+    // Verify the engine-svn map signature
+    let engine = config::get_engine().expect("Engine not found");
+    policy::v2::verify_engine_signature(engine, engine_signer).expect("Invalid engine signature");
+    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_ENGINE, engine, MR_INDEX_ENGINE)
+        .expect("Failed to log engine-svn map");
 }
 
 fn handle_pre_mig() {
