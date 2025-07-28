@@ -117,6 +117,11 @@ To use virtio-serial instead of virtio-vsock for the guest-host communication:
 cargo image --no-default-features --features stack-guard,virtio-serial
 ```
 
+To use vmcall-raw for the guest-host communication:
+```
+cargo image --no-default-features --features stack-guard,vmcall-raw
+```
+
 ### Generate SERVTD_INFO_HASH
 
 `SERVTD_HASH_INFO` can be calculated based on a given MigTD image and a TD configuration such as

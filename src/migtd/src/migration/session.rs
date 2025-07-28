@@ -7,10 +7,10 @@ use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
 use alloc::collections::BTreeSet;
 #[cfg(feature = "vmcall-raw")]
 use core::sync::atomic::AtomicBool;
-#[cfg(feature = "vmcall-interrupt")]
+#[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
 use core::sync::atomic::Ordering;
 use core::{future::poll_fn, mem::size_of, task::Poll};
-#[cfg(feature = "vmcall-interrupt")]
+#[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
 use event::VMCALL_SERVICE_FLAG;
 use lazy_static::lazy_static;
 use spin::Mutex;
