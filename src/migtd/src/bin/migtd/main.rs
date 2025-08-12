@@ -118,9 +118,16 @@ fn handle_pre_mig() {
     async_runtime::add_task(async move {
         loop {
             poll_fn(|_cx| {
-                // Wait until the pending request is taken by a new task
+                // Wait until both conditions are met:
+                // 1. The pending request is taken by a new task
+                // 2. We haven't reached the maximum concurrency limit
                 if PENDING_REQUEST.lock().is_none() {
-                    Poll::Ready(())
+                    let current_requests = REQUESTS.lock().len();
+                    if current_requests < MAX_CONCURRENCY_REQUESTS {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
                 } else {
                     Poll::Pending
                 }
@@ -133,35 +140,33 @@ fn handle_pre_mig() {
         }
     });
 
-    let mut queued = async_runtime::poll_tasks();
-
     loop {
+        // Poll the async runtime to execute tasks
+        let _ = async_runtime::poll_tasks();
+
         // The async task waiting for VMM response is always in the queue
-        if queued < MAX_CONCURRENCY_REQUESTS + 1 {
-            let new_request = PENDING_REQUEST.lock().take();
+        let new_request = PENDING_REQUEST.lock().take();
 
-            if let Some(request) = new_request {
-                async_runtime::add_task(async move {
-                    let status = exchange_msk(&request)
-                        .await
-                        .map(|_| MigrationResult::Success)
-                        .unwrap_or_else(|e| e);
+        if let Some(request) = new_request {
+            async_runtime::add_task(async move {
+                let status = exchange_msk(&request)
+                    .await
+                    .map(|_| MigrationResult::Success)
+                    .unwrap_or_else(|e| e);
 
-                    #[cfg(feature = "vmcall-raw")]
-                    {
-                        let _ = report_status(status as u8, request.mig_info.mig_request_id).await;
-                    }
+                #[cfg(feature = "vmcall-raw")]
+                {
+                    let _ = report_status(status as u8, request.mig_info.mig_request_id).await;
+                }
 
-                    #[cfg(not(feature = "vmcall-raw"))]
-                    {
-                        let _ = report_status(status as u8, request.mig_info.mig_request_id);
-                    }
+                #[cfg(not(feature = "vmcall-raw"))]
+                {
+                    let _ = report_status(status as u8, request.mig_info.mig_request_id);
+                }
 
-                    REQUESTS.lock().remove(&request.mig_info.mig_request_id);
-                });
-            }
+                REQUESTS.lock().remove(&request.mig_info.mig_request_id);
+            });
         }
-        queued = async_runtime::poll_tasks();
         sleep();
     }
 }
