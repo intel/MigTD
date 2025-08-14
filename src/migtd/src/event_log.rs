@@ -21,6 +21,20 @@ use zerocopy::{AsBytes, FromBytes};
 pub const EV_EVENT_TAG: u32 = 0x00000006;
 pub const TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT: &[u8] = b"test_disable_ra_and_accept_all";
 
+// Event IDs that will be used to tag the event log
+pub const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
+pub const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
+pub const TAGGED_EVENT_ID_ENGINE: u32 = 0x3;
+pub const TAGGED_EVENT_ID_SIGNER_ENGINE: u32 = 0x4;
+pub const TAGGED_EVENT_ID_TEST: u32 = 0x32;
+
+// MR index the event will be measured into
+pub const MR_INDEX_SIGNER_ENGINE: u32 = 0x1;
+pub const MR_INDEX_POLICY: u32 = 0x3;
+pub const MR_INDEX_ROOT_CA: u32 = 0x3;
+pub const MR_INDEX_ENGINE: u32 = 0x4;
+pub const MR_INDEX_TEST_FEATURE: u32 = 0x3;
+
 static CCEL: Once<Ccel> = Once::new();
 
 pub struct TaggedEvent {
@@ -90,6 +104,7 @@ fn get_ccel() -> Option<&'static Ccel> {
 }
 
 pub fn write_tagged_event_log(
+    mr_index: u32,
     event_log: &mut [u8],
     tagged_event_id: u32,
     tagged_event_data: &[u8],
@@ -101,7 +116,7 @@ pub fn write_tagged_event_log(
     extend_rtmr(&digest, 3)?;
 
     let event_header = CcEventHeader {
-        mr_index: 3,
+        mr_index,
         event_type: EV_EVENT_TAG,
         digest: TpmlDigestValues {
             count: 1,
