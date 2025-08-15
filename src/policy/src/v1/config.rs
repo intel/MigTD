@@ -381,7 +381,7 @@ mod test {
         use super::*;
         use serde_json;
 
-        let result = serde_json::from_str::<MigPolicy>(include_str!("../test/policy.json"));
+        let result = serde_json::from_str::<MigPolicy>(include_str!("../../test/policy.json"));
         assert!(result.is_ok());
     }
 
@@ -391,7 +391,7 @@ mod test {
         use serde_json;
 
         let result =
-            serde_json::from_str::<MigPolicy>(include_str!("../test/policy_invalid_guid.json"));
+            serde_json::from_str::<MigPolicy>(include_str!("../../test/policy_invalid_guid.json"));
         assert!(result.is_err());
     }
 
@@ -400,7 +400,7 @@ mod test {
         use super::*;
         use serde_json;
 
-        let result = serde_json::from_str::<MigPolicy>(include_str!("../test/policy_005.json"));
+        let result = serde_json::from_str::<MigPolicy>(include_str!("../../test/policy_005.json"));
         assert!(result.is_err());
     }
 
