@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use crate::config;
 use anyhow::{Ok, Result};
 use clap::{Args, ValueEnum};
 use lazy_static::lazy_static;
@@ -11,11 +12,11 @@ use std::{
 };
 use xshell::{cmd, Shell};
 
-use crate::config;
-
 const MIGTD_DEFAULT_FEATURES: &str = "stack-guard,virtio-vsock";
 const MIGTD_KVM_FEATURES: &str = MIGTD_DEFAULT_FEATURES;
-const DEFAULT_IMAGE_NAME: &str = "migtd.bin";
+const DEFAULT_TDVF_IMAGE_NAME: &str = "migtd.bin";
+const DEFAULT_IGVM_IMAGE_NAME: &str = "migtd.igvm";
+const DEFAULT_IMAGE_FORMAT: &str = "tdvf";
 
 lazy_static! {
     static ref PROJECT_ROOT: &'static Path =
@@ -60,6 +61,9 @@ pub(crate) struct BuildArgs {
     /// Path of the output MigTD image
     #[clap(short, long)]
     output: Option<PathBuf>,
+    /// Image format of the MigTD file
+    #[clap(long)]
+    image_format: Option<String>,
     /// Path of the configuration file for td-shim memory layout
     #[clap(long)]
     shim_layout: Option<PathBuf>,
@@ -122,7 +126,9 @@ impl BuildArgs {
         let (reset_vector, shim) = self.build_shim()?;
         let migtd = self.build_migtd()?;
         let bin = self.build_final(reset_vector.as_path(), shim.as_path(), migtd.as_path())?;
-        self.enroll(bin.as_path())?;
+        if self.image_format != Some(String::from("igvm")) {
+            self.enroll(bin.as_path())?;
+        }
 
         Ok(bin)
     }
@@ -133,7 +139,7 @@ impl BuildArgs {
         let sh = Shell::new()?;
         sh.change_dir(SHIM_FOLDER.as_path());
         cmd!(sh, "cargo build -p td-shim --target x86_64-unknown-none --features=main,tdx --no-default-features --release")
-			.run()?;
+            .run()?;
 
         let shim_output = SHIM_FOLDER.join("target/x86_64-unknown-none/release");
 
@@ -159,7 +165,7 @@ impl BuildArgs {
                     .unwrap(),
             ])
             .run()?;
-        cmd!(sh, "cargo run -- -t image")
+        let mut cmd = cmd!(sh, "cargo run -- -t image")
             .arg(image_config.to_str().unwrap())
             .args([
                 "-o",
@@ -167,8 +173,14 @@ impl BuildArgs {
                     .join("td-layout/src/build_time.rs")
                     .to_str()
                     .unwrap(),
-            ])
-            .run()?;
+            ]);
+
+        if self.image_format == Some(String::from("igvm")) {
+            let metadata = self.metadata()?;
+            cmd = cmd.args(["-m", metadata.to_str().unwrap()]);
+        }
+
+        cmd.run()?;
         Ok(())
     }
 
@@ -212,6 +224,7 @@ impl BuildArgs {
         .args(&[shim])
         .args(&["-p", migtd.to_str().unwrap()])
         .args(&["-o", self.output()?.to_str().unwrap()])
+        .args(&["-i", self.image_format()])
         .args(&["-m", self.metadata()?.to_str().unwrap()])
         .run()?;
 
@@ -294,10 +307,15 @@ impl BuildArgs {
     }
 
     fn output(&self) -> Result<PathBuf> {
+        let default_image_name = match self.image_format.as_deref() {
+            Some("igvm") => DEFAULT_IGVM_IMAGE_NAME,
+            _ => DEFAULT_TDVF_IMAGE_NAME,
+        };
+
         let path = self.output.clone().unwrap_or(
             DEFAULT_OUTPUT
                 .join(self.profile_path())
-                .join(DEFAULT_IMAGE_NAME),
+                .join(default_image_name),
         );
 
         // Get the absolute path of the target file
@@ -307,6 +325,10 @@ impl BuildArgs {
             env::current_dir()?.join(path)
         };
         Ok(absolute)
+    }
+
+    fn image_format(&self) -> &str {
+        self.image_format.as_deref().unwrap_or(DEFAULT_IMAGE_FORMAT)
     }
 
     fn policy(&self) -> Result<PathBuf> {
