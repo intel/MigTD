@@ -34,6 +34,8 @@ struct Config {
 
 fn main() {
     let config = Config::parse();
+    let imagename = config.image.clone();
+    let mut igvmformat = false;
 
     let image = File::open(config.image).unwrap_or_else(|e| {
         eprintln!("Failed to open MigTD image: {}", e);
@@ -44,6 +46,15 @@ fn main() {
         exit(1);
     });
 
+    assert_eq!(
+        imagename.contains(".igvm") || imagename.contains(".bin"),
+        true
+    );
+
+    if imagename.contains(".igvm") {
+        igvmformat = true;
+    }
+
     let servtd_attr = config.servtd_attr.unwrap_or(0);
 
     let servtd_info_hash = calculate_servtd_info_hash(
@@ -51,6 +62,7 @@ fn main() {
         image,
         config.test_disable_ra_and_accept_all,
         servtd_attr,
+        igvmformat,
     )
     .unwrap_or_else(|e| {
         eprintln!("Failed to calculate hash: {:?}", e);
