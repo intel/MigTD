@@ -70,7 +70,7 @@ mod attest_lib_binding {
         /// @param p_quote_collateral [in] quote collateral that get from PCS by get_collateral
         /// @param root_pub_key [in] pointer to Intel Root Public Key
         /// @param root_pub_key_size [in] length of Intel Root Public Key(in bytes)
-        /// @param p_tdx_report_verify [in, out] pointer to the output buffer for tdx_report
+        /// @param p_tdx_report_verify [in, out] pointer to the output buffer for tdx_report, with struct servtd_tdx_quote_suppl_data.
         /// @param p_tdx_report_verify_size [in, out], out_size should be = TDX_REPORT_SIZE
         ///
         /// @return Status code of the operation, one of:
