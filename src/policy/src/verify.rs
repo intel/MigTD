@@ -18,6 +18,7 @@ use crate::{
     format_bytes_hex, MigTdInfo, PlatformInfo, Policy, PolicyError, QeInfo,
 };
 
+// The REPORT_DATA_SIZE should match the sizeof(servtd_tdx_quote_suppl_data).
 const REPORT_DATA_SIZE: usize = 734;
 const MAX_RTMR_INDEX: usize = 3;
 const EV_EVENT_TAG: u32 = 0x00000006;
@@ -66,31 +67,32 @@ struct Report<'a> {
 }
 
 impl<'a> Report<'a> {
-    const R_MRSEAM: Range<usize> = 16..64;
-    const R_MRSEAMSIGNER: Range<usize> = 64..112;
-    const R_ATTR_SEAM: Range<usize> = 112..120;
-    const R_ATTR_TD: Range<usize> = 120..128;
-    const R_XFAM: Range<usize> = 128..136;
-    const R_MRTD: Range<usize> = 136..184;
-    const R_MRCONFIGID: Range<usize> = 184..232;
-    const R_MROWNER: Range<usize> = 232..280;
-    const R_MROWNERCONFIG: Range<usize> = 280..328;
-    const R_RTMR0: Range<usize> = 328..376;
-    const R_RTMR1: Range<usize> = 376..424;
-    const R_RTMR2: Range<usize> = 424..472;
-    const R_RTMR3: Range<usize> = 472..520;
-    const R_FMSPC: Range<usize> = 584..590;
-    const R_TDX_TCB_COMPONENTS: Range<usize> = 590..606;
-    const R_PCE_SVN: Range<usize> = 606..608;
-    const R_SGX_TCB_COMPONENTS: Range<usize> = 608..624;
+    // The following definition should match struct servtd_tdx_quote_suppl_data.
+    const R_TDX_MODULE_MRSEAM: Range<usize> = 16..64;
+    const R_TDX_MODULE_MRSEAMSIGNER: Range<usize> = 64..112;
+    const R_TDX_MODULE_ATTR_SEAM: Range<usize> = 112..120;
+    const R_MIGTD_ATTR_TD: Range<usize> = 120..128;
+    const R_MIGTD_XFAM: Range<usize> = 128..136;
+    const R_MIGTD_MRTD: Range<usize> = 136..184;
+    const R_MIGTD_MRCONFIGID: Range<usize> = 184..232;
+    const R_MIGTD_MROWNER: Range<usize> = 232..280;
+    const R_MIGTD_MROWNERCONFIG: Range<usize> = 280..328;
+    const R_MIGTD_RTMR0: Range<usize> = 328..376;
+    const R_MIGTD_RTMR1: Range<usize> = 376..424;
+    const R_MIGTD_RTMR2: Range<usize> = 424..472;
+    const R_MIGTD_RTMR3: Range<usize> = 472..520;
+    const R_PLATFORM_FMSPC: Range<usize> = 584..590;
+    const R_PLATFORM_TDX_TCB_COMPONENTS: Range<usize> = 590..606;
+    const R_PLATFORM_PCE_SVN: Range<usize> = 606..608;
+    const R_PLATFORM_SGX_TCB_COMPONENTS: Range<usize> = 608..624;
     const R_TDX_MODULE_MAJOR_VER: Range<usize> = 624..625;
     const R_TDX_MODULE_SVN: Range<usize> = 625..626;
-    const R_MISC_SELECT: Range<usize> = 626..630;
-    const R_ATTRIBUTES: Range<usize> = 634..650;
-    const R_MRENCLAVE: Range<usize> = 666..698;
-    const R_MRSIGNER: Range<usize> = 698..730;
-    const R_ISV_PRO_ID: Range<usize> = 730..732;
-    const R_ISV_SVN: Range<usize> = 732..734;
+    const R_QE_MISC_SELECT: Range<usize> = 626..630;
+    const R_QE_ATTRIBUTES: Range<usize> = 634..650;
+    const R_QE_MRENCLAVE: Range<usize> = 666..698;
+    const R_QE_MRSIGNER: Range<usize> = 698..730;
+    const R_QE_ISV_PRO_ID: Range<usize> = 730..732;
+    const R_QE_ISV_SVN: Range<usize> = 732..734;
 
     pub fn new(report: &'a [u8]) -> Result<Self, PolicyError> {
         if report.len() != REPORT_DATA_SIZE {
@@ -98,24 +100,27 @@ impl<'a> Report<'a> {
         }
 
         let mut platform_info = BTreeMap::new();
-        platform_info.insert(PlatformInfoProperty::Fmspc, &report[Self::R_FMSPC]);
+        platform_info.insert(PlatformInfoProperty::Fmspc, &report[Self::R_PLATFORM_FMSPC]);
         platform_info.insert(
             PlatformInfoProperty::SgxTcbComponents,
-            &report[Self::R_SGX_TCB_COMPONENTS],
+            &report[Self::R_PLATFORM_SGX_TCB_COMPONENTS],
         );
-        platform_info.insert(PlatformInfoProperty::PceSvn, &report[Self::R_PCE_SVN]);
+        platform_info.insert(
+            PlatformInfoProperty::PceSvn,
+            &report[Self::R_PLATFORM_PCE_SVN],
+        );
         platform_info.insert(
             PlatformInfoProperty::TdxTcbComponents,
-            &report[Self::R_TDX_TCB_COMPONENTS],
+            &report[Self::R_PLATFORM_TDX_TCB_COMPONENTS],
         );
 
         let mut qe_info = BTreeMap::new();
-        qe_info.insert(QeInfoProperty::MiscSelect, &report[Self::R_MISC_SELECT]);
-        qe_info.insert(QeInfoProperty::Attributes, &report[Self::R_ATTRIBUTES]);
-        qe_info.insert(QeInfoProperty::MrEnclave, &report[Self::R_MRENCLAVE]);
-        qe_info.insert(QeInfoProperty::MrSigner, &report[Self::R_MRSIGNER]);
-        qe_info.insert(QeInfoProperty::IsvProID, &report[Self::R_ISV_PRO_ID]);
-        qe_info.insert(QeInfoProperty::IsvSvn, &report[Self::R_ISV_SVN]);
+        qe_info.insert(QeInfoProperty::MiscSelect, &report[Self::R_QE_MISC_SELECT]);
+        qe_info.insert(QeInfoProperty::Attributes, &report[Self::R_QE_ATTRIBUTES]);
+        qe_info.insert(QeInfoProperty::MrEnclave, &report[Self::R_QE_MRENCLAVE]);
+        qe_info.insert(QeInfoProperty::MrSigner, &report[Self::R_QE_MRSIGNER]);
+        qe_info.insert(QeInfoProperty::IsvProID, &report[Self::R_QE_ISV_PRO_ID]);
+        qe_info.insert(QeInfoProperty::IsvSvn, &report[Self::R_QE_ISV_SVN]);
 
         let mut tdx_module_info = BTreeMap::new();
         tdx_module_info.insert(
@@ -126,30 +131,39 @@ impl<'a> Report<'a> {
             TdxModuleInfoProperty::TdxModuleSvn,
             &report[Self::R_TDX_MODULE_SVN],
         );
-        tdx_module_info.insert(TdxModuleInfoProperty::MrSeam, &report[Self::R_MRSEAM]);
+        tdx_module_info.insert(
+            TdxModuleInfoProperty::MrSeam,
+            &report[Self::R_TDX_MODULE_MRSEAM],
+        );
         tdx_module_info.insert(
             TdxModuleInfoProperty::MrSignerSeam,
-            &report[Self::R_MRSEAMSIGNER],
+            &report[Self::R_TDX_MODULE_MRSEAMSIGNER],
         );
         tdx_module_info.insert(
             TdxModuleInfoProperty::Attributes,
-            &report[Self::R_ATTR_SEAM],
+            &report[Self::R_TDX_MODULE_ATTR_SEAM],
         );
 
         let mut migtd_info = BTreeMap::new();
-        migtd_info.insert(MigTdInfoProperty::Attributes, &report[Self::R_ATTR_TD]);
-        migtd_info.insert(MigTdInfoProperty::Xfam, &report[Self::R_XFAM]);
-        migtd_info.insert(MigTdInfoProperty::MrTd, &report[Self::R_MRTD]);
-        migtd_info.insert(MigTdInfoProperty::MrConfigId, &report[Self::R_MRCONFIGID]);
-        migtd_info.insert(MigTdInfoProperty::MrOwner, &report[Self::R_MROWNER]);
+        migtd_info.insert(
+            MigTdInfoProperty::Attributes,
+            &report[Self::R_MIGTD_ATTR_TD],
+        );
+        migtd_info.insert(MigTdInfoProperty::Xfam, &report[Self::R_MIGTD_XFAM]);
+        migtd_info.insert(MigTdInfoProperty::MrTd, &report[Self::R_MIGTD_MRTD]);
+        migtd_info.insert(
+            MigTdInfoProperty::MrConfigId,
+            &report[Self::R_MIGTD_MRCONFIGID],
+        );
+        migtd_info.insert(MigTdInfoProperty::MrOwner, &report[Self::R_MIGTD_MROWNER]);
         migtd_info.insert(
             MigTdInfoProperty::MrOwnerConfig,
-            &report[Self::R_MROWNERCONFIG],
+            &report[Self::R_MIGTD_MROWNERCONFIG],
         );
-        migtd_info.insert(MigTdInfoProperty::Rtmr0, &report[Self::R_RTMR0]);
-        migtd_info.insert(MigTdInfoProperty::Rtmr1, &report[Self::R_RTMR1]);
-        migtd_info.insert(MigTdInfoProperty::Rtmr2, &report[Self::R_RTMR2]);
-        migtd_info.insert(MigTdInfoProperty::Rtmr3, &report[Self::R_RTMR3]);
+        migtd_info.insert(MigTdInfoProperty::Rtmr0, &report[Self::R_MIGTD_RTMR0]);
+        migtd_info.insert(MigTdInfoProperty::Rtmr1, &report[Self::R_MIGTD_RTMR1]);
+        migtd_info.insert(MigTdInfoProperty::Rtmr2, &report[Self::R_MIGTD_RTMR2]);
+        migtd_info.insert(MigTdInfoProperty::Rtmr3, &report[Self::R_MIGTD_RTMR3]);
 
         Ok(Report {
             platform_info,
@@ -807,7 +821,7 @@ mod tests {
 
         // Only same platform is allowed
         let mut report_peer = template.to_vec();
-        report_peer[Report::R_FMSPC].copy_from_slice(&[0x20, 0xC0, 0x6F, 0, 0, 0]);
+        report_peer[Report::R_PLATFORM_FMSPC].copy_from_slice(&[0x20, 0xC0, 0x6F, 0, 0, 0]);
 
         let verify_result = verify_policy(
             true,
@@ -828,7 +842,7 @@ mod tests {
         assert!(verify_result.is_ok());
 
         let mut report_peer = template.to_vec();
-        report_peer[Report::R_FMSPC].copy_from_slice(&[0x30, 0x81, 0x6F, 0, 0, 0]);
+        report_peer[Report::R_PLATFORM_FMSPC].copy_from_slice(&[0x30, 0x81, 0x6F, 0, 0, 0]);
 
         let verify_result = verify_policy(
             true,
@@ -846,7 +860,7 @@ mod tests {
         // peer's tdx tcb level lower than reference
         let mut report_peer = template.to_vec();
         let low_tdx_tcb = &[0u8; 16];
-        report_peer[Report::R_TDX_TCB_COMPONENTS].copy_from_slice(low_tdx_tcb);
+        report_peer[Report::R_PLATFORM_TDX_TCB_COMPONENTS].copy_from_slice(low_tdx_tcb);
 
         let verify_result = verify_policy(
             true,
@@ -863,7 +877,7 @@ mod tests {
 
         // dst's tdx tcb level is higher than reference
         let high_tdx_tcb = &[0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        report_peer[Report::R_TDX_TCB_COMPONENTS].copy_from_slice(high_tdx_tcb);
+        report_peer[Report::R_PLATFORM_TDX_TCB_COMPONENTS].copy_from_slice(high_tdx_tcb);
 
         let verify_result = verify_policy(
             true,
@@ -881,8 +895,8 @@ mod tests {
         let mut report_peer = template.to_vec();
 
         // dst's tdx tcb level is higher than self
-        report[Report::R_TDX_TCB_COMPONENTS].copy_from_slice(&[1u8; 16]);
-        report_peer[Report::R_TDX_TCB_COMPONENTS].copy_from_slice(&[2u8; 16]);
+        report[Report::R_PLATFORM_TDX_TCB_COMPONENTS].copy_from_slice(&[1u8; 16]);
+        report_peer[Report::R_PLATFORM_TDX_TCB_COMPONENTS].copy_from_slice(&[2u8; 16]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -894,8 +908,8 @@ mod tests {
         assert!(verify_result.is_ok());
 
         // dst's svn is smaller than self
-        report[Report::R_TDX_TCB_COMPONENTS].copy_from_slice(&[2u8; 16]);
-        report_peer[Report::R_TDX_TCB_COMPONENTS].copy_from_slice(&[1u8; 16]);
+        report[Report::R_PLATFORM_TDX_TCB_COMPONENTS].copy_from_slice(&[2u8; 16]);
+        report_peer[Report::R_PLATFORM_TDX_TCB_COMPONENTS].copy_from_slice(&[1u8; 16]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -990,7 +1004,7 @@ mod tests {
 
         // Taking exact value as reference: mismatch mrsignerseam
         let mut report_peer = template.to_vec();
-        report_peer[Report::R_MRSEAMSIGNER].copy_from_slice(&[0xfeu8; 48]);
+        report_peer[Report::R_TDX_MODULE_MRSEAMSIGNER].copy_from_slice(&[0xfeu8; 48]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -1006,7 +1020,7 @@ mod tests {
 
         // Taking exact value as reference: mismatch attributes
         let mut report_peer = template.to_vec();
-        report_peer[Report::R_ATTR_SEAM].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
+        report_peer[Report::R_TDX_MODULE_ATTR_SEAM].copy_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -1035,7 +1049,7 @@ mod tests {
         let policy_bytes = include_bytes!("../test/policy_no_tdattr.json");
         let mut report_peer = template.to_vec();
 
-        report_peer[Report::R_ATTR_TD].copy_from_slice(&[1u8; 8]);
+        report_peer[Report::R_MIGTD_ATTR_TD].copy_from_slice(&[1u8; 8]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -1048,7 +1062,7 @@ mod tests {
 
         let policy_bytes = include_bytes!("../test/policy_full1.json");
         // different attributes, not equal
-        report_peer[Report::R_ATTR_TD].copy_from_slice(&[1u8; 8]);
+        report_peer[Report::R_MIGTD_ATTR_TD].copy_from_slice(&[1u8; 8]);
 
         let verify_result = verify_policy(
             true,
@@ -1064,7 +1078,7 @@ mod tests {
         ));
 
         // verify the attributes mask, set masked bits
-        report_peer[Report::R_ATTR_TD].copy_from_slice(&[0, 0, 0, 0x8, 0x1, 0, 0, 0]);
+        report_peer[Report::R_MIGTD_ATTR_TD].copy_from_slice(&[0, 0, 0, 0x8, 0x1, 0, 0, 0]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -1076,7 +1090,7 @@ mod tests {
         assert!(verify_result.is_ok());
 
         // verify the attributes mask, set bits that will not be masked but must be zero
-        report_peer[Report::R_ATTR_TD].copy_from_slice(&[0, 0x1, 0, 0x3, 0, 0, 0, 0]);
+        report_peer[Report::R_MIGTD_ATTR_TD].copy_from_slice(&[0, 0x1, 0, 0x3, 0, 0, 0, 0]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -1089,10 +1103,10 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_ATTR_TD].copy_from_slice(&template[Report::R_ATTR_TD]);
+        report_peer[Report::R_MIGTD_ATTR_TD].copy_from_slice(&template[Report::R_MIGTD_ATTR_TD]);
 
         // different xfam, not equal
-        report_peer[Report::R_XFAM].copy_from_slice(&[1u8; 8]);
+        report_peer[Report::R_MIGTD_XFAM].copy_from_slice(&[1u8; 8]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -1107,7 +1121,7 @@ mod tests {
         ));
 
         // verify xfam mask, set masked bits and required bits
-        report_peer[Report::R_XFAM].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]);
+        report_peer[Report::R_MIGTD_XFAM].copy_from_slice(&[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]);
         let verify_result = verify_policy(
             true,
             policy_bytes,
@@ -1119,7 +1133,7 @@ mod tests {
         assert!(verify_result.is_ok());
 
         // verify xfam mask, unset bits that is not masked but required
-        report_peer[Report::R_XFAM].copy_from_slice(&[0x3, 0x08, 0, 0, 0, 0, 0, 0]);
+        report_peer[Report::R_MIGTD_XFAM].copy_from_slice(&[0x3, 0x08, 0, 0, 0, 0, 0, 0]);
 
         let verify_result = verify_policy(
             true,
@@ -1133,10 +1147,10 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_XFAM].copy_from_slice(&template[Report::R_XFAM]);
+        report_peer[Report::R_MIGTD_XFAM].copy_from_slice(&template[Report::R_MIGTD_XFAM]);
 
         // different mrtd, not equal
-        report_peer[Report::R_MRTD].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_MRTD].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
@@ -1150,10 +1164,10 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_MRTD].copy_from_slice(&[0u8; 48]);
+        report_peer[Report::R_MIGTD_MRTD].copy_from_slice(&[0u8; 48]);
 
         // different mrconfig_id, not equal
-        report_peer[Report::R_MRCONFIGID].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_MRCONFIGID].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
@@ -1167,10 +1181,11 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_MRCONFIGID].copy_from_slice(&template[Report::R_MRCONFIGID]);
+        report_peer[Report::R_MIGTD_MRCONFIGID]
+            .copy_from_slice(&template[Report::R_MIGTD_MRCONFIGID]);
 
         // different mrowner, not equal
-        report_peer[Report::R_MROWNER].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_MROWNER].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
@@ -1184,10 +1199,10 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_MROWNER].copy_from_slice(&template[Report::R_MROWNER]);
+        report_peer[Report::R_MIGTD_MROWNER].copy_from_slice(&template[Report::R_MIGTD_MROWNER]);
 
         // different mrownerconfig, not equal
-        report_peer[Report::R_MROWNERCONFIG].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_MROWNERCONFIG].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
@@ -1201,10 +1216,11 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_MROWNERCONFIG].copy_from_slice(&template[Report::R_MROWNERCONFIG]);
+        report_peer[Report::R_MIGTD_MROWNERCONFIG]
+            .copy_from_slice(&template[Report::R_MIGTD_MROWNERCONFIG]);
 
         // different rtmr0, not equal
-        report_peer[Report::R_RTMR0].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_RTMR0].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
@@ -1218,10 +1234,10 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_RTMR0].copy_from_slice(&template[Report::R_RTMR0]);
+        report_peer[Report::R_MIGTD_RTMR0].copy_from_slice(&template[Report::R_MIGTD_RTMR0]);
 
         // different rtmr1, not equal
-        report_peer[Report::R_RTMR1].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_RTMR1].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
@@ -1235,10 +1251,10 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_RTMR1].copy_from_slice(&template[Report::R_RTMR1]);
+        report_peer[Report::R_MIGTD_RTMR1].copy_from_slice(&template[Report::R_MIGTD_RTMR1]);
 
         // different rtmr2, not equal
-        report_peer[Report::R_RTMR2].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_RTMR2].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
@@ -1252,10 +1268,10 @@ mod tests {
             verify_result,
             Err(PolicyError::UnqulifiedMigTdInfo)
         ));
-        report_peer[Report::R_RTMR2].copy_from_slice(&template[Report::R_RTMR2]);
+        report_peer[Report::R_MIGTD_RTMR2].copy_from_slice(&template[Report::R_MIGTD_RTMR2]);
 
         // different rtmr3, not equal
-        report_peer[Report::R_RTMR3].copy_from_slice(&[1u8; 48]);
+        report_peer[Report::R_MIGTD_RTMR3].copy_from_slice(&[1u8; 48]);
 
         let verify_result = verify_policy(
             true,
