@@ -36,6 +36,7 @@ pub fn calculate_servtd_info_hash(
     mut image: File,
     is_ra_disabled: bool,
     servtd_attr: u64,
+    igvmformat: bool,
 ) -> Result<Vec<u8>, Error> {
     // Initialize the configurable fields of TD info structure.
     let manifest = serde_json::from_slice::<Manifest>(&manifest)?;
@@ -48,14 +49,23 @@ pub fn calculate_servtd_info_hash(
         ..Default::default()
     };
 
-    // Calculate the MRTD with MigTD image
-    td_info.build_mrtd(&mut image, MIGTD_IMAGE_SIZE);
+    if igvmformat {
+        // Calculate the MRTD with MigTD image
+        td_info.build_igvmmrtd(&mut image);
+    } else {
+        // Calculate the MRTD with MigTD image
+        td_info.build_mrtd(&mut image, MIGTD_IMAGE_SIZE);
+    }
     // Calculate RTMR0 and RTMR1
     td_info.build_rtmr_with_seperator(0);
     // Calculate RTMR2 with CFV
     let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
     image.seek(SeekFrom::Start(0))?;
-    image.read(&mut cfv)?;
+    if igvmformat {
+        cfv = td_info.read_igvmcfvdata(&mut image);
+    } else {
+        image.read(&mut cfv)?;
+    }
     td_info
         .rtmr2
         .copy_from_slice(rtmr2(&cfv, is_ra_disabled)?.as_slice());

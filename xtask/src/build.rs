@@ -126,9 +126,7 @@ impl BuildArgs {
         let (reset_vector, shim) = self.build_shim()?;
         let migtd = self.build_migtd()?;
         let bin = self.build_final(reset_vector.as_path(), shim.as_path(), migtd.as_path())?;
-        if self.image_format != Some(String::from("igvm")) {
-            self.enroll(bin.as_path())?;
-        }
+        self.enroll(bin.as_path())?;
 
         Ok(bin)
     }
