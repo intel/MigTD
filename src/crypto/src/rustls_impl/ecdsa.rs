@@ -11,6 +11,12 @@ use zeroize::Zeroize;
 
 use crate::{Error, Result};
 
+// Re-export ring's ECDSA verification algorithms for convenient access
+pub use ring::signature::{
+    ECDSA_P256_SHA256_ASN1, ECDSA_P256_SHA256_FIXED, ECDSA_P256_SHA384_ASN1,
+    ECDSA_P384_SHA256_ASN1, ECDSA_P384_SHA384_ASN1, ECDSA_P384_SHA384_FIXED,
+};
+
 pub struct EcdsaPk {
     pk: Document,
 }
@@ -69,6 +75,16 @@ impl Drop for EcdsaPk {
 
 pub fn ecdsa_verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<()> {
     let pk = UnparsedPublicKey::new(&signature::ECDSA_P384_SHA384_ASN1, public_key);
+    pk.verify(data, signature).map_err(|_e| Error::EcdsaVerify)
+}
+
+pub fn ecdsa_verify_with_algorithm(
+    public_key: &[u8],
+    data: &[u8],
+    signature: &[u8],
+    algorithm: &'static dyn signature::VerificationAlgorithm,
+) -> Result<()> {
+    let pk = UnparsedPublicKey::new(algorithm, public_key);
     pk.verify(data, signature).map_err(|_e| Error::EcdsaVerify)
 }
 
