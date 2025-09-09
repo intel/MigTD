@@ -156,7 +156,6 @@ version = "0.1.0"
 dependencies = [
  "crypto",
  "der",
- "policy",
  "spin 0.9.8",
  "td-payload",
  "tdx-tdcall",

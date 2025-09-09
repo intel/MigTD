@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 crypto = { path = "../crypto" }
 der = { version = "0.7.9", features = ["oid", "alloc", "derive"] }
-policy = {path = "../policy"}
 spin = "0.9.2"
 tdx-tdcall = { path = "../../deps/td-shim/tdx-tdcall"}
 td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
@@ -16,3 +15,4 @@ td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
 [features]
 default = []
 test = []
+attest-lib-ext = []

@@ -37,6 +37,28 @@ pub(crate) enum AttestLibError {
     InvalidRtmrIndex = 0x000b,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct QveCollateral {
+    pub major_version: u16,
+    pub minor_version: u16,
+    pub tee_type: u32,
+    pub pck_crl_issuer_chain: *const ::core::ffi::c_char,
+    pub pck_crl_issuer_chain_size: u32,
+    pub root_ca_crl: *const ::core::ffi::c_char,
+    pub root_ca_crl_size: u32,
+    pub pck_crl: *const ::core::ffi::c_char,
+    pub pck_crl_size: u32,
+    pub tcb_info_issuer_chain: *const ::core::ffi::c_char,
+    pub tcb_info_issuer_chain_size: u32,
+    pub tcb_info: *const ::core::ffi::c_char,
+    pub tcb_info_size: u32,
+    pub qe_identity_issuer_chain: *const ::core::ffi::c_char,
+    pub qe_identity_issuer_chain_size: u32,
+    pub qe_identity: *const ::core::ffi::c_char,
+    pub qe_identity_size: u32,
+}
+
 #[cfg(not(feature = "test"))]
 mod attest_lib_binding {
     use super::*;
@@ -85,6 +107,17 @@ mod attest_lib_binding {
             p_tdx_report_verify_size: *mut u32,
         ) -> AttestLibError;
 
+        #[cfg(feature = "attest-lib-ext")]
+        pub fn verify_quote_integrity_ex(
+            p_quote: *const ::core::ffi::c_void,
+            quote_size: u32,
+            root_pub_key: *const ::core::ffi::c_void,
+            root_pub_key_size: u32,
+            p_collateral: *const QveCollateral,
+            p_tdx_report_verify: *mut ::core::ffi::c_void,
+            p_tdx_report_verify_size: *mut u32,
+        ) -> AttestLibError;
+
         /// Allocate heap space for MigTD Attestation library internal use,
         /// Must be called only once by MigTD before other attestation lib APIs
         ///
@@ -124,6 +157,20 @@ mod null_binding {
         _root_pub_key_size: u32,
         _p_tdx_report_verify: *mut ::core::ffi::c_void,
         _p_tdx_report_verify_size: *mut u32,
+    ) -> AttestLibError {
+        AttestLibError::Success
+    }
+
+    #[cfg(feature = "attest-lib-ext")]
+    #[no_mangle]
+    pub unsafe extern "C" fn verify_quote_integrity_ex(
+        p_quote: *const ::core::ffi::c_void,
+        quote_size: u32,
+        root_pub_key: *const ::core::ffi::c_void,
+        root_pub_key_size: u32,
+        p_collateral: *const QveCollateral,
+        p_tdx_report_verify: *mut ::core::ffi::c_void,
+        p_tdx_report_verify_size: *mut u32,
     ) -> AttestLibError {
         AttestLibError::Success
     }
