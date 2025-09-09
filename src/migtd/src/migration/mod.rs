@@ -162,9 +162,10 @@ impl From<VirtioSerialError> for MigrationResult {
 impl From<RatlsError> for MigrationResult {
     fn from(e: RatlsError) -> Self {
         match e {
-            RatlsError::Crypto(_) | RatlsError::X509(_) | RatlsError::InvalidEventlog => {
-                MigrationResult::SecureSessionError
-            }
+            RatlsError::Crypto(_)
+            | RatlsError::X509(_)
+            | RatlsError::InvalidEventlog
+            | RatlsError::InvalidPolicy => MigrationResult::SecureSessionError,
             RatlsError::TdxModule(_) => MigrationResult::TdxModuleError,
             RatlsError::GetQuote | RatlsError::VerifyQuote => {
                 MigrationResult::MutualAttestationError
