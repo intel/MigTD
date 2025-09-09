@@ -23,7 +23,16 @@ const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Event IDs that will be used to tag the event log
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
+#[cfg(feature = "policy_v2")]
+pub const TAGGED_EVENT_ID_SIGNER_POLICY: u32 = 0x3;
 const TAGGED_EVENT_ID_TEST: u32 = 0x32;
+
+// MR index the event will be measured into
+#[cfg(feature = "policy_v2")]
+const MR_INDEX_SIGNER_POLICY: u32 = 0x2;
+const MR_INDEX_POLICY: u32 = 0x3;
+const MR_INDEX_ROOT_CA: u32 = 0x3;
+const MR_INDEX_TEST_FEATURE: u32 = 0x3;
 
 #[no_mangle]
 pub extern "C" fn main() {
@@ -42,6 +51,8 @@ pub fn runtime_main() {
 
     // Measure the input data
     do_measurements();
+
+    initialize_policy();
 
     migration::event::register_callback();
 
@@ -70,6 +81,9 @@ fn do_measurements() {
         return;
     }
 
+    #[cfg(feature = "policy_v2")]
+    get_policy_signer_and_measure(event_log);
+
     // Get migration td policy from CFV and measure it into RMTR
     get_policy_and_measure(event_log);
 
@@ -81,6 +95,7 @@ fn measure_test_feature(event_log: &mut [u8]) {
     // Measure and extend the migtd test feature to RTMR
     event_log::write_tagged_event_log(
         event_log,
+        MR_INDEX_TEST_FEATURE,
         TAGGED_EVENT_ID_TEST,
         TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     )
@@ -92,18 +107,53 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
     let policy = config::get_policy().expect("Fail to get policy from CFV\n");
 
     // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_POLICY, policy)
+    event_log::write_tagged_event_log(event_log, MR_INDEX_POLICY, TAGGED_EVENT_ID_POLICY, policy)
         .expect("Failed to log migration policy");
+}
+
+#[cfg(feature = "policy_v2")]
+fn get_policy_signer_and_measure(event_log: &mut [u8]) {
+    // Read policy issuer chain from CFV
+    let policy =
+        config::get_policy_issuer_chain().expect("Fail to get policy issuer chain from CFV\n");
+
+    // Measure and extend the policy issuer chain to RTMR
+    event_log::write_tagged_event_log(
+        event_log,
+        MR_INDEX_SIGNER_POLICY,
+        TAGGED_EVENT_ID_SIGNER_POLICY,
+        policy,
+    )
+    .expect("Failed to log policy issuer chain");
 }
 
 fn get_ca_and_measure(event_log: &mut [u8]) {
     let root_ca = config::get_root_ca().expect("Fail to get root certificate from CFV\n");
 
     // Measure and extend the root certificate to RTMR
-    event_log::write_tagged_event_log(event_log, TAGGED_EVENT_ID_ROOT_CA, root_ca)
-        .expect("Failed to log SGX root CA\n");
+    event_log::write_tagged_event_log(
+        event_log,
+        MR_INDEX_ROOT_CA,
+        TAGGED_EVENT_ID_ROOT_CA,
+        root_ca,
+    )
+    .expect("Failed to log SGX root CA\n");
 
     attestation::root_ca::set_ca(root_ca).expect("Invalid root certificate\n");
+}
+
+fn initialize_policy() {
+    #[cfg(feature = "policy_v2")]
+    {
+        use migtd::mig_policy;
+
+        let policy = config::get_policy().expect("Fail to get policy from CFV\n");
+        let policy_signer =
+            config::get_policy_issuer_chain().expect("Fail to get policy issuer chain from CFV\n");
+        // Initialize and verify the migration policy
+        mig_policy::init_policy(policy, policy_signer)
+            .expect("Failed to initialize migration policy");
+    }
 }
 
 fn handle_pre_mig() {
