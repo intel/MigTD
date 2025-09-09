@@ -30,6 +30,7 @@ const MAX_RTMR_INDEX: usize = 3;
 const EV_EVENT_TAG: u32 = 0x00000006;
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
 const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
+const TAGGED_EVENT_ID_POLICY_SIGNER: u32 = 0x3;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -331,6 +332,7 @@ enum EventName {
     MigTdCoreSvn,
     MigTdPolicy,
     SgxRootKey,
+    MigTdPolicySigner,
     Unknown,
 }
 
@@ -384,6 +386,11 @@ pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEve
                     map.insert(EventName::MigTdPolicy, CcEvent::new(event_header, None));
                 } else if tag_id == TAGGED_EVENT_ID_ROOT_CA {
                     map.insert(EventName::SgxRootKey, CcEvent::new(event_header, None));
+                } else if tag_id == TAGGED_EVENT_ID_POLICY_SIGNER {
+                    map.insert(
+                        EventName::MigTdPolicySigner,
+                        CcEvent::new(event_header, None),
+                    );
                 }
             }
             _ => {}
