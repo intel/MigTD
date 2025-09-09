@@ -5,6 +5,8 @@
 #[cfg(feature = "vmcall-raw")]
 use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
 use alloc::collections::BTreeSet;
+#[cfg(feature = "policy_v2")]
+use async_io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "vmcall-raw")]
 use core::sync::atomic::AtomicBool;
 #[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
@@ -420,6 +422,159 @@ pub fn report_status(status: u8, request_id: u64) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "policy_v2")]
+#[repr(C)]
+struct MigtdMessageHeader {
+    pub r#type: u8,
+    pub reserved: [u8; 3],
+    pub length: u32, // Length of the command data
+}
+
+#[cfg(feature = "policy_v2")]
+impl MigtdMessageHeader {
+    const EXCHANGE_POLICY_TYPE: u8 = 1;
+    const START_SESSION_TYPE: u8 = 2;
+
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, size_of::<Self>()) }
+    }
+
+    pub fn read_from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < size_of::<Self>() {
+            return None;
+        }
+        let header = MigtdMessageHeader {
+            r#type: bytes[0],
+            reserved: bytes[1..4].try_into().unwrap(),
+            length: u32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+        };
+        Some(header)
+    }
+}
+
+#[cfg(feature = "policy_v2")]
+async fn send_policy<T: AsyncRead + AsyncWrite + Unpin>(
+    policy: &[u8],
+    transport: &mut T,
+) -> Result<()> {
+    let header = MigtdMessageHeader {
+        r#type: MigtdMessageHeader::EXCHANGE_POLICY_TYPE,
+        reserved: [0u8; 3],
+        length: policy.len() as u32,
+    };
+
+    let mut sent = 0;
+    while sent < header.as_bytes().len() {
+        let n = transport
+            .write(header.as_bytes())
+            .await
+            .map_err(|_| MigrationResult::NetworkError)?;
+        sent += n;
+    }
+
+    sent = 0;
+    while sent < policy.len() {
+        let n = transport
+            .write(&policy[sent..])
+            .await
+            .map_err(|_| MigrationResult::NetworkError)?;
+        sent += n;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "policy_v2")]
+async fn receive_policy<T: AsyncRead + AsyncWrite + Unpin>(transport: &mut T) -> Result<Vec<u8>> {
+    let mut header_buffer = [0u8; size_of::<MigtdMessageHeader>()];
+
+    let mut recvd = 0;
+    while recvd < header_buffer.len() {
+        let n = transport
+            .read(&mut header_buffer[recvd..])
+            .await
+            .map_err(|_| MigrationResult::NetworkError)?;
+        recvd += n;
+    }
+
+    let header = MigtdMessageHeader::read_from_bytes(&header_buffer)
+        .ok_or(MigrationResult::InvalidParameter)?;
+    if header.r#type != MigtdMessageHeader::EXCHANGE_POLICY_TYPE {
+        return Err(MigrationResult::InvalidParameter);
+    }
+
+    let policy_size = header.length as usize;
+    let mut policy = vec![0u8; policy_size];
+    recvd = 0;
+    while recvd < policy_size {
+        let n = transport
+            .read(&mut policy[recvd..])
+            .await
+            .map_err(|_| MigrationResult::NetworkError)?;
+        recvd += n;
+    }
+    Ok(policy)
+}
+
+#[cfg(feature = "policy_v2")]
+async fn send_start_session_command<T: AsyncRead + AsyncWrite + Unpin>(
+    transport: &mut T,
+) -> Result<()> {
+    let header = MigtdMessageHeader {
+        r#type: MigtdMessageHeader::START_SESSION_TYPE,
+        reserved: [0u8; 3],
+        length: 0,
+    };
+
+    let mut sent = 0;
+    while sent < header.as_bytes().len() {
+        let n = transport
+            .write(header.as_bytes())
+            .await
+            .map_err(|_| MigrationResult::NetworkError)?;
+        sent += n;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "policy_v2")]
+async fn receive_start_session_command<T: AsyncRead + AsyncWrite + Unpin>(
+    transport: &mut T,
+) -> Result<()> {
+    let mut header_buffer = [0u8; size_of::<MigtdMessageHeader>()];
+
+    let mut recvd = 0;
+    while recvd < header_buffer.len() {
+        let n = transport
+            .read(&mut header_buffer[recvd..])
+            .await
+            .map_err(|_| MigrationResult::NetworkError)?;
+        recvd += n;
+    }
+
+    let command = MigtdMessageHeader::read_from_bytes(&header_buffer)
+        .ok_or(MigrationResult::InvalidParameter)?;
+    if command.r#type != MigtdMessageHeader::START_SESSION_TYPE {
+        return Err(MigrationResult::InvalidParameter);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "policy_v2")]
+async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
+    transport: &mut T,
+) -> Result<Vec<u8>> {
+    use crate::config;
+
+    let policy = config::get_policy().ok_or(MigrationResult::InvalidParameter)?;
+    send_policy(policy, transport).await?;
+    let remote_policy = receive_policy(transport).await?;
+
+    send_start_session_command(transport).await?;
+    receive_start_session_command(transport).await?;
+
+    Ok(remote_policy)
+}
+
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     use crate::driver::ticks::with_timeout;
@@ -427,6 +582,9 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
 
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
+    #[cfg(feature = "policy_v2")]
+    let mut transport;
+    #[cfg(not(feature = "policy_v2"))]
     let transport;
 
     #[cfg(feature = "vmcall-raw")]
@@ -479,11 +637,19 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     let mut remote_information = ExchangeInformation::default();
     let mut exchange_information = exchange_info(&info)?;
 
+    // Exchange policy firstly because of the message size limitation of TLS protocol
+    #[cfg(feature = "policy_v2")]
+    let remote_policy = pre_session_data_exchange(&mut transport).await?;
+
     // Establish TLS layer connection and negotiate the MSK
     if info.is_src() {
         // TLS client
-        let mut ratls_client =
-            ratls::client(transport).map_err(|_| MigrationResult::SecureSessionError)?;
+        let mut ratls_client = ratls::client(
+            transport,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        )
+        .map_err(|_| MigrationResult::SecureSessionError)?;
 
         // MigTD-S send Migration Session Forward key to peer
         with_timeout(
@@ -510,8 +676,12 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             .map_err(|_e| MigrationResult::InvalidParameter)?;
     } else {
         // TLS server
-        let mut ratls_server =
-            ratls::server(transport).map_err(|_| MigrationResult::SecureSessionError)?;
+        let mut ratls_server = ratls::server(
+            transport,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        )
+        .map_err(|_| MigrationResult::SecureSessionError)?;
 
         with_timeout(
             TLS_TIMEOUT,
