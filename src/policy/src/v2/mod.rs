@@ -9,6 +9,8 @@ mod servtd_collateral;
 pub use servtd_collateral::*;
 mod collaterals;
 pub use collaterals::*;
+mod policy;
+pub use policy::*;
 
 // Verify the hash of a specific event in the event log
 fn verify_event_hash(
