@@ -55,7 +55,7 @@ pub(crate) struct BuildArgs {
     /// Path of SGX root certificate used for remote attestation
     #[clap(long)]
     root_ca: Option<PathBuf>,
-    /// Path of MigTD policy file
+    /// Path of MigTD policy file, required if `policy_v2` is set
     #[clap(long)]
     policy: Option<PathBuf>,
     /// Path of the output MigTD image
@@ -76,6 +76,12 @@ pub(crate) struct BuildArgs {
     /// MMIO space layout configuration for migtd
     #[clap(long)]
     mmio_config: Option<PathBuf>,
+    /// Use migration policy v2
+    #[clap(long)]
+    policy_v2: bool,
+    /// Issuer chain of migration policy v2, required if `policy_v2` is set
+    #[clap(long)]
+    policy_issuer_chain: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -122,6 +128,7 @@ impl LogLevel {
 
 impl BuildArgs {
     pub fn build(&self) -> Result<PathBuf> {
+        self.check_arguments()?;
         self.create_mmio_config()?;
         let (reset_vector, shim) = self.build_shim()?;
         let migtd = self.build_migtd()?;
@@ -129,6 +136,22 @@ impl BuildArgs {
         self.enroll(bin.as_path())?;
 
         Ok(bin)
+    }
+
+    fn check_arguments(&self) -> Result<()> {
+        if self.policy_v2 {
+            if self.policy.is_none() {
+                return Err(anyhow::anyhow!(
+                    "policy_v2 is enabled but no policy file is provided"
+                ));
+            }
+            if self.policy_issuer_chain.is_none() {
+                return Err(anyhow::anyhow!(
+                    "policy_v2 is enabled but no policy_issuer_chain file is provided"
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn build_shim(&self) -> Result<(PathBuf, PathBuf)> {
@@ -235,7 +258,7 @@ impl BuildArgs {
         sh.set_var("AR", "llvm-ar");
 
         sh.change_dir(SHIM_FOLDER.as_path());
-        cmd!(
+        let cmd = cmd!(
             sh,
             "cargo run -p td-shim-tools --bin td-shim-enroll --features=enroller"
         )
@@ -246,9 +269,18 @@ impl BuildArgs {
             self.policy()?.to_str().unwrap(),
             "CA437832-4C51-4322-B13D-A21BD0C8FFF6",
             self.root_ca()?.to_str().unwrap(),
-        ])
-        .args(&["-o", bin.to_str().unwrap()])
-        .run()?;
+        ]);
+
+        let cmd = if self.policy_v2 {
+            cmd.args(&[
+                "B3C1DCFE-6BEF-449F-A183-63A84EA1E0B4",
+                self.policy_issuer_chain()?.to_str().unwrap(),
+            ])
+        } else {
+            cmd
+        };
+
+        cmd.args(&["-o", bin.to_str().unwrap()]).run()?;
 
         Ok(())
     }
@@ -282,6 +314,10 @@ impl BuildArgs {
             } else {
                 features.push_str(MIGTD_DEFAULT_FEATURES);
             }
+        }
+
+        if self.policy_v2 {
+            features.push_str(",policy_v2");
         }
 
         if let Some(selected) = &self.features {
@@ -330,7 +366,26 @@ impl BuildArgs {
     }
 
     fn policy(&self) -> Result<PathBuf> {
-        let path = self.policy.as_ref().unwrap_or(&DEFAULT_POLICY);
+        let path = if self.policy_v2 {
+            match &self.policy {
+                Some(path) => path,
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "policy_v2 is enabled but no policy file is provided"
+                    ))
+                }
+            }
+        } else {
+            self.policy.as_ref().unwrap_or(&DEFAULT_POLICY)
+        };
+        fs::canonicalize(path).map_err(|e| e.into())
+    }
+
+    fn policy_issuer_chain(&self) -> Result<PathBuf> {
+        let path = self
+            .policy_issuer_chain
+            .as_ref()
+            .ok_or(anyhow::anyhow!("No policy_issuer_chain file is provided"))?;
         fs::canonicalize(path).map_err(|e| e.into())
     }
 
