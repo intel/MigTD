@@ -25,7 +25,7 @@ lazy_static! {
     pub static ref VMCALL_MIG_CONTEXT_FLAGS: Mutex<BTreeMap<u64, AtomicBool>> =
         Mutex::new(BTreeMap::new());
 }
-const TDX_VMCALL_VMM_SUCCESS: u32 = 1;
+const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
 
 fn push_stream_queues(stream: &VmcallRaw, buf: Vec<u8>) {
     if buf.is_empty() {
@@ -74,19 +74,19 @@ pub async fn vmcall_raw_transport_enqueue(
     stream: &VmcallRaw,
     buf: &[u8],
 ) -> Result<usize, VmcallRawError> {
-    let data_status: u32 = 0;
+    let data_status: u64 = 0;
     let data_length: u32 = buf.len() as u32;
 
-    let data_buffer_size = 4 + 4 + buf.len();
+    let data_buffer_size = 8 + 4 + buf.len();
     let data_buffer_page_count = align_up(data_buffer_size) / PAGE_SIZE;
     let mut data_buffer =
         SharedMemory::new(data_buffer_page_count).ok_or(VmcallRawError::Illegal)?;
 
     let data_buffer = data_buffer.as_mut_bytes();
 
-    data_buffer[0..4].copy_from_slice(&u32::to_le_bytes(data_status));
-    data_buffer[4..8].copy_from_slice(&u32::to_le_bytes(data_length));
-    data_buffer[8..(8 + buf.len())].copy_from_slice(buf);
+    data_buffer[0..8].copy_from_slice(&u64::to_le_bytes(data_status));
+    data_buffer[8..12].copy_from_slice(&u32::to_le_bytes(data_length));
+    data_buffer[12..(12 + buf.len())].copy_from_slice(buf);
     let truncated_buf = &mut data_buffer[..data_buffer_size];
 
     vmcall_service_migtd_send(stream.addr.transport_context(), truncated_buf).await
@@ -133,8 +133,9 @@ async fn vmcall_service_migtd_send(
         }
 
         let (_send_buf, data_status, data_length) = process_buffer(data_buffer);
+        let data_status_bytes = data_status.to_le_bytes();
 
-        if data_status != TDX_VMCALL_VMM_SUCCESS {
+        if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
             return Poll::Pending;
         }
 
@@ -143,13 +144,13 @@ async fn vmcall_service_migtd_send(
     .await
 }
 
-fn process_buffer(buffer: &mut [u8]) -> (&mut [u8], u32, u32) {
-    assert!(buffer.len() >= 8, "Buffer too small!");
+fn process_buffer(buffer: &mut [u8]) -> (&mut [u8], u64, u32) {
+    assert!(buffer.len() >= 12, "Buffer too small!");
 
-    let (header, payload_buffer) = buffer.split_at_mut(8); // Split at 8th byte
+    let (header, payload_buffer) = buffer.split_at_mut(12); // Split at 12th byte
 
-    let data_status = u32::from_le_bytes(header[0..4].try_into().unwrap()); // First 4 bytes
-    let data_length = u32::from_le_bytes(header[4..8].try_into().unwrap()); // Next 4 bytes
+    let data_status = u64::from_le_bytes(header[0..8].try_into().unwrap()); // First 8 bytes
+    let data_length = u32::from_le_bytes(header[8..12].try_into().unwrap()); // Next 4 bytes
 
     (payload_buffer, data_status, data_length)
 }
@@ -174,8 +175,9 @@ async fn vmcall_service_migtd_receive(
         }
 
         let (response_buf, data_status, data_length) = process_buffer(data_buffer);
+        let data_status_bytes = data_status.to_le_bytes();
 
-        if data_status != TDX_VMCALL_VMM_SUCCESS {
+        if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
             return Poll::Pending;
         }
 
