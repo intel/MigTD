@@ -37,7 +37,38 @@ const GSM_FIELD_MAX_EXPORT_VERSION: u64 = 0x2000000100000002;
 const GSM_FIELD_MIN_IMPORT_VERSION: u64 = 0x2000000100000003;
 const GSM_FIELD_MAX_IMPORT_VERSION: u64 = 0x2000000100000004;
 #[cfg(feature = "vmcall-raw")]
-const TDX_VMCALL_VMM_SUCCESS: u32 = 1;
+const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
+
+#[cfg(feature = "vmcall-raw")]
+#[repr(C)]
+struct GhciWaitForRequestResponse {
+    mig_request_id: u64,
+    migration_source: u8,
+    _pad: [u8; 7],
+    target_td_uuid: [u64; 4],
+    binding_handle: u64,
+}
+
+#[cfg(feature = "vmcall-raw")]
+fn parse_uuid(buf: &[u8]) -> [u64; 4] {
+    [
+        u64::from_le_bytes(buf[0..8].try_into().unwrap()),
+        u64::from_le_bytes(buf[8..16].try_into().unwrap()),
+        u64::from_le_bytes(buf[16..24].try_into().unwrap()),
+        u64::from_le_bytes(buf[24..32].try_into().unwrap()),
+    ]
+}
+
+#[cfg(feature = "vmcall-raw")]
+fn parse_ghci_waitforrequest_response(buf: &[u8]) -> GhciWaitForRequestResponse {
+    GhciWaitForRequestResponse {
+        mig_request_id: u64::from_le_bytes(buf[0..8].try_into().unwrap()),
+        migration_source: buf[8],
+        _pad: buf[9..16].try_into().unwrap(),
+        target_td_uuid: parse_uuid(&buf[16..48]),
+        binding_handle: u64::from_le_bytes(buf[48..56].try_into().unwrap()),
+    }
+}
 
 lazy_static! {
     pub static ref REQUESTS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
@@ -126,16 +157,31 @@ pub fn query() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "vmcall-raw")]
+fn process_buffer(buffer: &mut [u8]) -> (u64, u32) {
+    assert!(buffer.len() >= 12, "Buffer too small!");
+    let (header, _payload_buffer) = buffer.split_at_mut(12); // Split at 12th byte
+
+    let data_status = u64::from_le_bytes(header[0..8].try_into().unwrap()); // First 8 bytes
+    let data_length = u32::from_le_bytes(header[8..12].try_into().unwrap()); // Next 4 bytes
+
+    (data_status, data_length)
+}
+
 pub async fn wait_for_request() -> Result<MigrationInformation> {
     #[cfg(feature = "vmcall-raw")]
     {
-        let num_rsp_pages: usize = 1;
-        let mut rsp_mem = SharedMemory::new(num_rsp_pages).ok_or(MigrationResult::OutOfResource)?;
+        let data_status: u64 = 0;
+        let data_length: u32 = 0;
 
-        let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-            .ok_or(MigrationResult::InvalidParameter)?;
+        let mut data_buffer = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
-        tdx::tdvmcall_migtd_waitforrequest(rsp_mem.as_mut_bytes(), event::VMCALL_SERVICE_VECTOR)?;
+        let data_buffer = data_buffer.as_mut_bytes();
+
+        data_buffer[0..8].copy_from_slice(&u64::to_le_bytes(data_status));
+        data_buffer[8..12].copy_from_slice(&u32::to_le_bytes(data_length));
+
+        tdx::tdvmcall_migtd_waitforrequest(data_buffer, event::VMCALL_SERVICE_VECTOR)?;
 
         poll_fn(|_cx| {
             if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
@@ -144,28 +190,14 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
                 return Poll::Pending;
             }
 
-            let private_mem = rsp_mem
-                .copy_to_private_shadow()
-                .ok_or(MigrationResult::OutOfResource)?;
+            let (data_status, _data_length) = process_buffer(data_buffer);
 
-            // Parse out the response data
-            let rsp = VmcallServiceResponse::try_read(private_mem)
-                .ok_or(MigrationResult::InvalidParameter)?;
-            // Check the GUID of the reponse
-            if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
-                return Poll::Ready(Err(MigrationResult::InvalidParameter));
-            }
+            let slice = &data_buffer[12..12 + 56];
+            let wfr = parse_ghci_waitforrequest_response(slice);
 
-            let wfr = rsp
-                .read_data::<ServiceMigWaitForReqResponse>(0)
-                .ok_or(MigrationResult::InvalidParameter)?;
-
-            if wfr.data_status != TDX_VMCALL_VMM_SUCCESS {
+            let data_status_bytes = data_status.to_le_bytes();
+            if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
                 return Poll::Pending;
-            }
-
-            if wfr.request_type != 0 {
-                return Poll::Ready(Err(MigrationResult::InvalidParameter));
             }
 
             let request_id = wfr.mig_request_id;
@@ -297,27 +329,16 @@ pub fn shutdown() -> Result<()> {
 }
 
 #[cfg(feature = "vmcall-raw")]
-fn process_buffer(buffer: &mut [u8]) -> (u32, u32) {
-    assert!(buffer.len() >= 8, "Buffer too small!");
-    let (header, _payload_buffer) = buffer.split_at_mut(8); // Split at 8th byte
-
-    let data_status = u32::from_le_bytes(header[0..4].try_into().unwrap()); // First 4 bytes
-    let data_length = u32::from_le_bytes(header[4..8].try_into().unwrap()); // Next 4 bytes
-
-    (data_status, data_length)
-}
-
-#[cfg(feature = "vmcall-raw")]
 pub async fn report_status(status: u8, request_id: u64) -> Result<()> {
-    let data_status: u32 = 0;
+    let data_status: u64 = 0;
     let data_length: u32 = 0;
 
     let mut data_buffer = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
     let data_buffer = data_buffer.as_mut_bytes();
 
-    data_buffer[0..4].copy_from_slice(&u32::to_le_bytes(data_status));
-    data_buffer[4..8].copy_from_slice(&u32::to_le_bytes(data_length));
+    data_buffer[0..8].copy_from_slice(&u64::to_le_bytes(data_status));
+    data_buffer[8..12].copy_from_slice(&u32::to_le_bytes(data_length));
 
     tdx::tdvmcall_migtd_reportstatus(
         request_id,
@@ -338,8 +359,9 @@ pub async fn report_status(status: u8, request_id: u64) -> Result<()> {
         }
 
         let (data_status, _data_length) = process_buffer(data_buffer);
+        let data_status_bytes = data_status.to_le_bytes();
 
-        if data_status != TDX_VMCALL_VMM_SUCCESS {
+        if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
             return Poll::Pending;
         }
 
