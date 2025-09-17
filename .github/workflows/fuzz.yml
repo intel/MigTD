@@ -45,7 +45,7 @@ jobs:
         uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
       
       - name: Install AFL
-        run: cargo install cargo-afl
+        run: cargo install cargo-afl && cargo afl config --build --force
       
       - name: Install Cargo-Fuzz
         run: cargo install cargo-fuzz
