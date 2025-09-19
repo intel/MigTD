@@ -32,6 +32,7 @@ const CONFIG_VECTOR: u8 = 0x54;
 const QUEUE_SIZE: usize = 16;
 const RX_QUEUE_PREFILL_NUM: usize = 16;
 const VSOCK_DEFAULT_BUF_SIZE: usize = PAGE_SIZE;
+pub(crate) const MAX_VSOCK_PKT_DATA_LEN: usize = 0x1000 * 16;
 
 pub static RX_FLAG: AtomicBool = AtomicBool::new(false);
 pub static TX_FLAG: AtomicBool = AtomicBool::new(false);
