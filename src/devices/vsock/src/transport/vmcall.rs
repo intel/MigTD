@@ -27,6 +27,8 @@ const MAX_VSOCK_MTU: usize = 0x1000 * 16;
 const VMCALL_COMMON_HEADER_LEN: usize = 36;
 const VMCALL_STATUS_RESERVED: u32 = 0xffff_ffff;
 const VMCALL_VECTOR: u8 = 0x52;
+pub(crate) const MAX_VSOCK_PKT_DATA_LEN: usize =
+    MAX_VSOCK_MTU - VMCALL_COMMON_HEADER_LEN - HEADER_LEN;
 
 static VMCALL_FLAG: AtomicBool = AtomicBool::new(false);
 
@@ -111,6 +113,10 @@ pub async fn vsock_transport_enqueue(
     buf: &[u8],
     timeout: u32,
 ) -> Result<usize> {
+    if hdr.len() != HEADER_LEN || buf.len() > MAX_VSOCK_PKT_DATA_LEN {
+        return Err(VsockTransportError::InvalidParameter);
+    }
+
     let command_pages = align_up(VMCALL_COMMON_HEADER_LEN + hdr.len() + buf.len()) / PAGE_SIZE;
     let mut command = SharedMemory::new(command_pages).ok_or(VsockTransportError::DmaAllocation)?;
 

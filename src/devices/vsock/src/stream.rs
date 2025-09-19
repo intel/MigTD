@@ -6,7 +6,8 @@ use crate::protocol::field::{FLAG_SHUTDOWN_READ, FLAG_SHUTDOWN_WRITE, HEADER_LEN
 use crate::protocol::{field, Packet};
 use crate::{
     vsock_transport_can_recv, vsock_transport_dequeue, vsock_transport_enqueue,
-    vsock_transport_get_cid, VsockAddr, VsockAddrPair, VsockError, VSOCK_BUF_ALLOC,
+    vsock_transport_get_cid, VsockAddr, VsockAddrPair, VsockError, MAX_VSOCK_PKT_DATA_LEN,
+    VSOCK_BUF_ALLOC,
 };
 
 use alloc::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec};
@@ -65,6 +66,7 @@ pub struct VsockStream {
     data_queue: VecDeque<Vec<u8>>,
     rx_cnt: u32,
     tx_cnt: u32,
+    last_fwd_cnt: u32,
     peer_fwd_cnt: u32,
     peer_buf_alloc: u32,
 }
@@ -100,6 +102,7 @@ impl VsockStream {
             data_queue: VecDeque::new(),
             rx_cnt: 0,
             tx_cnt: 0,
+            last_fwd_cnt: 0,
             peer_fwd_cnt: 0,
             peer_buf_alloc: 0,
             transport_context,
@@ -129,7 +132,7 @@ impl VsockStream {
         }
     }
 
-    pub async fn accept(&self) -> Result<VsockStream> {
+    pub async fn accept(&mut self) -> Result<VsockStream> {
         if self.state != State::Listening {
             return Err(VsockError::Illegal);
         }
@@ -157,7 +160,7 @@ impl VsockStream {
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-        let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
+        let _ = self.send_vsock_pkt(packet.as_ref(), &[]).await?;
 
         let peer_addr = VsockAddr::new(request.src_cid() as u32, request.src_port());
 
@@ -171,6 +174,7 @@ impl VsockStream {
             data_queue: VecDeque::new(),
             rx_cnt: 0,
             tx_cnt: 0,
+            last_fwd_cnt: 0,
             peer_fwd_cnt: packet.fwd_cnt(),
             peer_buf_alloc: packet.buf_alloc(),
             transport_context: 0,
@@ -202,7 +206,7 @@ impl VsockStream {
         packet.set_fwd_cnt(0);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-        let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
+        let _ = self.send_vsock_pkt(packet.as_ref(), &[]).await?;
 
         self.state = State::RequestSend;
         let recv = vsock_transport_dequeue(self, DEFAULT_TIMEOUT).await?;
@@ -243,7 +247,7 @@ impl VsockStream {
             packet.set_flags(FLAG_SHUTDOWN_READ | FLAG_SHUTDOWN_WRITE);
             packet.set_fwd_cnt(self.rx_cnt);
             packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-            let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
+            let _ = self.send_vsock_pkt(packet.as_ref(), &[]).await?;
 
             self.state = State::Closing;
             self.reset().await
@@ -258,26 +262,45 @@ impl VsockStream {
             return Err(VsockError::Illegal);
         }
 
-        while self.has_free_space() == 0 {
-            self.recv_packet_connected().await?;
+        let total_len = buf.len();
+        let mut bytes_sent = 0;
+
+        // If the buffer size is larger than the max packet size or the free space size,
+        // truncate it into multiple packets.
+        while bytes_sent < total_len {
+            // Wait for available send buffer space
+            while self.peer_free_space() == 0 {
+                self.recv_packet_connected().await?;
+            }
+
+            // Determine how much data to send in this packet
+            let remaining = total_len - bytes_sent;
+            let available_space = self.peer_free_space() as usize;
+            let chunk_size = remaining
+                .min(MAX_VSOCK_PKT_DATA_LEN as usize)
+                .min(available_space);
+
+            let mut header_buf = [0u8; HEADER_LEN];
+            let mut packet = Packet::new_unchecked(&mut header_buf[..]);
+            packet.set_src_cid(self.addr.local.cid() as u64);
+            packet.set_dst_cid(self.addr.remote.cid() as u64);
+            packet.set_src_port(self.addr.local.port());
+            packet.set_dst_port(self.addr.remote.port());
+            packet.set_type(field::TYPE_STREAM);
+            packet.set_op(field::OP_RW);
+            packet.set_data_len(chunk_size as u32);
+            packet.set_flags(0);
+            packet.set_fwd_cnt(self.rx_cnt);
+            packet.set_buf_alloc(VSOCK_BUF_ALLOC);
+
+            let n = self
+                .send_vsock_pkt(packet.as_ref(), &buf[bytes_sent..bytes_sent + chunk_size])
+                .await?;
+            self.tx_cnt += n as u32;
+            bytes_sent += n;
         }
 
-        let mut header_buf = [0u8; HEADER_LEN];
-        let mut packet = Packet::new_unchecked(&mut header_buf[..]);
-        packet.set_src_cid(self.addr.local.cid() as u64);
-        packet.set_dst_cid(self.addr.remote.cid() as u64);
-        packet.set_src_port(self.addr.local.port());
-        packet.set_dst_port(self.addr.remote.port());
-        packet.set_type(field::TYPE_STREAM);
-        packet.set_op(field::OP_RW);
-        packet.set_data_len(buf.len() as u32);
-        packet.set_flags(0);
-        packet.set_fwd_cnt(self.rx_cnt);
-        packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-        let _ = vsock_transport_enqueue(self, packet.as_ref(), buf, DEFAULT_TIMEOUT).await?;
-        self.tx_cnt += buf.len() as u32;
-
-        Ok(buf.len())
+        Ok(total_len)
     }
 
     pub async fn recv(&mut self, buf: &mut [u8], _flags: u32) -> Result<usize> {
@@ -342,8 +365,7 @@ impl VsockStream {
                 packet.set_fwd_cnt(self.rx_cnt);
                 packet.set_buf_alloc(VSOCK_BUF_ALLOC);
 
-                let _ =
-                    vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
+                let _ = self.send_vsock_pkt(packet.as_ref(), &[]).await?;
                 self.state = State::Closed;
 
                 remove_stream_from_connection_map(self);
@@ -382,6 +404,11 @@ impl VsockStream {
                         return Err(VsockError::Illegal);
                     }
 
+                    // Send credit update if the free space is less than a max packet size
+                    if self.free_space() < MAX_VSOCK_PKT_DATA_LEN as u32 {
+                        self.send_credit_update().await?;
+                    }
+
                     self.data_queue.push_back(recv);
                 }
             }
@@ -397,7 +424,7 @@ impl VsockStream {
         Ok(())
     }
 
-    async fn send_credit_update(&self) -> Result<()> {
+    async fn send_credit_update(&mut self) -> Result<()> {
         let mut header_buf = [0u8; HEADER_LEN];
         let mut packet = Packet::new_unchecked(&mut header_buf[..]);
         packet.set_src_cid(self.addr.local.cid() as u64);
@@ -410,13 +437,24 @@ impl VsockStream {
         packet.set_flags(0);
         packet.set_fwd_cnt(self.rx_cnt);
         packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-        let _ = vsock_transport_enqueue(self, packet.as_ref(), &[], DEFAULT_TIMEOUT).await?;
+        let _ = self.send_vsock_pkt(packet.as_ref(), &[]).await?;
         Ok(())
     }
 
-    fn has_free_space(&self) -> u32 {
+    async fn send_vsock_pkt(&mut self, packet_header: &[u8], data: &[u8]) -> Result<usize> {
+        self.last_fwd_cnt = self.rx_cnt;
+        vsock_transport_enqueue(self, packet_header, data, DEFAULT_TIMEOUT)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    fn peer_free_space(&self) -> u32 {
         self.peer_buf_alloc
             .saturating_sub(self.tx_cnt.saturating_sub(self.peer_fwd_cnt))
+    }
+
+    fn free_space(&self) -> u32 {
+        VSOCK_BUF_ALLOC.saturating_sub(self.rx_cnt.saturating_sub(self.last_fwd_cnt))
     }
 
     pub(crate) fn addr(&self) -> VsockAddrPair {
