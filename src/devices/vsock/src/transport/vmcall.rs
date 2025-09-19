@@ -27,6 +27,8 @@ const MAX_VSOCK_MTU: usize = 0x1000 * 16;
 const VMCALL_COMMON_HEADER_LEN: usize = 36;
 const VMCALL_STATUS_RESERVED: u32 = 0xffff_ffff;
 const VMCALL_VECTOR: u8 = 0x52;
+pub(crate) const MAX_VSOCK_PKT_DATA_LEN: usize =
+    MAX_VSOCK_MTU - VMCALL_COMMON_HEADER_LEN - HEADER_LEN;
 
 static VMCALL_FLAG: AtomicBool = AtomicBool::new(false);
 
