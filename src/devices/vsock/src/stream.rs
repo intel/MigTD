@@ -286,7 +286,7 @@ impl VsockStream {
             return Err(VsockError::Illegal);
         }
 
-        if self.data_queue.is_empty() {
+        while self.data_queue.is_empty() {
             loop {
                 self.recv_packet_connected().await?;
 
