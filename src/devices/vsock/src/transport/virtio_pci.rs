@@ -353,7 +353,7 @@ pub async fn vsock_transport_enqueue(
     buf: &[u8],
     _timeout: u32,
 ) -> Result<usize> {
-    if hdr.len() != field::HEADER_LEN || buf.len() > u32::MAX as usize {
+    if hdr.len() != field::HEADER_LEN || buf.len() > MAX_VSOCK_PKT_DATA_LEN {
         return Err(VsockTransportError::InvalidParameter);
     }
 

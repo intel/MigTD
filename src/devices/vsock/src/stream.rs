@@ -262,26 +262,45 @@ impl VsockStream {
             return Err(VsockError::Illegal);
         }
 
-        while self.peer_free_space() == 0 {
-            self.recv_packet_connected().await?;
+        let total_len = buf.len();
+        let mut bytes_sent = 0;
+
+        // If the buffer size is larger than the max packet size or the free space size,
+        // truncate it into multiple packets.
+        while bytes_sent < total_len {
+            // Wait for available send buffer space
+            while self.peer_free_space() == 0 {
+                self.recv_packet_connected().await?;
+            }
+
+            // Determine how much data to send in this packet
+            let remaining = total_len - bytes_sent;
+            let available_space = self.peer_free_space() as usize;
+            let chunk_size = remaining
+                .min(MAX_VSOCK_PKT_DATA_LEN as usize)
+                .min(available_space);
+
+            let mut header_buf = [0u8; HEADER_LEN];
+            let mut packet = Packet::new_unchecked(&mut header_buf[..]);
+            packet.set_src_cid(self.addr.local.cid() as u64);
+            packet.set_dst_cid(self.addr.remote.cid() as u64);
+            packet.set_src_port(self.addr.local.port());
+            packet.set_dst_port(self.addr.remote.port());
+            packet.set_type(field::TYPE_STREAM);
+            packet.set_op(field::OP_RW);
+            packet.set_data_len(chunk_size as u32);
+            packet.set_flags(0);
+            packet.set_fwd_cnt(self.rx_cnt);
+            packet.set_buf_alloc(VSOCK_BUF_ALLOC);
+
+            let n = self
+                .send_vsock_pkt(packet.as_ref(), &buf[bytes_sent..bytes_sent + chunk_size])
+                .await?;
+            self.tx_cnt += n as u32;
+            bytes_sent += n;
         }
 
-        let mut header_buf = [0u8; HEADER_LEN];
-        let mut packet = Packet::new_unchecked(&mut header_buf[..]);
-        packet.set_src_cid(self.addr.local.cid() as u64);
-        packet.set_dst_cid(self.addr.remote.cid() as u64);
-        packet.set_src_port(self.addr.local.port());
-        packet.set_dst_port(self.addr.remote.port());
-        packet.set_type(field::TYPE_STREAM);
-        packet.set_op(field::OP_RW);
-        packet.set_data_len(buf.len() as u32);
-        packet.set_flags(0);
-        packet.set_fwd_cnt(self.rx_cnt);
-        packet.set_buf_alloc(VSOCK_BUF_ALLOC);
-        let _ = self.send_vsock_pkt(packet.as_ref(), buf).await?;
-        self.tx_cnt += buf.len() as u32;
-
-        Ok(buf.len())
+        Ok(total_len)
     }
 
     pub async fn recv(&mut self, buf: &mut [u8], _flags: u32) -> Result<usize> {
