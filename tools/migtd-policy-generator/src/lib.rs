@@ -6,6 +6,7 @@ use curl::easy::Easy;
 
 pub mod platform_tcb;
 pub mod policy;
+pub mod policy_v2;
 pub mod qe_identity;
 
 pub(crate) fn fetch_data_from_url(url: &str) -> Result<(u32, Vec<u8>), curl::Error> {

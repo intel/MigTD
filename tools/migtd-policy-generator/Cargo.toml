@@ -8,6 +8,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
+crypto = { path = "../../src/crypto" }
 curl = "0.4.44"
+json-signer = { path = "../json-signer" }
 serde = { version = "1.0", features = ["derive"]}
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["raw_value", "preserve_order"] }
