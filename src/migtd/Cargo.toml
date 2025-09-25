@@ -18,6 +18,7 @@ async_io = { path = "../async/async_io" }
 async_runtime = { path = "../async/async_runtime" }
 attestation = { path = "../attestation", default-features = false, optional = true }
 cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 crypto = { path = "../crypto" }
 futures-util = { version = "0.3.17", default-features = false }
 lazy_static = { version = "1.0", features = ["spin_no_std"] }
