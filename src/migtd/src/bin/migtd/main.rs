@@ -139,6 +139,8 @@ fn initialize_policy() {
         // Initialize and verify the migration policy
         mig_policy::init_policy(policy, policy_issuer_chain)
             .expect("Failed to initialize migration policy");
+        // Initialize and verify the migration policy
+        mig_policy::init_tcb_info().expect("Failed to initialize migration policy");
     }
 }
 
