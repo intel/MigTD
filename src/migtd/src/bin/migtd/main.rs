@@ -10,9 +10,14 @@ extern crate alloc;
 use core::future::poll_fn;
 use core::task::Poll;
 
+#[cfg(feature = "vmcall-raw")]
+use alloc::vec::Vec;
 use log::info;
 use migtd::event_log::*;
+#[cfg(not(feature = "vmcall-raw"))]
 use migtd::migration::data::MigrationInformation;
+#[cfg(feature = "vmcall-raw")]
+use migtd::migration::data::WaitForRequestResponse;
 use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
@@ -150,8 +155,12 @@ fn handle_pre_mig() {
     #[cfg(not(any(feature = "vmcall-interrupt", feature = "vmcall-raw")))]
     const MAX_CONCURRENCY_REQUESTS: usize = 1;
 
+    #[cfg(not(feature = "vmcall-raw"))]
     // Set by `wait_for_request` async task when getting new request from VMM.
     static PENDING_REQUEST: Mutex<Option<MigrationInformation>> = Mutex::new(None);
+    #[cfg(feature = "vmcall-raw")]
+    // Set by `wait_for_request` async task when getting new request from VMM.
+    static PENDING_REQUEST: Mutex<Option<WaitForRequestResponse>> = Mutex::new(None);
 
     async_runtime::add_task(async move {
         loop {
@@ -187,22 +196,51 @@ fn handle_pre_mig() {
 
         if let Some(request) = new_request {
             async_runtime::add_task(async move {
-                let status = exchange_msk(&request)
-                    .await
-                    .map(|_| MigrationResult::Success)
-                    .unwrap_or_else(|e| e);
-
-                #[cfg(feature = "vmcall-raw")]
-                {
-                    let _ = report_status(status as u8, request.mig_info.mig_request_id).await;
-                }
-
                 #[cfg(not(feature = "vmcall-raw"))]
                 {
-                    let _ = report_status(status as u8, request.mig_info.mig_request_id);
-                }
+                    let status = exchange_msk(&request)
+                        .await
+                        .map(|_| MigrationResult::Success)
+                        .unwrap_or_else(|e| e);
 
-                REQUESTS.lock().remove(&request.mig_info.mig_request_id);
+                    let _ = report_status(status as u8, request.mig_info.mig_request_id);
+                    REQUESTS.lock().remove(&request.mig_info.mig_request_id);
+                }
+                #[cfg(feature = "vmcall-raw")]
+                {
+                    let mut data: Vec<u8> = Vec::new();
+                    match request {
+                        WaitForRequestResponse::StartMigration(wfr_info) => {
+                            let status = exchange_msk(&wfr_info)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
+                            let _ = report_status(
+                                status as u8,
+                                wfr_info.mig_info.mig_request_id,
+                                &data,
+                            )
+                            .await;
+                            REQUESTS.lock().remove(&wfr_info.mig_info.mig_request_id);
+                        }
+                        WaitForRequestResponse::GetTdReport(wfr_info) => {
+                            let status = get_tdreport(&wfr_info.reportdata, &mut data)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
+                            let _ =
+                                report_status(status as u8, wfr_info.mig_request_id, &data).await;
+                            REQUESTS.lock().remove(&wfr_info.mig_request_id);
+                        }
+                        WaitForRequestResponse::EnableLogArea(wfr_info) => {
+                            // TODO: support this feature
+                            let status = MigrationResult::UnsupportedOperationError;
+                            let _ =
+                                report_status(status as u8, wfr_info.mig_request_id, &data).await;
+                            REQUESTS.lock().remove(&wfr_info.mig_request_id);
+                        }
+                    }
+                }
             });
         }
         sleep();
