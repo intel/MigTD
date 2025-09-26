@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use super::*;
+#[cfg(feature = "vmcall-raw")]
+use bitfield_struct::bitfield;
 use core::convert::TryInto;
 use core::{mem::size_of, slice::from_raw_parts, slice::from_raw_parts_mut};
 use r_efi::efi::Guid;
@@ -11,8 +14,6 @@ use td_shim_interface::td_uefi_pi::{
     pi::hob::{GuidExtension, Header, HOB_TYPE_END_OF_HOB_LIST, HOB_TYPE_GUID_EXTENSION},
 };
 use zerocopy::{AsBytes, FromBytes, FromZeroes};
-
-use super::*;
 
 pub const QUERY_COMMAND: u8 = 0;
 pub const MIG_COMMAND_SHUT_DOWN: u8 = 0;
@@ -229,9 +230,28 @@ impl Default for MigrationSessionKey {
     }
 }
 
+#[cfg(feature = "vmcall-raw")]
+#[bitfield(u64)]
+pub struct ReportStatusResponse {
+    pub pre_migration_status: u8,
+    pub error_code: u8,
+    #[bits(48)]
+    pub reserved: u64,
+}
+
+#[cfg(feature = "vmcall-raw")]
+pub enum WaitForRequestResponse {
+    StartMigration(MigrationInformation),
+    GetTdReport(ReportInfo),
+    EnableLogArea(EnableLogAreaInfo),
+}
+
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
-    #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
+    #[cfg(all(
+        not(feature = "vmcall-raw"),
+        any(feature = "vmcall-vsock", feature = "virtio-vsock")
+    ))]
     pub mig_socket_info: MigtdStreamSocketInfo,
     #[cfg(not(feature = "vmcall-raw"))]
     pub mig_policy: Option<MigtdMigpolicy>,
