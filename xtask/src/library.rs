@@ -41,6 +41,15 @@ impl LibraryCrates {
                         "test_disable_ra_and_accept_all",
                     ])
                     .run()?;
+                cmd!(sh, "cargo test")
+                    .args(["-p", name.as_str(), "--features", "policy_v2"])
+                    .run()?;
+            } else if name.as_str() == "policy" {
+                // Run tests for policy V1 and V2
+                cmd!(sh, "cargo test").args(["-p", name.as_str()]).run()?;
+                cmd!(sh, "cargo test")
+                    .args(["-p", name.as_str(), "--features", "policy_v2"])
+                    .run()?;
             } else {
                 cmd!(sh, "cargo test").args(["-p", name.as_str()]).run()?;
             }
