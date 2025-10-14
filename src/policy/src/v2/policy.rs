@@ -382,7 +382,7 @@ impl ServtdPolicy {
                 value
                     .migtd_tcb_date
                     .as_deref()
-                    .ok_or(PolicyError::UnqulifiedMigTdInfo)?,
+                    .ok_or(PolicyError::UnqualifiedMigTdInfo)?,
                 relative_reference.migtd_tcb_date.as_deref(),
             )? {
                 return Err(PolicyError::SvnMismatch);
@@ -394,7 +394,7 @@ impl ServtdPolicy {
                 value
                     .migtd_tcb_status
                     .as_deref()
-                    .ok_or(PolicyError::UnqulifiedMigTdInfo)?,
+                    .ok_or(PolicyError::UnqualifiedMigTdInfo)?,
                 relative_reference.migtd_tcb_status.as_deref(),
             )? {
                 return Err(PolicyError::SvnMismatch);
