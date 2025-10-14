@@ -150,7 +150,7 @@ fn verify_platform_info(
                 local,
                 remote,
             );
-            return Err(PolicyError::UnqulifiedPlatformInfo);
+            return Err(PolicyError::UnqualifiedPlatformInfo);
         }
     }
 
@@ -172,7 +172,7 @@ fn verify_qe_info(
 
         if !verify_result {
             log_error_status(name.clone(), action.clone(), None, None, local, remote);
-            return Err(PolicyError::UnqulifiedQeInfo);
+            return Err(PolicyError::UnqualifiedQeInfo);
         }
     }
 
@@ -226,7 +226,7 @@ fn verify_tdx_module_info(
                 _ => continue,
             }
         }
-        return Err(PolicyError::UnqulifiedTdxModuleInfo);
+        return Err(PolicyError::UnqualifiedTdxModuleInfo);
     }
 
     Ok(())
@@ -271,7 +271,7 @@ fn verify_migtd_info(
 
         if !verify_result {
             log_error_status(name.clone(), action.clone(), None, None, local, remote);
-            return Err(PolicyError::UnqulifiedMigTdInfo);
+            return Err(PolicyError::UnqualifiedMigTdInfo);
         }
     }
 
@@ -330,7 +330,7 @@ fn verify_events(
 
         if !verify_result {
             log_error_status(name.clone(), value.clone(), None, None, &[], &[]);
-            return Err(PolicyError::UnqulifiedMigTdInfo);
+            return Err(PolicyError::UnqualifiedMigTdInfo);
         }
     }
 
@@ -492,7 +492,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedPlatformInfo)
+            Err(PolicyError::UnqualifiedPlatformInfo)
         ));
 
         // dst's tdx tcb level is higher than reference
@@ -540,7 +540,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedPlatformInfo)
+            Err(PolicyError::UnqualifiedPlatformInfo)
         ));
     }
 
@@ -568,7 +568,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedTdxModuleInfo)
+            Err(PolicyError::UnqualifiedTdxModuleInfo)
         ));
 
         // Taking exact value as reference: pass
@@ -603,7 +603,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedTdxModuleInfo)
+            Err(PolicyError::UnqualifiedTdxModuleInfo)
         ));
 
         // Taking exact value as reference: mismatch tdx module svn
@@ -619,7 +619,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedTdxModuleInfo)
+            Err(PolicyError::UnqualifiedTdxModuleInfo)
         ));
 
         // Taking exact value as reference: mismatch mrsignerseam
@@ -635,7 +635,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedTdxModuleInfo)
+            Err(PolicyError::UnqualifiedTdxModuleInfo)
         ));
 
         // Taking exact value as reference: mismatch attributes
@@ -651,7 +651,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedTdxModuleInfo)
+            Err(PolicyError::UnqualifiedTdxModuleInfo)
         ));
     }
 
@@ -694,7 +694,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
 
         // verify the attributes mask, set masked bits
@@ -721,7 +721,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_ATTR_TD].copy_from_slice(&template[Report::R_MIGTD_ATTR_TD]);
 
@@ -737,7 +737,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
 
         // verify xfam mask, set masked bits and required bits
@@ -765,7 +765,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_XFAM].copy_from_slice(&template[Report::R_MIGTD_XFAM]);
 
@@ -782,7 +782,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_MRTD].copy_from_slice(&[0u8; 48]);
 
@@ -799,7 +799,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_MRCONFIGID]
             .copy_from_slice(&template[Report::R_MIGTD_MRCONFIGID]);
@@ -817,7 +817,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_MROWNER].copy_from_slice(&template[Report::R_MIGTD_MROWNER]);
 
@@ -834,7 +834,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_MROWNERCONFIG]
             .copy_from_slice(&template[Report::R_MIGTD_MROWNERCONFIG]);
@@ -852,7 +852,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_RTMR0].copy_from_slice(&template[Report::R_MIGTD_RTMR0]);
 
@@ -869,7 +869,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_RTMR1].copy_from_slice(&template[Report::R_MIGTD_RTMR1]);
 
@@ -886,7 +886,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         report_peer[Report::R_MIGTD_RTMR2].copy_from_slice(&template[Report::R_MIGTD_RTMR2]);
 
@@ -903,7 +903,7 @@ mod tests {
         );
         assert!(matches!(
             verify_result,
-            Err(PolicyError::UnqulifiedMigTdInfo)
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
     }
 
