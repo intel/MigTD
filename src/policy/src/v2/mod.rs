@@ -43,7 +43,7 @@ fn verify_event_hash(
 fn hex_string_to_bytes(hex: &str) -> Result<Vec<u8>, PolicyError> {
     // Ensure even number of characters
     if hex.len() % 2 != 0 {
-        return Err(PolicyError::SignatureVerificationFailed);
+        return Err(PolicyError::InvalidParameter);
     }
 
     let mut bytes = Vec::with_capacity(hex.len() / 2);
@@ -58,8 +58,7 @@ fn hex_string_to_bytes(hex: &str) -> Result<Vec<u8>, PolicyError> {
         let byte_str = &hex[i..i + 2];
 
         // Convert to numeric value
-        let byte = u8::from_str_radix(byte_str, 16)
-            .map_err(|_| PolicyError::SignatureVerificationFailed)?;
+        let byte = u8::from_str_radix(byte_str, 16).map_err(|_| PolicyError::InvalidParameter)?;
 
         bytes.push(byte);
     }
