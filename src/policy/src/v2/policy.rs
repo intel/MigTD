@@ -169,7 +169,8 @@ impl<'a> RawPolicyData<'a> {
         )
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-        Ok(serde_json::from_str::<PolicyData>(self.policy_data.get()).unwrap())
+        serde_json::from_str::<PolicyData>(self.policy_data.get())
+            .map_err(|_| PolicyError::InvalidPolicy)
     }
 }
 

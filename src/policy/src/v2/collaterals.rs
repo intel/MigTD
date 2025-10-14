@@ -78,7 +78,7 @@ pub type Collaterals = BTreeMap<String, Collateral>;
 
 /// Deserialize Collaterals from JSON byte slice
 pub fn deserialize_collaterals(json: &[u8]) -> Result<Collaterals, PolicyError> {
-    Ok(serde_json::from_slice(json).unwrap())
+    serde_json::from_slice(json).map_err(|_| PolicyError::InvalidCollateral)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
