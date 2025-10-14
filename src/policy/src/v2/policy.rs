@@ -98,7 +98,7 @@ pub fn check_policy_integrity(policy: &[u8], event_log: &[u8]) -> Result<(), Pol
     let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
 
     if !verify_event_hash(&events, &EventName::MigTdPolicy, policy)? {
-        return Err(PolicyError::InvalidEngineSvnMap);
+        return Err(PolicyError::PolicyHashMismatch);
     }
 
     Ok(())

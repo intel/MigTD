@@ -41,7 +41,7 @@ pub struct RawServtdIdentity<'a> {
 impl<'a> RawServtdIdentity<'a> {
     pub fn deserialize_from_json(slice: &'a [u8]) -> Result<Self, PolicyError> {
         serde_json::from_slice::<RawServtdIdentity>(slice)
-            .map_err(|_| PolicyError::InvalidEngineSvnMap)
+            .map_err(|_| PolicyError::InvalidServtdIdentity)
     }
 
     pub fn verify_signature(&self, issuer_chain: &[u8]) -> Result<TdIdentity, PolicyError> {
@@ -55,7 +55,7 @@ impl<'a> RawServtdIdentity<'a> {
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
         serde_json::from_str::<TdIdentity>(self.td_identity.get())
-            .map_err(|_| PolicyError::InvalidPolicy)
+            .map_err(|_| PolicyError::InvalidServtdIdentity)
     }
 }
 
@@ -79,7 +79,7 @@ pub struct TdIdentity {
 
 impl TdIdentity {
     pub fn deserialize_from_json(slice: &[u8]) -> Result<Self, PolicyError> {
-        serde_json::from_slice::<TdIdentity>(slice).map_err(|_| PolicyError::InvalidPolicy)
+        serde_json::from_slice::<TdIdentity>(slice).map_err(|_| PolicyError::InvalidServtdIdentity)
     }
 
     pub fn get_tcb_level_by_svn(&self, svn: u16) -> Option<&TcbLevel> {
@@ -117,7 +117,7 @@ pub struct RawServtdTcbMapping<'a> {
 impl<'a> RawServtdTcbMapping<'a> {
     pub fn deserialize_from_json(slice: &'a [u8]) -> Result<Self, PolicyError> {
         serde_json::from_slice::<RawServtdTcbMapping>(slice)
-            .map_err(|_| PolicyError::InvalidEngineSvnMap)
+            .map_err(|_| PolicyError::InvalidServtdTcbMapping)
     }
 
     pub fn verify_signature(&self, issuer_chain: &[u8]) -> Result<TdTcbMapping, PolicyError> {
@@ -131,7 +131,7 @@ impl<'a> RawServtdTcbMapping<'a> {
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
         serde_json::from_str::<TdTcbMapping>(self.td_tcb_mapping.get())
-            .map_err(|_| PolicyError::InvalidPolicy)
+            .map_err(|_| PolicyError::InvalidServtdTcbMapping)
     }
 }
 
