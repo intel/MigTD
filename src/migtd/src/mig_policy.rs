@@ -266,7 +266,7 @@ mod v2 {
         suppl_data: &[u8],
     ) -> Result<(String, String), PolicyError> {
         if suppl_data.len() < REPORT_DATA_SIZE + 40 {
-            panic!("Supplemental data too short");
+            return Err(PolicyError::InvalidParameter);
         }
         let data = &suppl_data[REPORT_DATA_SIZE..REPORT_DATA_SIZE + 40];
 
@@ -291,7 +291,7 @@ mod v2 {
         let str_bytes = &slice[..end_pos];
 
         // Convert to String
-        Ok(String::from_utf8(str_bytes.to_vec()).unwrap())
+        String::from_utf8(str_bytes.to_vec()).map_err(|_| PolicyError::InvalidParameter)
     }
 
     fn convert_collateral_to_cstring(
