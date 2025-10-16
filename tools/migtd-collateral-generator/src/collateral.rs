@@ -2,94 +2,94 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use std::collections::HashMap;
-
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use x509_parser::prelude::*;
 
 use crate::pcs_client::{
-    fetch_data_from_url, fetch_pck_crl, fetch_qe_identity, get_platform_tcb_list,
+    fetch_data_from_url, fetch_pck_crl, fetch_qe_identity, get_platform_tcb_list, PlatformTcbRaw,
 };
-
-pub type Collaterals = HashMap<String, Collateral>;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Collateral {
+pub struct Collaterals {
     major_version: u16,
     minor_version: u16,
     tee_type: u32,
     pck_crl_issuer_chain: String,
     root_ca_crl: String,
     pck_crl: String,
-    tcb_info_issuer_chain: String,
-    tcb_info: String,
     qe_identity_issuer_chain: String,
     qe_identity: String,
+    platforms: Vec<Platform>,
 }
 
-impl Collateral {
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Platform {
+    fmspc: String,
+    tcb_info: String,
+    tcb_info_issuer_chain: String,
+}
+
+impl Collaterals {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         pck_crl_issuer_chain: String,
         root_ca_crl: Vec<u8>,
         pck_crl: Vec<u8>,
-        tcb_info_issuer_chain: String,
-        tcb_info: Vec<u8>,
         qe_identity_issuer_chain: String,
         qe_identity: Vec<u8>,
     ) -> Result<Self> {
-        // Convert root_ca_crl from DER to PEM format
         let root_ca_crl = der_to_pem(&root_ca_crl, "X509 CRL");
 
         let pck_crl =
             String::from_utf8(pck_crl).map_err(|e| anyhow!("Invalid UTF-8 in PCK CRL: {}", e))?;
-        let tcb_info =
-            String::from_utf8(tcb_info).map_err(|e| anyhow!("Invalid UTF-8 in TCB info: {}", e))?;
         let qe_identity = String::from_utf8(qe_identity)
             .map_err(|e| anyhow!("Invalid UTF-8 in QE identity: {}", e))?;
 
-        Ok(Collateral {
+        Ok(Collaterals {
             major_version: 1,
             minor_version: 0,
             tee_type: 0x81,
             pck_crl_issuer_chain,
             root_ca_crl,
             pck_crl,
-            tcb_info_issuer_chain,
-            tcb_info,
+            platforms: Vec::new(),
             qe_identity_issuer_chain,
             qe_identity,
         })
     }
 
-    pub fn tcb_info(&self) -> &str {
-        &self.tcb_info
+    pub fn add_platform(&mut self, platform: PlatformTcbRaw) -> Result<()> {
+        let platform = Platform {
+            fmspc: platform.fmspc.clone(),
+            tcb_info: String::from_utf8(platform.tcb.clone())
+                .map_err(|e| anyhow!("Invalid UTF-8 in PCK CRL: {}", e))?,
+            tcb_info_issuer_chain: platform.tcb_issuer_chain,
+        };
+        self.platforms.push(platform);
+
+        Ok(())
     }
 }
 
 pub fn get_collateral(for_production: bool) -> Result<Collaterals> {
-    let mut collaterals = HashMap::new();
     let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(for_production)?;
     let root_ca_crl_url = get_root_ca_crl_url(qe_identity_issuer_chain.as_str())?;
     let root_ca_crl = fetch_data_from_url(&root_ca_crl_url)?.data;
     let (pck_crl, pck_crl_issuer_chain) = fetch_pck_crl(for_production)?;
     let platform_tcb_list = get_platform_tcb_list(for_production)?;
+    let mut collaterals = Collaterals::new(
+        pck_crl_issuer_chain,
+        root_ca_crl,
+        pck_crl,
+        qe_identity_issuer_chain,
+        qe_identity,
+    )?;
 
     for platform_tcb in platform_tcb_list {
-        collaterals.insert(
-            platform_tcb.fmspc,
-            Collateral::new(
-                pck_crl_issuer_chain.clone(),
-                root_ca_crl.clone(),
-                pck_crl.clone(),
-                platform_tcb.tcb_issuer_chain,
-                platform_tcb.tcb,
-                qe_identity_issuer_chain.clone(),
-                qe_identity.clone(),
-            )?,
-        );
+        collaterals.add_platform(platform_tcb)?;
     }
 
     Ok(collaterals)

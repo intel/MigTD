@@ -4,7 +4,7 @@
 
 use core::convert::TryInto;
 
-use alloc::{collections::btree_map::BTreeMap, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use crypto::x509::{self, AnyRef, Decode, DerResult, ObjectIdentifier, OctetStringRef, Reader};
 use serde::{Deserialize, Serialize};
 
@@ -74,15 +74,39 @@ fn parse_fmspc_from_pck_cert(pck_der: &[u8]) -> Result<[u8; 6], PolicyError> {
     Err(PolicyError::InvalidQuote)
 }
 
-pub type Collaterals = BTreeMap<String, Collateral>;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Collaterals {
+    pub major_version: u16,
+    pub minor_version: u16,
+    pub tee_type: u32,
+    pub pck_crl_issuer_chain: String,
+    pub root_ca_crl: String,
+    pub pck_crl: String,
+    pub platforms: Vec<Platform>,
+    pub qe_identity_issuer_chain: String,
+    pub qe_identity: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Platform {
+    fmspc: String,
+    tcb_info_issuer_chain: String,
+    tcb_info: String,
+}
+
+impl Collaterals {
+    pub fn get_tcb_with_fmspc(&self, fmspc: &str) -> Option<&Platform> {
+        self.platforms.iter().find(|p| p.fmspc == fmspc)
+    }
+}
 
 /// Deserialize Collaterals from JSON byte slice
 pub fn deserialize_collaterals(json: &[u8]) -> Result<Collaterals, PolicyError> {
     serde_json::from_slice(json).map_err(|_| PolicyError::InvalidCollateral)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Collateral {
     pub major_version: u16,
     pub minor_version: u16,
@@ -91,30 +115,36 @@ pub struct Collateral {
     pub root_ca_crl: String,
     pub pck_crl: String,
     pub tcb_info_issuer_chain: String,
+    pub tcb_info: String,
     pub qe_identity_issuer_chain: String,
     pub qe_identity: String,
-    pub tcb_info: String,
 }
 
-impl Collateral {
-    /// Deserialize a Collateral from JSON byte slice
-    pub fn from_json_slice(json: &[u8]) -> Result<Self, PolicyError> {
-        serde_json::from_slice(json).map_err(|_| PolicyError::InvalidCollateral)
-    }
-}
-
-pub fn get_collateral_with_fmspc<'a>(
+pub fn get_collateral_with_fmspc(
     fmspc: &[u8],
-    collaterals: &'a Collaterals,
-) -> Result<&'a Collateral, PolicyError> {
+    collaterals: &Collaterals,
+) -> Result<Collateral, PolicyError> {
     if fmspc.len() != 6 {
         return Err(PolicyError::InvalidParameter);
     }
 
     let fmspc_str = bytes_to_hex_string(fmspc);
-    collaterals
-        .get(&fmspc_str)
-        .ok_or(PolicyError::InvalidCollateral)
+    let platform_tcb = collaterals
+        .get_tcb_with_fmspc(&fmspc_str)
+        .ok_or(PolicyError::InvalidCollateral)?;
+
+    Ok(Collateral {
+        major_version: collaterals.major_version,
+        minor_version: collaterals.minor_version,
+        tee_type: collaterals.tee_type,
+        pck_crl_issuer_chain: collaterals.pck_crl_issuer_chain.clone(),
+        root_ca_crl: collaterals.root_ca_crl.clone(),
+        pck_crl: collaterals.pck_crl.clone(),
+        tcb_info_issuer_chain: platform_tcb.tcb_info_issuer_chain.clone(),
+        tcb_info: platform_tcb.tcb_info.clone(),
+        qe_identity_issuer_chain: collaterals.qe_identity_issuer_chain.clone(),
+        qe_identity: collaterals.qe_identity.clone(),
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,7 +178,7 @@ mod test {
         assert!(result.is_ok());
 
         let collaterals = result.unwrap();
-        assert!(!collaterals.is_empty());
+        assert!(!collaterals.platforms.is_empty());
     }
 
     #[test]
@@ -166,8 +196,9 @@ mod test {
         let collaterals_json = include_bytes!("../../test/policy_v2/collaterals.json");
         let collaterals = deserialize_collaterals(collaterals_json).unwrap();
 
-        let collateral = collaterals.get("20C06F000000").unwrap();
-        let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(collateral);
+        let collateral =
+            get_collateral_with_fmspc(&[0x20, 0xC0, 0x6F, 0x0, 0x0, 0x0], &collaterals).unwrap();
+        let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral);
 
         assert!(tcb_evaluation_number.is_ok());
         assert_eq!(tcb_evaluation_number.unwrap(), 5);
