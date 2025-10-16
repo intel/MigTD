@@ -155,6 +155,7 @@ pub struct MigtdMigpolicy {
 }
 
 #[repr(u8)]
+#[derive(PartialEq)]
 pub enum MigrationResult {
     Success = 0,
     InvalidParameter = 1,
