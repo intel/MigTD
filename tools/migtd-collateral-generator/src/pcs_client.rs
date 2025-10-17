@@ -10,6 +10,8 @@ use std::collections::HashMap;
 
 const PCS_PROD_URL: &str = "https://api.trustedservices.intel.com/";
 const PCS_SBX_URL: &str = "https://sbx.api.trustedservices.intel.com/";
+const ROOT_CA_URL: &str = "https://certificates.trustedservices.intel.com/Intel_SGX_Provisioning_Certification_RootCA.cer";
+const ROOT_CA_URL_SBX: &str = "https://sbx-certificates.trustedservices.intel.com/Intel_SGX_Provisioning_Certification_RootCA.cer";
 const PCK_CRL_ISSUER_CHAIN: &str = "SGX-PCK-CRL-Issuer-Chain";
 const QE_IDENTITY_ISSUER_CHAIN: &str = "SGX-Enclave-Identity-Issuer-Chain";
 const TCB_INFO_ISSUER_CHAIN: &str = "TCB-Info-Issuer-Chain";
@@ -63,6 +65,23 @@ pub fn fetch_pck_crl(for_production: bool) -> Result<(Vec<u8>, String)> {
         }
         _ => {
             eprintln!("Error fetching PCK CRL - {:?}", pcs_response.response_code);
+            Err(anyhow!("AccessException"))
+        }
+    }
+}
+
+pub fn fetch_root_ca(for_production: bool) -> Result<Vec<u8>> {
+    let url = if for_production {
+        ROOT_CA_URL
+    } else {
+        ROOT_CA_URL_SBX
+    };
+
+    let pcs_response = fetch_data_from_url(url)?;
+    match pcs_response.response_code {
+        200 => Ok(pcs_response.data),
+        _ => {
+            eprintln!("Error fetching root CA - {:?}", pcs_response.response_code);
             Err(anyhow!("AccessException"))
         }
     }
