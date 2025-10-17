@@ -9,7 +9,7 @@ use crate::{
         get_quote as get_quote_inner, init_heap, verify_quote_integrity, AttestLibError,
         QveCollateral,
     },
-    root_ca::ROOT_CA,
+    root_ca::ROOT_CA_PUBLIC_KEY,
     Error, TD_VERIFIED_REPORT_SIZE,
 };
 use alloc::{ffi::CString, vec, vec::Vec};
@@ -95,14 +95,7 @@ pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
 
     // Safety:
     // ROOT_CA must have been set and checked at this moment.
-    let public_key = ROOT_CA
-        .get()
-        .unwrap()
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_bytes()
-        .unwrap();
+    let public_key = ROOT_CA_PUBLIC_KEY.get().unwrap().as_slice();
 
     unsafe {
         let result = verify_quote_integrity(
@@ -136,14 +129,7 @@ pub fn verify_quote_with_collaterals(
 
     // Safety:
     // ROOT_CA must have been set and checked at this moment.
-    let public_key = ROOT_CA
-        .get()
-        .unwrap()
-        .tbs_certificate
-        .subject_public_key_info
-        .subject_public_key
-        .as_bytes()
-        .unwrap();
+    let public_key = ROOT_CA_PUBLIC_KEY.get().unwrap().as_slice();
 
     let qve_collateral: QveCollateral = (&collateral).into();
     unsafe {
