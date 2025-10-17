@@ -50,6 +50,7 @@ mod v2 {
     use alloc::{string::String, string::ToString, vec::Vec};
     use attestation::verify_quote_with_collaterals;
     use chrono::DateTime;
+    use crypto::pem_cert_to_der;
     use lazy_static::lazy_static;
     use policy::*;
     use spin::Once;
@@ -66,11 +67,17 @@ mod v2 {
         policy_json: &'static [u8],
         cert_chain: &[u8],
     ) -> Result<String, PolicyError> {
+        let raw = RawPolicyData::deserialize_from_json(policy_json)?;
+
+        // Get the root CA from collaterals and set it for quote verification
+        let verified_policy = raw.verify(cert_chain, None, None)?;
+        let root_ca_der = pem_cert_to_der(verified_policy.get_collaterals().root_ca.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+        attestation::root_ca::set_ca(root_ca_der.as_ref())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+
         VERIFIED_POLICY
-            .try_call_once(|| {
-                let raw = RawPolicyData::deserialize_from_json(policy_json)?;
-                raw.verify(cert_chain, None, None)
-            })
+            .try_call_once(|| Ok(verified_policy))
             .map(|p| p.get_version().to_string())
     }
 
