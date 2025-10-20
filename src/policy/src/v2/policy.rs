@@ -88,6 +88,10 @@ impl VerifiedPolicy<'_> {
     pub fn get_collaterals(&self) -> &Collaterals {
         &self.policy_data.collaterals
     }
+
+    pub fn get_version(&self) -> &str {
+        &self.policy_data.version
+    }
 }
 
 pub fn check_policy_integrity(policy: &[u8], event_log: &[u8]) -> Result<(), PolicyError> {
