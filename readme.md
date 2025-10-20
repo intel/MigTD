@@ -127,6 +127,10 @@ To generate IGVM format using vmcall-raw for the guest-host communication with l
 cargo image --no-default-features --features vmcall-raw,stack-guard,main,test_disable_ra_and_accept_all,vmcall-interrupt,oneshot-apic --log-level info --image-format igvm
 ```
 
+### Policy V2
+
+Please refer to [policy_v2.md](doc/policy_v2.md) for policy v2 generation and image setup.
+
 ### Generate SERVTD_INFO_HASH
 
 `SERVTD_HASH_INFO` can be calculated based on a given MigTD image and a TD configuration such as
