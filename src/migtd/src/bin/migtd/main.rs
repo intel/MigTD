@@ -10,6 +10,8 @@ extern crate alloc;
 use core::future::poll_fn;
 use core::task::Poll;
 
+#[cfg(feature = "policy_v2")]
+use alloc::string::String;
 #[cfg(feature = "vmcall-raw")]
 use alloc::vec::Vec;
 use log::info;
@@ -42,8 +44,6 @@ pub fn runtime_main() {
 
     // Measure the input data
     do_measurements();
-
-    initialize_policy();
 
     migration::event::register_callback();
 
@@ -87,6 +87,7 @@ fn measure_test_feature(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_TEST_FEATURE,
+        TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
         TAGGED_EVENT_ID_TEST,
         TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     )
@@ -97,9 +98,24 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
     // Read migration policy from CFV
     let policy = config::get_policy().expect("Fail to get policy from CFV\n");
 
+    #[cfg(feature = "policy_v2")]
+    let version = initialize_policy();
+
+    #[cfg(feature = "policy_v2")]
+    let event_data = version.as_bytes();
+
+    #[cfg(not(feature = "policy_v2"))]
+    let event_data = policy;
+
     // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(event_log, MR_INDEX_POLICY, TAGGED_EVENT_ID_POLICY, policy)
-        .expect("Failed to log migration policy");
+    event_log::write_tagged_event_log(
+        event_log,
+        MR_INDEX_POLICY,
+        policy,
+        TAGGED_EVENT_ID_POLICY,
+        event_data,
+    )
+    .expect("Failed to log migration policy");
 }
 
 #[cfg(feature = "policy_v2")]
@@ -112,6 +128,7 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
+        policy_issuer_chain,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
         policy_issuer_chain,
     )
@@ -125,6 +142,7 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
     event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_ROOT_CA,
+        root_ca,
         TAGGED_EVENT_ID_ROOT_CA,
         root_ca,
     )
@@ -133,20 +151,20 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
     attestation::root_ca::set_ca(root_ca).expect("Invalid root certificate\n");
 }
 
-fn initialize_policy() {
-    #[cfg(feature = "policy_v2")]
-    {
-        use migtd::mig_policy;
+#[cfg(feature = "policy_v2")]
+fn initialize_policy() -> String {
+    use migtd::mig_policy;
 
-        let policy = config::get_policy().expect("Fail to get policy from CFV\n");
-        let policy_issuer_chain =
-            config::get_policy_issuer_chain().expect("Fail to get policy issuer chain from CFV\n");
-        // Initialize and verify the migration policy
-        mig_policy::init_policy(policy, policy_issuer_chain)
-            .expect("Failed to initialize migration policy");
-        // Initialize and verify the migration policy
-        mig_policy::init_tcb_info().expect("Failed to initialize migration policy");
-    }
+    let policy = config::get_policy().expect("Fail to get policy from CFV\n");
+    let policy_issuer_chain =
+        config::get_policy_issuer_chain().expect("Fail to get policy issuer chain from CFV\n");
+    // Initialize and verify the migration policy
+    let version = mig_policy::init_policy(policy, policy_issuer_chain)
+        .expect("Failed to initialize migration policy");
+    // Initialize and verify the migration policy
+    mig_policy::init_tcb_info().expect("Failed to initialize migration policy");
+
+    version
 }
 
 fn handle_pre_mig() {

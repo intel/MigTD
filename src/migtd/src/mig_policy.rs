@@ -62,13 +62,16 @@ mod v2 {
     }
 
     /// Initialize the global verified policy once
-    pub fn init_policy(policy_json: &'static [u8], cert_chain: &[u8]) -> Result<(), PolicyError> {
+    pub fn init_policy(
+        policy_json: &'static [u8],
+        cert_chain: &[u8],
+    ) -> Result<String, PolicyError> {
         VERIFIED_POLICY
             .try_call_once(|| {
                 let raw = RawPolicyData::deserialize_from_json(policy_json)?;
                 raw.verify(cert_chain, None, None)
             })
-            .map(|_| ())
+            .map(|p| p.get_version().to_string())
     }
 
     /// Initialize the global local TCB info once
