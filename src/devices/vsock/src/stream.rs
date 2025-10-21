@@ -276,9 +276,7 @@ impl VsockStream {
             // Determine how much data to send in this packet
             let remaining = total_len - bytes_sent;
             let available_space = self.peer_free_space() as usize;
-            let chunk_size = remaining
-                .min(MAX_VSOCK_PKT_DATA_LEN as usize)
-                .min(available_space);
+            let chunk_size = remaining.min(MAX_VSOCK_PKT_DATA_LEN).min(available_space);
 
             let mut header_buf = [0u8; HEADER_LEN];
             let mut packet = Packet::new_unchecked(&mut header_buf[..]);
