@@ -85,10 +85,6 @@ pub struct VerifiedPolicy<'a> {
 }
 
 impl VerifiedPolicy<'_> {
-    pub fn validate(&self) -> bool {
-        self.policy_data.validate()
-    }
-
     pub fn get_collaterals(&self) -> &Collaterals {
         &self.policy_data.collaterals
     }
@@ -147,6 +143,11 @@ impl<'a> RawPolicyData<'a> {
         let servtd_tcb_mapping_issuer_chain =
             servtd_collateral.servtd_tcb_mapping_issuer_chain.clone();
 
+        // Step 3: Sanity checks
+        if !policy_data.validate() {
+            return Err(PolicyError::InvalidParameter);
+        }
+
         Ok(VerifiedPolicy {
             policy_data,
             servtd_identity,
@@ -194,7 +195,7 @@ impl<'a> PolicyData<'a> {
     }
 
     pub fn validate(&self) -> bool {
-        self.id.is_empty() || self.version != "2.0"
+        !self.id.is_empty() && self.version == "2.0"
     }
 
     pub fn evaluate_policy_forward(
