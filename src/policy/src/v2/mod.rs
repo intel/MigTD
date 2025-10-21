@@ -42,7 +42,7 @@ fn verify_event_hash(
 /// Convert a hex string to bytes without using external crates
 fn hex_string_to_bytes(hex: &str) -> Result<Vec<u8>, PolicyError> {
     // Ensure even number of characters
-    if hex.len() % 2 != 0 {
+    if hex.is_empty() || hex.len() % 2 != 0 {
         return Err(PolicyError::InvalidParameter);
     }
 
