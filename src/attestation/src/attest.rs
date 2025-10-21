@@ -35,27 +35,27 @@ pub struct Collateral {
     pub qe_identity: CString,
 }
 
-impl Into<QveCollateral> for &Collateral {
-    fn into(self) -> QveCollateral {
+impl From<&Collateral> for QveCollateral {
+    fn from(val: &Collateral) -> Self {
         QveCollateral {
-            major_version: self.major_version,
-            minor_version: self.minor_version,
-            tee_type: self.tee_type,
-            pck_crl_issuer_chain: self.pck_crl_issuer_chain.as_ptr(),
-            pck_crl_issuer_chain_size: self.pck_crl_issuer_chain.as_bytes_with_nul().len() as u32,
-            root_ca_crl: self.root_ca_crl.as_ptr(),
-            root_ca_crl_size: self.root_ca_crl.as_bytes_with_nul().len() as u32,
-            pck_crl: self.pck_crl.as_ptr(),
-            pck_crl_size: self.pck_crl.as_bytes_with_nul().len() as u32,
-            tcb_info_issuer_chain: self.tcb_info_issuer_chain.as_ptr(),
-            tcb_info_issuer_chain_size: self.tcb_info_issuer_chain.as_bytes_with_nul().len() as u32,
-            tcb_info: self.tcb_info.as_ptr(),
-            tcb_info_size: self.tcb_info.as_bytes_with_nul().len() as u32,
-            qe_identity_issuer_chain: self.qe_identity_issuer_chain.as_ptr(),
-            qe_identity_issuer_chain_size: self.qe_identity_issuer_chain.as_bytes_with_nul().len()
+            major_version: val.major_version,
+            minor_version: val.minor_version,
+            tee_type: val.tee_type,
+            pck_crl_issuer_chain: val.pck_crl_issuer_chain.as_ptr(),
+            pck_crl_issuer_chain_size: val.pck_crl_issuer_chain.as_bytes_with_nul().len() as u32,
+            root_ca_crl: val.root_ca_crl.as_ptr(),
+            root_ca_crl_size: val.root_ca_crl.as_bytes_with_nul().len() as u32,
+            pck_crl: val.pck_crl.as_ptr(),
+            pck_crl_size: val.pck_crl.as_bytes_with_nul().len() as u32,
+            tcb_info_issuer_chain: val.tcb_info_issuer_chain.as_ptr(),
+            tcb_info_issuer_chain_size: val.tcb_info_issuer_chain.as_bytes_with_nul().len() as u32,
+            tcb_info: val.tcb_info.as_ptr(),
+            tcb_info_size: val.tcb_info.as_bytes_with_nul().len() as u32,
+            qe_identity_issuer_chain: val.qe_identity_issuer_chain.as_ptr(),
+            qe_identity_issuer_chain_size: val.qe_identity_issuer_chain.as_bytes_with_nul().len()
                 as u32,
-            qe_identity: self.qe_identity.as_ptr(),
-            qe_identity_size: self.qe_identity.as_bytes_with_nul().len() as u32,
+            qe_identity: val.qe_identity.as_ptr(),
+            qe_identity_size: val.qe_identity.as_bytes_with_nul().len() as u32,
         }
     }
 }

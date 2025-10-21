@@ -758,7 +758,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     };
 
     let mut remote_information = ExchangeInformation::default();
-    let mut exchange_information = exchange_info(&info)?;
+    let mut exchange_information = exchange_info(info)?;
 
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
