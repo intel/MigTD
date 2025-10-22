@@ -29,7 +29,10 @@ use zerocopy::AsBytes;
 type Result<T> = core::result::Result<T, MigrationResult>;
 
 use super::{data::*, *};
+#[cfg(not(feature = "spdm_attestation"))]
 use crate::ratls;
+#[cfg(feature = "spdm_attestation")]
+use crate::spdm;
 
 const TDCALL_STATUS_SUCCESS: u64 = 0;
 #[cfg(feature = "vmcall-raw")]
@@ -98,10 +101,10 @@ lazy_static! {
     pub static ref REQUESTS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
 }
 
-struct ExchangeInformation {
-    min_ver: u16,
-    max_ver: u16,
-    key: MigrationSessionKey,
+pub struct ExchangeInformation {
+    pub min_ver: u16,
+    pub max_ver: u16,
+    pub key: MigrationSessionKey,
 }
 
 impl Default for ExchangeInformation {
@@ -114,6 +117,7 @@ impl Default for ExchangeInformation {
     }
 }
 
+#[cfg(not(feature = "spdm_attestation"))]
 impl ExchangeInformation {
     fn as_bytes(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, size_of::<Self>()) }
@@ -700,11 +704,6 @@ async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
 
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
-    use crate::driver::ticks::with_timeout;
-    use core::time::Duration;
-
-    const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
-
     #[cfg(feature = "policy_v2")]
     let mut transport;
     #[cfg(not(feature = "policy_v2"))]
@@ -757,95 +756,125 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         transport = vsock;
     };
 
-    let mut remote_information = ExchangeInformation::default();
-    let mut exchange_information = exchange_info(info)?;
-
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
     let remote_policy = pre_session_data_exchange(&mut transport).await?;
 
-    // Establish TLS layer connection and negotiate the MSK
-    if info.is_src() {
-        // TLS client
-        let mut ratls_client = ratls::client(
-            transport,
-            #[cfg(feature = "policy_v2")]
-            remote_policy,
-        )
-        .map_err(|_| MigrationResult::SecureSessionError)?;
+    #[cfg(not(feature = "spdm_attestation"))]
+    {
+        use crate::driver::ticks::with_timeout;
+        use core::time::Duration;
 
-        // MigTD-S send Migration Session Forward key to peer
-        with_timeout(
-            TLS_TIMEOUT,
-            ratls_client.write(exchange_information.as_bytes()),
-        )
-        .await??;
-        let size = with_timeout(
-            TLS_TIMEOUT,
-            ratls_client.read(remote_information.as_bytes_mut()),
-        )
-        .await??;
-        if size < size_of::<ExchangeInformation>() {
-            return Err(MigrationResult::NetworkError);
+        const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+
+        let mut remote_information = ExchangeInformation::default();
+        let mut exchange_information = exchange_info(&info.mig_info, info.is_src())?;
+
+        // Establish TLS layer connection and negotiate the MSK
+        if info.is_src() {
+            // TLS client
+            let mut ratls_client = ratls::client(
+                transport,
+                #[cfg(feature = "policy_v2")]
+                remote_policy,
+            )
+            .map_err(|_| MigrationResult::SecureSessionError)?;
+
+            // MigTD-S send Migration Session Forward key to peer
+            with_timeout(
+                TLS_TIMEOUT,
+                ratls_client.write(exchange_information.as_bytes()),
+            )
+            .await??;
+            let size = with_timeout(
+                TLS_TIMEOUT,
+                ratls_client.read(remote_information.as_bytes_mut()),
+            )
+            .await??;
+            if size < size_of::<ExchangeInformation>() {
+                return Err(MigrationResult::NetworkError);
+            }
+            #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
+            ratls_client.transport_mut().shutdown().await?;
+
+            #[cfg(feature = "vmcall-raw")]
+            ratls_client
+                .transport_mut()
+                .shutdown()
+                .await
+                .map_err(|_e| MigrationResult::InvalidParameter)?;
+        } else {
+            // TLS server
+            let mut ratls_server = ratls::server(
+                transport,
+                #[cfg(feature = "policy_v2")]
+                remote_policy,
+            )
+            .map_err(|_| MigrationResult::SecureSessionError)?;
+
+            with_timeout(
+                TLS_TIMEOUT,
+                ratls_server.write(exchange_information.as_bytes()),
+            )
+            .await??;
+            let size = with_timeout(
+                TLS_TIMEOUT,
+                ratls_server.read(remote_information.as_bytes_mut()),
+            )
+            .await??;
+            if size < size_of::<ExchangeInformation>() {
+                return Err(MigrationResult::NetworkError);
+            }
+            #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
+            ratls_server.transport_mut().shutdown().await?;
+
+            #[cfg(feature = "vmcall-raw")]
+            ratls_server
+                .transport_mut()
+                .shutdown()
+                .await
+                .map_err(|_e| MigrationResult::InvalidParameter)?;
         }
-        #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
-        ratls_client.transport_mut().shutdown().await?;
 
-        #[cfg(feature = "vmcall-raw")]
-        ratls_client
-            .transport_mut()
-            .shutdown()
-            .await
-            .map_err(|_e| MigrationResult::InvalidParameter)?;
-    } else {
-        // TLS server
-        let mut ratls_server = ratls::server(
-            transport,
-            #[cfg(feature = "policy_v2")]
-            remote_policy,
-        )
-        .map_err(|_| MigrationResult::SecureSessionError)?;
+        let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
+        set_mig_version(&info.mig_info, mig_ver)?;
+        write_msk(&info.mig_info, &remote_information.key)?;
 
-        with_timeout(
-            TLS_TIMEOUT,
-            ratls_server.write(exchange_information.as_bytes()),
-        )
-        .await??;
-        let size = with_timeout(
-            TLS_TIMEOUT,
-            ratls_server.read(remote_information.as_bytes_mut()),
-        )
-        .await??;
-        if size < size_of::<ExchangeInformation>() {
-            return Err(MigrationResult::NetworkError);
-        }
-        #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
-        ratls_server.transport_mut().shutdown().await?;
-
-        #[cfg(feature = "vmcall-raw")]
-        ratls_server
-            .transport_mut()
-            .shutdown()
-            .await
-            .map_err(|_e| MigrationResult::InvalidParameter)?;
+        log::info!("Set MSK and report status\n");
+        exchange_information.key.clear();
+        remote_information.key.clear();
     }
 
-    let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
-    set_mig_version(info, mig_ver)?;
-    write_msk(&info.mig_info, &remote_information.key)?;
+    #[cfg(feature = "spdm_attestation")]
+    if info.is_src() {
+        let mut spdm_requester =
+            spdm::spdm_requester(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-    log::info!("Set MSK and report status\n");
-    exchange_information.key.clear();
-    remote_information.key.clear();
+        spdm::spdm_requester_transfer_msk(&mut spdm_requester, &info.mig_info)
+            .await
+            .map_err(|_| MigrationResult::MutualAttestationError)?;
+        log::info!("MSK exchange completed\n");
+    } else {
+        let mut spdm_responder =
+            spdm::spdm_responder(transport).map_err(|_| MigrationResult::SecureSessionError)?;
+
+        spdm::spdm_responder_transfer_msk(&mut spdm_responder, &info.mig_info)
+            .await
+            .map_err(|_| MigrationResult::MutualAttestationError)?;
+        log::info!("MSK exchange completed\n");
+    }
 
     Ok(())
 }
 
-fn exchange_info(info: &MigrationInformation) -> Result<ExchangeInformation> {
+pub fn exchange_info(
+    mig_info: &MigtdMigrationInformation,
+    is_src: bool,
+) -> Result<ExchangeInformation> {
     let mut exchange_info = ExchangeInformation::default();
-    read_msk(&info.mig_info, &mut exchange_info.key)?;
+    read_msk(mig_info, &mut exchange_info.key)?;
 
-    let (field_min, field_max) = if info.is_src() {
+    let (field_min, field_max) = if is_src {
         (GSM_FIELD_MIN_EXPORT_VERSION, GSM_FIELD_MAX_EXPORT_VERSION)
     } else {
         (GSM_FIELD_MIN_IMPORT_VERSION, GSM_FIELD_MAX_IMPORT_VERSION)
@@ -873,7 +902,7 @@ fn read_msk(mig_info: &MigtdMigrationInformation, msk: &mut MigrationSessionKey)
     Ok(())
 }
 
-fn write_msk(mig_info: &MigtdMigrationInformation, msk: &MigrationSessionKey) -> Result<()> {
+pub fn write_msk(mig_info: &MigtdMigrationInformation, msk: &MigrationSessionKey) -> Result<()> {
     for idx in 0..msk.fields.len() {
         tdx::tdcall_servtd_wr(
             mig_info.binding_handle,
@@ -908,7 +937,7 @@ pub fn tdcall_sys_rd(field_identifier: u64) -> core::result::Result<(u64, u64), 
     Ok((args.rdx, args.r8))
 }
 
-fn cal_mig_version(
+pub fn cal_mig_version(
     is_src: bool,
     local_info: &ExchangeInformation,
     remote_info: &ExchangeInformation,
@@ -940,12 +969,12 @@ fn cal_mig_version(
     Ok(core::cmp::min(max_export, max_import))
 }
 
-fn set_mig_version(info: &MigrationInformation, mig_ver: u16) -> Result<()> {
+pub fn set_mig_version(mig_info: &MigtdMigrationInformation, mig_ver: u16) -> Result<()> {
     tdcall_servtd_wr(
-        info.mig_info.binding_handle,
+        mig_info.binding_handle,
         TDCS_FIELD_MIG_VERSION,
         mig_ver as u64,
-        &info.mig_info.target_td_uuid,
+        &mig_info.target_td_uuid,
     )?;
     Ok(())
 }

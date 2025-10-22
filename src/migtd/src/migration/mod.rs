@@ -71,7 +71,7 @@ pub const STREAM_SOCKET_INFO_HOB_GUID: Guid = Guid::from_fields(
 );
 
 #[repr(C)]
-#[derive(Debug, Pread, Pwrite)]
+#[derive(Debug, Pread, Pwrite, Clone, Default)]
 pub struct MigtdMigrationInformation {
     // ID for the migration request, which can be used in TDG.VP.VMCALL
     // <Service.MigTD.ReportStatus>
@@ -79,7 +79,7 @@ pub struct MigtdMigrationInformation {
 
     // If set, current MigTD is MigTD-s else current MigTD is MigTD-d
     pub migration_source: u8,
-    _pad: [u8; 7],
+    pub _pad: [u8; 7],
 
     // UUID of target TD
     pub target_td_uuid: [u64; 4],

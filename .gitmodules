@@ -4,3 +4,6 @@
 [submodule "deps/td-shim"]
 	path = deps/td-shim
 	url = https://github.com/confidential-containers/td-shim
+[submodule "deps/spdm-rs"]
+	path = deps/spdm-rs
+	url = https://github.com/ccc-spdm-tools/spdm-rs

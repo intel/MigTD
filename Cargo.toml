@@ -27,7 +27,8 @@ default-members = [
 
 exclude = [
     "deps/td-shim",
-    "deps/rustls"
+    "deps/rustls",
+    "deps/spdm-rs/sys_time"
     ]
 
 resolver = "2"
@@ -47,3 +48,5 @@ lto = true
 
 [patch.crates-io]
 ring = { path = "deps/td-shim/library/ring" }
+sys_time = { path = "src/std-support/sys_time" }
+

@@ -1,0 +1,23 @@
+{
+    "__usage": "This helps generate compile-time constant sizes for SPDM arrays. See src/config.rs generated for details.",
+    "cert_config": {
+        "max_cert_chain_data_size": 4096
+    },
+    "measurement_config": {
+        "max_measurement_record_size": 4000,
+        "max_measurement_val_len": 1024
+    },
+    "psk_config": {
+        "max_psk_context_size": 64,
+        "max_psk_hint_size": 32
+    },
+    "max_opaque_list_elements_count": 3,
+    "max_session_count": 4,
+    "transport_config": {
+        "sender_buffer_size": 4160,
+        "receiver_buffer_size": 4160
+    },
+    "max_spdm_msg_size": 65536,
+    "heartbeat_period_value": 0,
+    "max_root_cert_support": 10
+}
