@@ -32,11 +32,11 @@ pub use io::{Error, ErrorKind, IoSlice, IoSliceMut, Result};
 /// Read bytes asynchronously.
 pub trait AsyncRead {
     /// Attempt to read from the `AsyncRead` into `buf`.
-    fn read(&mut self, buf: &mut [u8]) -> impl core::future::Future<Output = Result<usize>>;
+    fn read(&mut self, buf: &mut [u8]) -> impl core::future::Future<Output = Result<usize>> + Send;
 }
 
 /// Write bytes asynchronously.
 pub trait AsyncWrite {
     /// Attempt to write the `buf` into `AsyncWrite`.
-    fn write(&mut self, buf: &[u8]) -> impl core::future::Future<Output = Result<usize>>;
+    fn write(&mut self, buf: &[u8]) -> impl core::future::Future<Output = Result<usize>> + Send;
 }

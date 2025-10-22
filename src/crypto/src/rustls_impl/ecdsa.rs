@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::vec::Vec;
+use pki_types::alg_id;
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
 use ring::signature::{self, EcdsaKeyPair, KeyPair, UnparsedPublicKey};
 use rustls_pemfile::Item;
 use zeroize::Zeroize;
 
-use crate::{Error, Result};
+use crate::{x509, Error, Result};
 
 // Re-export ring's ECDSA verification algorithms for convenient access
 pub use ring::signature::{
@@ -64,6 +65,20 @@ impl EcdsaPk {
         )
         .map_err(|_| Error::GenerateKeyPair)?;
         Ok(ecdsa_key.public_key().as_ref().to_vec())
+    }
+
+    pub fn public_key_spki(&self) -> Vec<u8> {
+        let rand: SystemRandom = SystemRandom::new();
+        let ecdsa_key = EcdsaKeyPair::from_pkcs8(
+            &signature::ECDSA_P384_SHA384_ASN1_SIGNING,
+            self.pk.as_ref(),
+            &rand,
+        )
+        .expect("public_key_spki: failed to get public key");
+        let pub_key = ecdsa_key.public_key();
+        let mut spki_inner = x509::wrap_in_sequence(&alg_id::ECDSA_P384);
+        spki_inner.extend(&x509::wrap_in_bit_string(pub_key.as_ref()));
+        x509::wrap_in_sequence(&spki_inner)
     }
 }
 
@@ -128,4 +143,13 @@ fn sensitive_data_cleanup<T: Sized>(t: &mut T) {
         core::slice::from_raw_parts_mut(t as *mut T as *mut u8, core::mem::size_of::<T>())
     };
     bytes.zeroize();
+}
+
+#[test]
+fn test_ecdsa() {
+    let ecdsa = EcdsaPk::new().unwrap();
+    let data = b"test_data";
+    let sig = ecdsa.sign(data).unwrap();
+    let pub_key = ecdsa.public_key().unwrap();
+    assert!(ecdsa_verify(&pub_key, data, &sig).is_ok());
 }

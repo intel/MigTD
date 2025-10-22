@@ -14,6 +14,7 @@ pub mod event_log;
 pub mod mig_policy;
 pub mod migration;
 pub mod ratls;
+pub mod spdm;
 
 /// The entry point of MigTD-Core
 ///
@@ -25,8 +26,16 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     use td_payload::arch;
     use td_payload::mm::layout::*;
 
+    #[cfg(not(feature = "spdm_attestation"))]
     const STACK_SIZE: usize = 0x1_0000;
+    #[cfg(not(feature = "spdm_attestation"))]
     const HEAP_SIZE: usize = 0x20_0000;
+
+    #[cfg(feature = "spdm_attestation")]
+    const STACK_SIZE: usize = 0x40_0000;
+    #[cfg(feature = "spdm_attestation")]
+    const HEAP_SIZE: usize = 0x40_0000;
+
     const PT_SIZE: usize = 0x8_0000;
 
     extern "C" {
