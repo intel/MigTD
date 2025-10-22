@@ -25,7 +25,8 @@ use td_shim::event_log::{
     PLATFORM_CONFIG_SECURE_AUTHORITY, PLATFORM_CONFIG_SVN, PLATFORM_FIRMWARE_BLOB2_PAYLOAD,
 };
 
-pub const REPORT_DATA_SIZE: usize = 774;
+// Plain report data size not including supplemental TCB date and status.
+pub const REPORT_DATA_SIZE: usize = 734;
 const MAX_RTMR_INDEX: usize = 3;
 const EV_EVENT_TAG: u32 = 0x00000006;
 const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
