@@ -96,6 +96,8 @@ impl<'a> Report<'a> {
     const R_QE_MRSIGNER: Range<usize> = 698..730;
     const R_QE_ISV_PRO_ID: Range<usize> = 730..732;
     const R_QE_ISV_SVN: Range<usize> = 732..734;
+    pub const R_TCB_DATE: Range<usize> = 734..742;
+    pub const R_TCB_STATUS: Range<usize> = 742..774;
 
     pub fn new(report: &'a [u8]) -> Result<Self, PolicyError> {
         if report.len() != REPORT_DATA_SIZE {
