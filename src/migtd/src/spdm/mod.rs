@@ -150,7 +150,6 @@ impl Codec for SpdmAppContextData {
         let mut size = 0;
         size += self.migration_info.mig_request_id.encode(bytes)?;
         size += self.migration_info.migration_source.encode(bytes)?;
-        size += self.migration_info._pad.encode(bytes)?;
         size += self.migration_info.target_td_uuid.encode(bytes)?;
         size += self.migration_info.binding_handle.encode(bytes)?;
 
@@ -170,22 +169,21 @@ impl Codec for SpdmAppContextData {
     }
 
     fn read(reader: &mut Reader) -> Option<Self> {
-        let migration_info = MigtdMigrationInformation {
-            mig_request_id: u64::read(reader)?,
-            migration_source: u8::read(reader)?,
-            _pad: <[u8; 7]>::read(reader)?,
-            target_td_uuid: <[u64; 4]>::read(reader)?,
-            binding_handle: u64::read(reader)?,
-            mig_policy_id: if cfg!(not(feature = "vmcall-raw")) {
-                u64::read(reader)?
-            } else {
-                0
-            },
-            communication_id: if cfg!(not(feature = "vmcall-raw")) {
-                u64::read(reader)?
-            } else {
-                0
-            },
+        let mut migration_info = MigtdMigrationInformation::default();
+        migration_info.mig_request_id = u64::read(reader)?;
+        migration_info.migration_source = u8::read(reader)?;
+        migration_info.target_td_uuid = <[u64; 4]>::read(reader)?;
+        migration_info.binding_handle = u64::read(reader)?;
+
+        migration_info.mig_policy_id = if cfg!(not(feature = "vmcall-raw")) {
+            u64::read(reader)?
+        } else {
+            0
+        };
+        migration_info.communication_id = if cfg!(not(feature = "vmcall-raw")) {
+            u64::read(reader)?
+        } else {
+            0
         };
 
         let private_key = PrivateKeyDer::read(reader)?;

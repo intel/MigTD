@@ -198,7 +198,7 @@ pub fn handle_exchange_pub_key_req(
     let mut cnt = 0;
 
     let vdm_exchange_pub_key = VdmMessage {
-        major_version: 0,
+        major_version: VDM_MESSAGE_MAJOR_VERSION,
         op_code: VdmMessageOpCode::ExchangePubKeyRsp,
         element_count: 1,
     };
@@ -338,7 +338,7 @@ pub fn handle_exchange_mig_attest_info_req(
     let mut cnt = 0;
 
     let vdm_exchange_attest_info = VdmMessage {
-        major_version: 0,
+        major_version: VDM_MESSAGE_MAJOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoRsp,
         element_count: 3,
     };
@@ -361,7 +361,7 @@ pub fn handle_exchange_mig_attest_info_req(
     let report_data_prefix_len = report_data_prefix.len();
     // Build concatenated slice: "MigTDRsp" || th1
     let th1_len = th1.data_size as usize;
-    // th1 for SHA-384 should be 48 bytes; allocate 8 (prefix) + 48 digest
+    // th1 for SHA-384 should be 48 bytes; 8 (prefix) + 48 digest = 56 bytes needed.
     let mut report_data = [0u8; "MigTDRsp".len() + SPDM_MAX_HASH_SIZE];
     // Copy prefix
     report_data[..report_data_prefix_len].copy_from_slice(report_data_prefix);
@@ -492,7 +492,7 @@ pub fn handle_exchange_mig_info_req(
     let mut writer = Writer::init(&mut payload);
     let mut cnt = 0;
     let vdm_exchange_mig_info = VdmMessage {
-        major_version: 0,
+        major_version: VDM_MESSAGE_MAJOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationInfoRsp,
         element_count: 2,
     };

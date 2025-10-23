@@ -79,7 +79,7 @@ pub struct MigtdMigrationInformation {
 
     // If set, current MigTD is MigTD-s else current MigTD is MigTD-d
     pub migration_source: u8,
-    pub _pad: [u8; 7],
+    _pad: [u8; 7],
 
     // UUID of target TD
     pub target_td_uuid: [u64; 4],
