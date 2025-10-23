@@ -275,13 +275,12 @@ mod v2 {
     fn get_tcb_date_and_status_from_suppl_data(
         suppl_data: &[u8],
     ) -> Result<(String, String), PolicyError> {
-        if suppl_data.len() < REPORT_DATA_SIZE + 40 {
+        if suppl_data.len() < REPORT_DATA_SIZE {
             return Err(PolicyError::InvalidParameter);
         }
-        let data = &suppl_data[REPORT_DATA_SIZE..REPORT_DATA_SIZE + 40];
 
-        let tcb_date_bytes = &data[0..8];
-        let tcb_status_bytes = &data[8..40];
+        let tcb_date_bytes = &suppl_data[Report::R_TCB_DATE];
+        let tcb_status_bytes = &suppl_data[Report::R_TCB_STATUS];
 
         let tcb_date = u64::from_le_bytes(tcb_date_bytes.try_into().unwrap());
         let tcb_status = slice_to_string_null_terminated(tcb_status_bytes)?;
