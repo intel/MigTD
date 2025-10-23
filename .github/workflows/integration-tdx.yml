@@ -112,5 +112,33 @@ jobs:
           pushd sh_script/test
           sudo pytest -k "function" --device_type serial
           popd
+  
+  spdm_attestation:
+    name: Run SPDM Attestation Test
+    runs-on: [self-hosted, tdx]
+
+    steps:
+      - name: Clean test repository
+        run: |
+          sudo rm -rf sh_script/test/
+
+      - name: Checkout sources
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with: 
+          submodules: recursive
       
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+
+      - name: Build Migration TD binary with SPDM feature
+        run: cargo image --features spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+
+      - name: Build all test binaries
+        run: bash sh_script/build_final.sh -t test -c -a on
+
+      - name: Run SPDM Attestation Tests
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "function"
+          popd
       
