@@ -450,10 +450,12 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
     let mut data_length: u32 = 0;
     let mut data_buffer = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
-    if let Some(_value) = u8_to_migration_result(status) {
-        reportstatus = reportstatus
-            .with_pre_migration_status(1)
-            .with_error_code(status);
+    if let Some(value) = u8_to_migration_result(status) {
+        if value != MigrationResult::Success {
+            reportstatus = reportstatus
+                .with_pre_migration_status(1)
+                .with_error_code(status);
+        }
     } else {
         return Err(MigrationResult::InvalidParameter);
     }
