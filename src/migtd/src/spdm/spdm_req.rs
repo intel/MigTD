@@ -234,7 +234,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
     let mut cnt = 0;
 
     let vdm_exchange_pub_key = VdmMessage {
-        major_version: 0,
+        major_version: VDM_MESSAGE_MAJOR_VERSION,
         op_code: VdmMessageOpCode::ExchangePubKeyReq,
         element_count: 1,
     };
@@ -375,7 +375,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     let mut cnt = 0;
 
     let vdm_exchange_attest_info = VdmMessage {
-        major_version: 0,
+        major_version: VDM_MESSAGE_MAJOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
         element_count: 3,
     };
@@ -395,7 +395,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     let report_data_prefix_len = report_data_prefix.len();
     // Build concatenated slice: "MigTDReq" || th1
     let th1_len = th1.data_size as usize;
-    // th1 for SHA-384 should be 48 bytes; allocate 8 (prefix) + 48 digest
+    // th1 for SHA-384 should be 48 bytes; 8 (prefix) + 48 digest = 56 bytes needed.
     let mut report_data = [0u8; "MigTDReq".len() + SPDM_MAX_HASH_SIZE];
     // Copy prefix
     report_data[..report_data_prefix_len].copy_from_slice(report_data_prefix);
@@ -467,7 +467,6 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         .send_message(None, &send_buffer[..used], false)
         .await?;
 
-    //receive
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let receive_used = spdm_requester
         .receive_message(None, &mut receive_buffer, false)
@@ -476,7 +475,8 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     let vdm_payload = spdm_requester
         .handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])
         .unwrap();
-    // Todo data received check.
+
+    //Format checks
     let reader = &mut Reader::init(
         &vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize],
     );
@@ -571,7 +571,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
     let mut cnt = 0;
 
     let vdm_exchange_migration_info = VdmMessage {
-        major_version: 0,
+        major_version: VDM_MESSAGE_MAJOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationInfoReq,
         element_count: 2,
     };

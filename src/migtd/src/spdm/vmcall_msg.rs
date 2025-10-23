@@ -15,6 +15,8 @@ use spin::Mutex;
 
 pub const VMCALL_SPDM_SIGNATURE: u32 = 0x4D445053; // 'SPDM'
 pub const VMCALL_SPDM_VERSION: u16 = 0x0100; // Version 1.0
+pub const VMCALL_SPDM_MESSAGE_TYPE_SPDM_MESSAGE: u8 = 0x1; // 1 – DSP0274 SPDM message
+pub const VMCALL_SPDM_MESSAGE_TYPE_SECURED_SPDM_MESSAGE: u8 = 0x2; // 2 – DSP0277 Secured SPDM message
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum VmCallMessageType {
@@ -31,8 +33,8 @@ impl Default for VmCallMessageType {
 impl From<&VmCallMessageType> for u8 {
     fn from(value: &VmCallMessageType) -> Self {
         match value {
-            VmCallMessageType::SpdmMessage => 1,
-            VmCallMessageType::SecuredSpdmMessage => 2,
+            VmCallMessageType::SpdmMessage => VMCALL_SPDM_MESSAGE_TYPE_SPDM_MESSAGE,
+            VmCallMessageType::SecuredSpdmMessage => VMCALL_SPDM_MESSAGE_TYPE_SECURED_SPDM_MESSAGE,
         }
     }
 }
@@ -42,8 +44,10 @@ impl TryFrom<u8> for VmCallMessageType {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(VmCallMessageType::SpdmMessage),
-            2 => Ok(VmCallMessageType::SecuredSpdmMessage),
+            VMCALL_SPDM_MESSAGE_TYPE_SPDM_MESSAGE => Ok(VmCallMessageType::SpdmMessage),
+            VMCALL_SPDM_MESSAGE_TYPE_SECURED_SPDM_MESSAGE => {
+                Ok(VmCallMessageType::SecuredSpdmMessage)
+            }
             _ => Err(()),
         }
     }

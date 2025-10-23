@@ -16,6 +16,7 @@ use crate::spdm::spdm_rsp::*;
 // Intel(343)
 pub const VDM_MESSAGE_VENDOR_ID: [u8; 4] = [0x57, 0x1, 0x0, 0x0];
 pub const VDM_MESSAGE_VENDOR_ID_LEN: usize = 4;
+pub const VDM_MESSAGE_MAJOR_VERSION: u8 = 0;
 
 enum_builder! {
     @U8
