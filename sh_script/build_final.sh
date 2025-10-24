@@ -50,6 +50,7 @@ function proccess_args() {
     case "${device}" in
         vmcall) MIGTD_FEATURE+=",vmcall-vsock";;
         serial) MIGTD_FEATURE+=",virtio-serial";;
+        spdm_attestation) MIGTD_FEATURE+=",spdm_attestation,virtio-vsock";;
         *) MIGTD_FEATURE+=",virtio-vsock";;
     esac
 }
@@ -324,7 +325,10 @@ function enroll() {
     cp2bin "./target/release/$3"
 }
 
-./sh_script/preparation.sh
+. /sh_script/preparation.sh
+
+echo "The spdm config is $SPDM_CONFIG"
+echo $SPDM_CONFIG
 
 populate_layout
 

@@ -134,7 +134,7 @@ jobs:
         run: cargo image --features spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 
       - name: Build all test binaries
-        run: bash sh_script/build_final.sh -t test -c -a on
+        run: bash sh_script/build_final.sh -t test -c -a on -d spdm_attestation
 
       - name: Run SPDM Attestation Tests
         run: |
