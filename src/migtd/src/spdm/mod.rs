@@ -143,6 +143,8 @@ impl Codec for PrivateKeyDer {
 struct SpdmAppContextData {
     pub migration_info: MigtdMigrationInformation,
     pub private_key: PrivateKeyDer,
+    #[cfg(feature = "policy_v2")]
+    pub remote_policy_hash: Vec<u8>,
 }
 
 impl Codec for SpdmAppContextData {
@@ -165,6 +167,18 @@ impl Codec for SpdmAppContextData {
         };
 
         size += self.private_key.encode(bytes)?;
+
+        #[cfg(feature = "policy_v2")]
+        {
+            let remote_policy_hash_len = self.remote_policy_hash.len() as u16;
+            size += remote_policy_hash_len.encode(bytes)?;
+            if let Some(len) = bytes.extend_from_slice(self.remote_policy_hash.as_slice()) {
+                size += len;
+            } else {
+                return Err(codec::EncodeErr);
+            }
+        }
+
         Ok(size)
     }
 
@@ -187,9 +201,17 @@ impl Codec for SpdmAppContextData {
         };
 
         let private_key = PrivateKeyDer::read(reader)?;
+
+        #[cfg(feature = "policy_v2")]
+        let remote_policy_hash_len = u16::read(reader)? as usize;
+        #[cfg(feature = "policy_v2")]
+        let remote_policy_hash = reader.take(remote_policy_hash_len)?;
+
         Some(Self {
             migration_info,
             private_key,
+            #[cfg(feature = "policy_v2")]
+            remote_policy_hash: remote_policy_hash.to_vec(),
         })
     }
 }

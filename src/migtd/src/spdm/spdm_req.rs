@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use crate::mig_policy;
 use crate::{
     migration::{
         data::MigrationSessionKey,
@@ -86,6 +87,7 @@ pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
 pub async fn spdm_requester_transfer_msk(
     spdm_requester: &mut RequesterContext,
     mig_info: &MigtdMigrationInformation,
+    #[cfg(feature = "policy_v2")] remote_policy: &[u8],
 ) -> Result<(), SpdmStatus> {
     let res = with_timeout(SPDM_TIMEOUT, spdm_requester.send_receive_spdm_version()).await;
     match res {
@@ -151,7 +153,12 @@ pub async fn spdm_requester_transfer_msk(
 
     let res: Result<Result<(), SpdmStatus>, crate::driver::ticks::TimeoutError> = with_timeout(
         SPDM_TIMEOUT,
-        send_and_receive_sdm_migration_attest_info(spdm_requester, session_id),
+        send_and_receive_sdm_migration_attest_info(
+            spdm_requester,
+            session_id,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        ),
     )
     .await;
     match res {
@@ -219,6 +226,8 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
     let requester_app_context = SpdmAppContextData {
         migration_info: MigtdMigrationInformation::default(),
         private_key: PrivateKeyDer::from(private_key),
+        #[cfg(feature = "policy_v2")]
+        remote_policy_hash: vec![],
     };
     let writer = &mut Writer::init(&mut spdm_requester.common.app_context_data_buffer);
     requester_app_context
@@ -358,6 +367,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
 pub async fn send_and_receive_sdm_migration_attest_info(
     spdm_requester: &mut RequesterContext,
     session_id: u32,
+    #[cfg(feature = "policy_v2")] remote_policy: &[u8],
 ) -> SpdmResult {
     if spdm_requester.common.provision_info.my_pub_key.is_none()
         || spdm_requester.common.provision_info.peer_pub_key.is_none()
@@ -405,6 +415,20 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     //quote src
     let quote_src = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let res = attestation::verify_quote(quote_src.as_slice());
+    //  The session MUST be terminated immediately, if the mutual attestation failure
+    if res.is_err() {
+        error!("mutual attestation failed, end the session!\n");
+        let session = spdm_requester
+            .common
+            .get_session_via_id(session_id)
+            .unwrap();
+        session.teardown();
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    #[allow(unused_variables)]
+    let verified_report_local = res.unwrap();
+
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
         length: quote_src.len() as u16,
@@ -415,28 +439,28 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     cnt += writer.extend_from_slice(quote_src.as_slice()).unwrap();
 
     //event log src
-    let event_log = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let event_log_src = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
-        length: event_log.len() as u16,
+        length: event_log_src.len() as u16,
     };
     cnt += event_log_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(event_log).unwrap();
+    cnt += writer.extend_from_slice(event_log_src).unwrap();
 
     //mig policy src
-    let mig_policy = get_policy().unwrap();
-    let mig_policy_hash = digest_sha384(mig_policy).unwrap();
+    let mig_policy_src = get_policy().unwrap();
+    let mig_policy_src_hash = digest_sha384(mig_policy_src).unwrap();
 
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
-        length: mig_policy_hash.len() as u16,
+        length: mig_policy_src_hash.len() as u16,
     };
     cnt += mig_policy_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(&mig_policy_hash).unwrap();
+    cnt += writer.extend_from_slice(&mig_policy_src_hash).unwrap();
 
     let vdm_payload = VendorDefinedReqPayloadStruct {
         req_length: cnt as u32,
@@ -512,6 +536,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         session.teardown();
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
+    let verified_report_peer = res.unwrap();
 
     //event log dst
     let vdm_element = VdmMessageElement::read(reader).unwrap();
@@ -522,7 +547,24 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let _event_log_dst = reader.take(vdm_element.length as usize).unwrap();
+    let event_log_dst = reader.take(vdm_element.length as usize).unwrap();
+    #[cfg(feature = "policy_v2")]
+    let event_log_dst_vec = event_log_dst.to_vec();
+
+    #[cfg(not(feature = "policy_v2"))]
+    {
+        let policy_check_result = mig_policy::authenticate_policy(
+            false,
+            verified_report_local.as_slice(),
+            verified_report_peer.as_slice(),
+            event_log_dst,
+        );
+        if let Err(e) = &policy_check_result {
+            error!("Policy check failed, below is the detail information:\n");
+            error!("{:x?}\n", e);
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+    }
 
     //mig policy dst
     let vdm_element = VdmMessageElement::read(reader).unwrap();
@@ -533,7 +575,36 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let _mig_policy_dst = reader.take(vdm_element.length as usize).unwrap();
+    #[allow(unused_variables)]
+    let mig_policy_hash_dst = reader.take(vdm_element.length as usize).unwrap();
+
+    #[cfg(feature = "policy_v2")]
+    {
+        let remote_policy_hash = digest_sha384(remote_policy).unwrap();
+        if mig_policy_hash_dst != remote_policy_hash.as_slice() {
+            error!(
+                "The received mig policy hash does not match the expected remote policy hash!\n"
+            );
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+
+        let policy_check_result = mig_policy::authenticate_remote(
+            true,
+            verified_report_peer.as_slice(),
+            mig_policy_hash_dst,
+            event_log_dst_vec.as_slice(),
+        );
+        if let Err(e) = &policy_check_result {
+            error!("Policy v2 check failed, below is the detail information:\n");
+            error!("{:x?}\n", e);
+            let session = spdm_requester
+                .common
+                .get_session_via_id(session_id)
+                .unwrap();
+            session.teardown();
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+    }
 
     let vdm_attest_info_src_hash = digest_sha384(&send_buffer[..used]).unwrap();
     let vdm_attest_info_dst_hash = digest_sha384(&receive_buffer[..receive_used]).unwrap();
