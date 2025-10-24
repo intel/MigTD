@@ -258,17 +258,21 @@ mod v2 {
 
         let migtd_svn = policy
             .servtd_tcb_mapping
-            .get_engine_svn_by_report(&report_value);
+            .get_engine_svn_by_report(&report_value)
+            .ok_or(PolicyError::InvalidServtdTcbMapping)?;
 
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
+        let migtd_tcb = policy
+            .servtd_identity
+            .get_tcb_level_by_svn(migtd_svn)
+            .ok_or(PolicyError::InvalidServtdIdentity)?;
 
         Ok(PolicyEvaluationInfo {
-            tcb_date: Some(tcb_date.to_string()),
-            tcb_status: Some(tcb_status.as_str().to_string()),
-            tcb_evaluation_number: Some(tcb_evaluation_number),
-            fmspc: Some(fmspc),
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+            tcb_date: tcb_date.to_string(),
+            tcb_status: tcb_status.as_str().to_string(),
+            tcb_evaluation_number: tcb_evaluation_number,
+            fmspc: fmspc,
+            migtd_tcb_date: migtd_tcb.tcb_date.clone(),
+            migtd_tcb_status: migtd_tcb.tcb_status.clone(),
         })
     }
 

@@ -58,22 +58,22 @@ impl TryFrom<&str> for TcbStatus {
 #[derive(Debug, Clone, Default)]
 pub struct PolicyEvaluationInfo {
     /// The date of the Trusted Computing Base (TCB) in ISO-8601 format, e.g. "2023-06-19T00:00:00Z"
-    pub tcb_date: Option<String>,
+    pub tcb_date: String,
 
     /// The status of the TCB
-    pub tcb_status: Option<String>,
+    pub tcb_status: String,
 
     /// The TCB evaluation data number used to track TCB revocations and updates
-    pub tcb_evaluation_number: Option<u32>,
+    pub tcb_evaluation_number: u32,
 
     /// The FMSPC of platform
-    pub fmspc: Option<[u8; 6]>,
+    pub fmspc: [u8; 6],
 
     /// The status of the MigTD TCB
-    pub migtd_tcb_status: Option<String>,
+    pub migtd_tcb_status: String,
 
     /// The date of the MigTD TCB in ISO-8601 format, e.g. "2023-06-19T00:00:00Z"
-    pub migtd_tcb_date: Option<String>,
+    pub migtd_tcb_date: String,
 }
 
 pub struct VerifiedPolicy<'a> {
@@ -306,36 +306,24 @@ impl TcbPolicy {
         relative_reference: &PolicyEvaluationInfo,
     ) -> Result<(), PolicyError> {
         if let Some(property) = &self.tcb_evaluation_data_number {
-            if let Some(tcb_evaluation_number) = value.tcb_evaluation_number {
-                if !property.evaluate_integer(
-                    tcb_evaluation_number,
-                    relative_reference.tcb_evaluation_number,
-                )? {
-                    return Err(PolicyError::TcbEvaluation);
-                }
-            }
-        }
-
-        if let Some(tcb_status_policy) = &self.tcb_status_accepted {
-            if !tcb_status_policy.evaluate_string(
-                value
-                    .tcb_status
-                    .as_deref()
-                    .ok_or(PolicyError::TcbEvaluation)?,
-                relative_reference.tcb_status.as_deref(),
+            if !property.evaluate_integer(
+                value.tcb_evaluation_number,
+                relative_reference.tcb_evaluation_number,
             )? {
                 return Err(PolicyError::TcbEvaluation);
             }
         }
 
+        if let Some(tcb_status_policy) = &self.tcb_status_accepted {
+            if !tcb_status_policy
+                .evaluate_string(&value.tcb_status, &relative_reference.tcb_status)?
+            {
+                return Err(PolicyError::TcbEvaluation);
+            }
+        }
+
         if let Some(tcb_date_policy) = &self.tcb_date {
-            if !tcb_date_policy.evaluate_string(
-                &value
-                    .tcb_date
-                    .as_deref()
-                    .ok_or(PolicyError::TcbEvaluation)?,
-                relative_reference.tcb_date.as_deref(),
-            )? {
+            if !tcb_date_policy.evaluate_string(&value.tcb_date, &relative_reference.tcb_date)? {
                 return Err(PolicyError::TcbEvaluation);
             }
         }
@@ -356,14 +344,9 @@ impl PlatformPolicy {
         relative_reference: &PolicyEvaluationInfo,
     ) -> Result<(), PolicyError> {
         if let Some(property) = &self.fmspc {
-            if let Some(fmspc) = value.fmspc.as_ref() {
-                let relative = relative_reference
-                    .fmspc
-                    .as_ref()
-                    .map(|s| bytes_to_hex_string(s));
-                if !property.evaluate_string(&bytes_to_hex_string(fmspc), relative.as_deref())? {
-                    return Err(PolicyError::TcbEvaluation);
-                }
+            let relative = bytes_to_hex_string(&relative_reference.fmspc);
+            if !property.evaluate_string(&bytes_to_hex_string(&value.fmspc), &relative)? {
+                return Err(PolicyError::TcbEvaluation);
             }
         }
 
@@ -384,24 +367,17 @@ impl ServtdPolicy {
         relative_reference: &PolicyEvaluationInfo,
     ) -> Result<(), PolicyError> {
         if let Some(property) = &self.migtd_identity.tcb_date {
-            if !property.evaluate_string(
-                value
-                    .migtd_tcb_date
-                    .as_deref()
-                    .ok_or(PolicyError::UnqualifiedMigTdInfo)?,
-                relative_reference.migtd_tcb_date.as_deref(),
-            )? {
+            if !property
+                .evaluate_string(&value.migtd_tcb_date, &relative_reference.migtd_tcb_date)?
+            {
                 return Err(PolicyError::SvnMismatch);
             }
         }
 
         if let Some(property) = &self.migtd_identity.tcb_status_accepted {
             if !property.evaluate_string(
-                value
-                    .migtd_tcb_status
-                    .as_deref()
-                    .ok_or(PolicyError::UnqualifiedMigTdInfo)?,
-                relative_reference.migtd_tcb_status.as_deref(),
+                &value.migtd_tcb_status,
+                &relative_reference.migtd_tcb_status,
             )? {
                 return Err(PolicyError::SvnMismatch);
             }
@@ -444,7 +420,7 @@ impl PolicyProperty {
     pub fn evaluate_integer(
         &self,
         value: u32,
-        relative_reference: Option<u32>,
+        relative_reference: u32,
     ) -> Result<bool, PolicyError> {
         let is_in_range = |value: &u32, range: &str| -> Result<bool, PolicyError> {
             let parts = range.split("..").collect::<Vec<&str>>();
@@ -471,7 +447,6 @@ impl PolicyProperty {
                 if reference != "self" && reference != "init" {
                     return Err(PolicyError::InvalidReference);
                 }
-                let relative_reference = relative_reference.ok_or(PolicyError::InvalidReference)?;
                 match self.operation.as_str() {
                     "equal" => Ok(value == relative_reference),
                     "greater-or-equal" => Ok(value >= relative_reference),
@@ -539,12 +514,12 @@ impl PolicyProperty {
     pub fn evaluate_string(
         &self,
         value: &str,
-        relative_reference: Option<&str>,
+        relative_reference: &str,
     ) -> Result<bool, PolicyError> {
         match &self.reference {
             Reference::String(reference) => {
                 let reference_value = match reference.as_str() {
-                    "self" | "init" => relative_reference.ok_or(PolicyError::InvalidReference)?,
+                    "self" | "init" => relative_reference,
                     other => other,
                 };
                 match self.operation.as_str() {
@@ -602,36 +577,36 @@ mod test {
         let global = include_str!("../../test/policy_v2/global.json");
         let global_policy = serde_json::from_str::<GlobalPolicy>(global).unwrap();
         let mut value = PolicyEvaluationInfo {
-            tcb_date: Some("2025-09-01T00:00:00Z".to_string()),
-            tcb_status: Some("UpToDate".to_string()),
-            tcb_evaluation_number: Some(15),
-            fmspc: Some([0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00]),
-            migtd_tcb_status: None,
-            migtd_tcb_date: None,
+            tcb_date: "2025-09-01T00:00:00Z".to_string(),
+            tcb_status: "UpToDate".to_string(),
+            tcb_evaluation_number: 15,
+            fmspc: [0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00],
+            migtd_tcb_status: "UpToDate".to_string(),
+            migtd_tcb_date: "2025-10-01T00:00:00Z".to_string(),
         };
         let relative_ref = PolicyEvaluationInfo::default();
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());
 
         // Unqualified TCB date
-        value.tcb_date = Some("2024-09-01T00:00:00Z".to_string());
+        value.tcb_date = "2024-09-01T00:00:00Z".to_string();
         assert!(global_policy.evaluate(&value, &relative_ref).is_err());
-        value.tcb_date = Some("2025-09-01T00:00:00Z".to_string());
+        value.tcb_date = "2025-09-01T00:00:00Z".to_string();
 
         // Unqualified TCB status
-        value.tcb_status = Some("Revoked".to_string());
+        value.tcb_status = "Revoked".to_string();
         assert!(global_policy.evaluate(&value, &relative_ref).is_err());
-        value.tcb_status = Some("ConfigurationNeeded".to_string());
+        value.tcb_status = "ConfigurationNeeded".to_string();
 
         // Unqualified TCB evaluation data number
-        value.tcb_evaluation_number = Some(10);
+        value.tcb_evaluation_number = 10;
         assert!(global_policy.evaluate(&value, &relative_ref).is_err());
-        value.tcb_evaluation_number = Some(15);
+        value.tcb_evaluation_number = 15;
 
         // Unqualified FMSPC
 
-        value.fmspc = Some([0x10, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        value.fmspc = [0x10, 0x00, 0x00, 0x00, 0x00, 0x00];
         assert!(global_policy.evaluate(&value, &relative_ref).is_err());
-        value.fmspc = Some([0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00]);
+        value.fmspc = [0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00];
 
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());
     }
@@ -644,10 +619,10 @@ mod test {
             reference: Reference::String("2025-01-01T00:00:00Z".to_string()),
         };
         assert!(tcb_date_policy
-            .evaluate_string("2025-06-15T12:00:00Z", Some("2025-06-15T12:00:00Z"),)
+            .evaluate_string("2025-06-15T12:00:00Z", "2025-06-15T12:00:00Z",)
             .unwrap());
         assert!(!tcb_date_policy
-            .evaluate_string("2024-01-01T00:00:00Z", Some("2025-06-15T12:00:00Z"),)
+            .evaluate_string("2024-01-01T00:00:00Z", "2025-06-15T12:00:00Z",)
             .unwrap());
 
         // Test with "self" reference
@@ -656,10 +631,10 @@ mod test {
             reference: Reference::String("self".to_string()),
         };
         assert!(tcb_date_policy
-            .evaluate_string("2025-06-15T12:01:00Z", Some("2025-06-15T12:00:00Z"),)
+            .evaluate_string("2025-06-15T12:01:00Z", "2025-06-15T12:00:00Z",)
             .unwrap());
         assert!(!tcb_date_policy
-            .evaluate_string("2025-06-15T11:00:00Z", Some("2025-06-15T12:00:00Z"),)
+            .evaluate_string("2025-06-15T11:00:00Z", "2025-06-15T12:00:00Z",)
             .unwrap());
     }
 
@@ -677,24 +652,24 @@ mod test {
         let relative_reference = "null";
         assert!(
             tcb_status_policy
-                .evaluate_string("UpToDate", Some(relative_reference))
+                .evaluate_string("UpToDate", relative_reference)
                 .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("SwHardeningNeeded", Some(relative_reference))
+                    .evaluate_string("SwHardeningNeeded", relative_reference)
                     .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("ConfigurationNeeded", Some(relative_reference))
+                    .evaluate_string("ConfigurationNeeded", relative_reference)
                     .unwrap()
         );
         assert!(
             !(tcb_status_policy
-                .evaluate_string("OutOfDate", Some(relative_reference))
+                .evaluate_string("OutOfDate", relative_reference)
                 .unwrap()
                 || tcb_status_policy
-                    .evaluate_string("OutOfDateConfigurationNeeded", Some(relative_reference))
+                    .evaluate_string("OutOfDateConfigurationNeeded", relative_reference)
                     .unwrap()
                 || tcb_status_policy
-                    .evaluate_string("Revoked", Some(relative_reference))
+                    .evaluate_string("Revoked", relative_reference)
                     .unwrap())
         );
 
@@ -708,24 +683,24 @@ mod test {
         };
         assert!(
             tcb_status_policy
-                .evaluate_string("UpToDate", Some(relative_reference))
+                .evaluate_string("UpToDate", relative_reference)
                 .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("SwHardeningNeeded", Some(relative_reference))
+                    .evaluate_string("SwHardeningNeeded", relative_reference)
                     .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("ConfigurationNeeded", Some(relative_reference))
+                    .evaluate_string("ConfigurationNeeded", relative_reference)
                     .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("OutOfDate", Some(relative_reference))
+                    .evaluate_string("OutOfDate", relative_reference)
                     .unwrap()
         );
         assert!(
             !(tcb_status_policy
-                .evaluate_string("OutOfDateConfigurationNeeded", Some(relative_reference))
+                .evaluate_string("OutOfDateConfigurationNeeded", relative_reference)
                 .unwrap()
                 || tcb_status_policy
-                    .evaluate_string("Revoked", Some(relative_reference))
+                    .evaluate_string("Revoked", relative_reference)
                     .unwrap())
         );
     }
@@ -740,14 +715,14 @@ mod test {
         let relative_reference = u32::MAX;
         assert!(
             tcb_evaluation_number_policy
-                .evaluate_integer(5, Some(relative_reference))
+                .evaluate_integer(5, relative_reference)
                 .unwrap()
                 && tcb_evaluation_number_policy
-                    .evaluate_integer(10, Some(relative_reference))
+                    .evaluate_integer(10, relative_reference)
                     .unwrap()
         );
         assert!(!tcb_evaluation_number_policy
-            .evaluate_integer(4, Some(relative_reference))
+            .evaluate_integer(4, relative_reference)
             .unwrap());
     }
 }
