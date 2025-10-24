@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+#[cfg(not(feature = "policy_v2"))]
+use crate::mig_policy;
 use crate::{
     config::get_policy,
     driver::ticks::with_timeout,
@@ -290,63 +292,6 @@ pub fn handle_exchange_mig_attest_info_req(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
-    let vdm_element = VdmMessageElement::read(reader).unwrap();
-    if vdm_element.element_type != VdmMessageElementType::QuoteMy {
-        error!(
-            "Invalid VDM message element_type: {:x?}\n",
-            vdm_element.element_type
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    }
-    let quote_dst = reader.take(vdm_element.length as usize).unwrap();
-    let res = attestation::verify_quote(quote_dst);
-
-    //  The session MUST be terminated immediately, if the mutual attestation failure
-    if res.is_err() {
-        error!("mutual attestation failed, end the session!\n");
-        let session = responder_context
-            .common
-            .get_session_via_id(session_id.unwrap())
-            .unwrap();
-        session.teardown();
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    }
-    //event log dst
-    let vdm_element = VdmMessageElement::read(reader).unwrap();
-    if vdm_element.element_type != VdmMessageElementType::EventLogMy {
-        error!(
-            "Invalid VDM message element_type: {:x?}\n",
-            vdm_element.element_type
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    }
-    let _event_log_dst = reader.take(vdm_element.length as usize).unwrap();
-
-    //mig policy dst
-    let vdm_element = VdmMessageElement::read(reader).unwrap();
-    if vdm_element.element_type != VdmMessageElementType::MigPolicyMy {
-        error!(
-            "Invalid VDM message element_type: {:x?}\n",
-            vdm_element.element_type
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    }
-    let _mig_policy_dst = reader.take(vdm_element.length as usize).unwrap();
-
-    let mut payload = [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
-    let mut writer = Writer::init(&mut payload);
-    let mut cnt = 0;
-
-    let vdm_exchange_attest_info = VdmMessage {
-        major_version: VDM_MESSAGE_MAJOR_VERSION,
-        op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoRsp,
-        element_count: 3,
-    };
-
-    cnt += vdm_exchange_attest_info
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-
     let th1 = if let Some(sid) = session_id {
         if let Some(s) = responder_context.common.get_session_via_id(sid) {
             s.get_th1()
@@ -371,6 +316,100 @@ pub fn handle_exchange_mig_attest_info_req(
     //quote dst
     let quote_dst = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+
+    let res = attestation::verify_quote(quote_dst.as_slice());
+    //  The session MUST be terminated immediately, if the mutual attestation failure
+    if res.is_err() {
+        error!("mutual attestation failed, end the session!\n");
+        let session = responder_context
+            .common
+            .get_session_via_id(session_id.unwrap())
+            .unwrap();
+        session.teardown();
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    #[cfg(not(feature = "policy_v2"))]
+    let verified_report_local = res.unwrap();
+
+    //quote src
+    let vdm_element = VdmMessageElement::read(reader).unwrap();
+    if vdm_element.element_type != VdmMessageElementType::QuoteMy {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    let quote_src = reader.take(vdm_element.length as usize).unwrap();
+    let res = attestation::verify_quote(quote_src);
+    //  The session MUST be terminated immediately, if the mutual attestation failure
+    if res.is_err() {
+        error!("mutual attestation failed, end the session!\n");
+        let session = responder_context
+            .common
+            .get_session_via_id(session_id.unwrap())
+            .unwrap();
+        session.teardown();
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    #[cfg(not(feature = "policy_v2"))]
+    let verified_report_peer = res.unwrap();
+
+    //event log src
+    let vdm_element = VdmMessageElement::read(reader).unwrap();
+    if vdm_element.element_type != VdmMessageElementType::EventLogMy {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    #[cfg(not(feature = "policy_v2"))]
+    let event_log_src = reader.take(vdm_element.length as usize).unwrap();
+    #[cfg(feature = "policy_v2")]
+    let _event_log_src = reader.take(vdm_element.length as usize).unwrap();
+
+    #[cfg(not(feature = "policy_v2"))]
+    {
+        let policy_check_result = mig_policy::authenticate_policy(
+            false,
+            verified_report_local.as_slice(),
+            verified_report_peer.as_slice(),
+            event_log_src,
+        );
+        if let Err(e) = &policy_check_result {
+            error!("Policy check failed, below is the detail information:\n");
+            error!("{:x?}\n", e);
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+    }
+
+    //mig policy src
+    let vdm_element = VdmMessageElement::read(reader).unwrap();
+    if vdm_element.element_type != VdmMessageElementType::MigPolicyMy {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    let _mig_policy_src = reader.take(vdm_element.length as usize).unwrap();
+
+    let mut payload = [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
+    let mut writer = Writer::init(&mut payload);
+    let mut cnt = 0;
+
+    let vdm_exchange_attest_info = VdmMessage {
+        major_version: VDM_MESSAGE_MAJOR_VERSION,
+        op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoRsp,
+        element_count: 3,
+    };
+
+    cnt += vdm_exchange_attest_info
+        .encode(&mut writer)
+        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+
+    //quote dst
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
         length: quote_dst.len() as u16,
@@ -381,27 +420,27 @@ pub fn handle_exchange_mig_attest_info_req(
     cnt += writer.extend_from_slice(quote_dst.as_slice()).unwrap();
 
     //event log dst
-    let event_log = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let event_log_dst = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
-        length: event_log.len() as u16,
+        length: event_log_dst.len() as u16,
     };
     cnt += event_log_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(event_log).unwrap();
+    cnt += writer.extend_from_slice(event_log_dst).unwrap();
 
     //mig policy dst
-    let mig_policy = get_policy().unwrap();
-    let mig_policy_hash = digest_sha384(mig_policy).unwrap();
+    let mig_policy_dst = get_policy().unwrap();
+    let mig_policy_dst_hash = digest_sha384(mig_policy_dst).unwrap();
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
-        length: mig_policy_hash.len() as u16,
+        length: mig_policy_dst_hash.len() as u16,
     };
     cnt += mig_policy_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(&mig_policy_hash).unwrap();
+    cnt += writer.extend_from_slice(&mig_policy_dst_hash).unwrap();
 
     Ok(VendorDefinedRspPayloadStruct {
         rsp_length: cnt as u32,
