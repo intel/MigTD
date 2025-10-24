@@ -130,15 +130,23 @@ jobs:
       - name: Preparation Work
         run: bash sh_script/preparation.sh
 
+      - name: Set Spdm Config
+        run: echo "SPDM_CONFIG=../../../config/spdm_config.json" >> "$GITHUB_ENV"
+
       - name: Build Migration TD binary with SPDM feature
         run: cargo image --features spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 
+      - name: Run Tests - Test Migration TD 20 Cycles
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "cycle"
+          popd
+
       - name: Build all test binaries
-        run: bash sh_script/build_final.sh -t test -c -a on
+        run: bash sh_script/build_final.sh -t test -c -a on -d spdm_attestation
 
       - name: Run SPDM Attestation Tests
         run: |
           pushd sh_script/test
           sudo pytest -k "function"
           popd
-      
