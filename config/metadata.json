@@ -1,33 +1,33 @@
 {
     "Sections": [
         {
-            "DataOffset": "0xF97000",
-            "RawDataSize": "0x69000",
-            "MemoryAddress": "0xFFF97000",
-            "MemoryDataSize": "0x69000",
+            "DataOffset": "0xFA7000",
+            "RawDataSize": "0x59000",
+            "MemoryAddress": "0xFFFA7000",
+            "MemoryDataSize": "0x59000",
             "Type": "BFV",
             "Attributes": "0x1"
         },
         {
-            "DataOffset": "0x41000",
-            "RawDataSize": "0xF56000",
-            "MemoryAddress": "0xFF041000",
-            "MemoryDataSize": "0xF56000",
+            "DataOffset": "0xC1000",
+            "RawDataSize": "0xEE6000",
+            "MemoryAddress": "0xFF0C1000",
+            "MemoryDataSize": "0xEE6000",
             "Type": "Payload",
             "Attributes": "0x1"
         },
         {
             "DataOffset": "0x0",
-            "RawDataSize": "0x20000",
+            "RawDataSize": "0xA0000",
             "MemoryAddress": "0xFF000000",
-            "MemoryDataSize": "0x20000",
+            "MemoryDataSize": "0xA0000",
             "Type": "CFV",
             "Attributes": "0x0"
         },
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF021000",
+            "MemoryAddress": "0xFF0A1000",
             "MemoryDataSize": "0x10000",
             "Type": "TempMem",
             "Attributes": "0x0"
@@ -35,7 +35,7 @@
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF031000",
+            "MemoryAddress": "0xFF0B1000",
             "MemoryDataSize": "0x10000",
             "Type": "TempMem",
             "Attributes": "0x0"
@@ -51,7 +51,7 @@
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF020000",
+            "MemoryAddress": "0xFF0A0000",
             "MemoryDataSize": "0x1000",
             "Type": "TempMem",
             "Attributes": "0x0"
