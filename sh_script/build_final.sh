@@ -50,6 +50,7 @@ function proccess_args() {
     case "${device}" in
         vmcall) MIGTD_FEATURE+=",vmcall-vsock";;
         serial) MIGTD_FEATURE+=",virtio-serial";;
+        spdm_attestation) MIGTD_FEATURE+=",spdm_attestation,virtio-vsock";;
         *) MIGTD_FEATURE+=",virtio-vsock";;
     esac
 }
