@@ -71,6 +71,9 @@ jobs:
       - name: Build MigTD binary with feature `test_disable_ra_and_accept_all`
         run: cargo image --features test_disable_ra_and_accept_all
 
+      - name: Build MigTD binary with policy v2
+        run: cargo image --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+
   build_migtd_debug:
     name: Build final migtd - debug
     runs-on: ubuntu-22.04
