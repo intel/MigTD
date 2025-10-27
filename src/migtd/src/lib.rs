@@ -27,9 +27,9 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     use td_payload::mm::layout::*;
 
     #[cfg(not(feature = "spdm_attestation"))]
-    const STACK_SIZE: usize = 0x1_0000;
+    const STACK_SIZE: usize = 0xA_2000;
     #[cfg(not(feature = "spdm_attestation"))]
-    const HEAP_SIZE: usize = 0x20_0000;
+    const HEAP_SIZE: usize = 0x6E_0000;
 
     #[cfg(feature = "spdm_attestation")]
     const STACK_SIZE: usize = 0x40_0000;
@@ -37,6 +37,8 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     const HEAP_SIZE: usize = 0x40_0000;
 
     const PT_SIZE: usize = 0x8_0000;
+    const SHARED_MEMORY_SIZE: usize = 0x1E_0000;
+    const SHADOW_STACK_SIZE: usize = 0x10000;
 
     extern "C" {
         fn main();
@@ -46,9 +48,9 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
         heap_size: HEAP_SIZE,
         stack_size: STACK_SIZE,
         page_table_size: PT_SIZE,
-        shared_memory_size: DEFAULT_SHARED_MEMORY_SIZE,
+        shared_memory_size: SHARED_MEMORY_SIZE,
         #[cfg(feature = "cet-shstk")]
-        shadow_stack_size: DEFAULT_SHADOW_STACK_SIZE,
+        shadow_stack_size: SHADOW_STACK_SIZE,
     };
 
     arch::init::pre_init(hob as u64, &layout, true);
