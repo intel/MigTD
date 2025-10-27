@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-#[cfg(not(feature = "policy_v2"))]
 use crate::mig_policy;
 use crate::{
     config::get_policy,
@@ -101,17 +100,27 @@ pub fn spdm_responder<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
 pub async fn spdm_responder_transfer_msk(
     spdm_responder: &mut ResponderContext,
     mig_info: &MigtdMigrationInformation,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     let mut writer = Writer::init(&mut spdm_responder.common.app_context_data_buffer);
+
+    #[cfg(feature = "policy_v2")]
+    let remote_policy_box: Box<[u8]> = remote_policy.into_boxed_slice();
+
     let responder_app_context = SpdmAppContextData {
         migration_info: mig_info.clone(),
         private_key: PrivateKeyDer::default(),
+        #[cfg(feature = "policy_v2")]
+        remote_policy_ptr: remote_policy_box.as_ptr() as u64,
+        #[cfg(feature = "policy_v2")]
+        remote_policy_len: remote_policy_box.len() as u32,
     };
     responder_app_context
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
     let res = with_timeout(SPDM_TIMEOUT, rsp_handle_message(spdm_responder)).await;
+    spdm_responder.common.app_context_data_buffer.zeroize();
 
     match res {
         Ok(Ok(_)) => Ok(()),
@@ -354,6 +363,8 @@ pub fn handle_exchange_mig_attest_info_req(
     }
     #[cfg(not(feature = "policy_v2"))]
     let verified_report_peer = res.unwrap();
+    #[cfg(feature = "policy_v2")]
+    let quote_src_vec = quote_src.to_vec();
 
     //event log src
     let vdm_element = VdmMessageElement::read(reader).unwrap();
@@ -364,10 +375,9 @@ pub fn handle_exchange_mig_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    #[cfg(not(feature = "policy_v2"))]
     let event_log_src = reader.take(vdm_element.length as usize).unwrap();
     #[cfg(feature = "policy_v2")]
-    let _event_log_src = reader.take(vdm_element.length as usize).unwrap();
+    let event_log_src_vec = event_log_src.to_vec();
 
     #[cfg(not(feature = "policy_v2"))]
     {
@@ -393,7 +403,46 @@ pub fn handle_exchange_mig_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let _mig_policy_src = reader.take(vdm_element.length as usize).unwrap();
+    #[cfg(feature = "policy_v2")]
+    let mig_policy_hash_src = reader.take(vdm_element.length as usize).unwrap();
+
+    #[cfg(feature = "policy_v2")]
+    {
+        let mut reader = Reader::init(responder_context.common.app_context_data_buffer.as_ref());
+        let responder_app_context =
+            SpdmAppContextData::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_FIELD)?;
+        let remote_policy = unsafe {
+            core::slice::from_raw_parts(
+                responder_app_context.remote_policy_ptr as *const u8,
+                responder_app_context.remote_policy_len as usize,
+            )
+        };
+
+        let remote_policy_hash = digest_sha384(remote_policy).unwrap();
+        if mig_policy_hash_src != remote_policy_hash.as_slice() {
+            error!(
+                "The received mig policy hash does not match the expected remote policy hash!\n"
+            );
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+
+        let policy_check_result = mig_policy::authenticate_remote(
+            false,
+            quote_src_vec.as_slice(),
+            remote_policy,
+            event_log_src_vec.as_slice(),
+        );
+        if let Err(e) = &policy_check_result {
+            error!("Policy v2 check failed, below is the detail information:\n");
+            error!("{:x?}\n", e);
+            let session = responder_context
+                .common
+                .get_session_via_id(session_id.unwrap())
+                .unwrap();
+            session.teardown();
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+    }
 
     let mut payload = [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);

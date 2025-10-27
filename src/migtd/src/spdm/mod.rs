@@ -143,6 +143,10 @@ impl Codec for PrivateKeyDer {
 struct SpdmAppContextData {
     pub migration_info: MigtdMigrationInformation,
     pub private_key: PrivateKeyDer,
+    #[cfg(feature = "policy_v2")]
+    pub remote_policy_ptr: u64,
+    #[cfg(feature = "policy_v2")]
+    pub remote_policy_len: u32,
 }
 
 impl Codec for SpdmAppContextData {
@@ -160,6 +164,13 @@ impl Codec for SpdmAppContextData {
         }
 
         size += self.private_key.encode(bytes)?;
+
+        #[cfg(feature = "policy_v2")]
+        {
+            size += self.remote_policy_ptr.encode(bytes)?;
+            size += self.remote_policy_len.encode(bytes)?;
+        }
+
         Ok(size)
     }
 
@@ -177,9 +188,19 @@ impl Codec for SpdmAppContextData {
         }
 
         let private_key = PrivateKeyDer::read(reader)?;
+
+        #[cfg(feature = "policy_v2")]
+        let remote_policy_ptr = u64::read(reader)?;
+        #[cfg(feature = "policy_v2")]
+        let remote_policy_len = u32::read(reader)?;
+
         Some(Self {
             migration_info,
             private_key,
+            #[cfg(feature = "policy_v2")]
+            remote_policy_ptr,
+            #[cfg(feature = "policy_v2")]
+            remote_policy_len,
         })
     }
 }
