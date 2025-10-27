@@ -161,6 +161,7 @@ impl Codec for SpdmAppContextData {
         }
 
         size += self.private_key.encode(bytes)?;
+
         Ok(size)
     }
 
@@ -178,6 +179,7 @@ impl Codec for SpdmAppContextData {
         }
 
         let private_key = PrivateKeyDer::read(reader)?;
+
         Some(Self {
             migration_info,
             private_key,

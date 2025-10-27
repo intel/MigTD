@@ -1,8 +1,6 @@
 // Copyright (c) 2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-
-#[cfg(not(feature = "policy_v2"))]
 use crate::mig_policy;
 use crate::{
     migration::{
@@ -88,6 +86,7 @@ pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
 pub async fn spdm_requester_transfer_msk(
     spdm_requester: &mut RequesterContext,
     mig_info: &MigtdMigrationInformation,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     let res = with_timeout(SPDM_TIMEOUT, spdm_requester.send_receive_spdm_version()).await;
     match res {
@@ -153,7 +152,12 @@ pub async fn spdm_requester_transfer_msk(
 
     let res: Result<Result<(), SpdmStatus>, crate::driver::ticks::TimeoutError> = with_timeout(
         SPDM_TIMEOUT,
-        send_and_receive_sdm_migration_attest_info(spdm_requester, session_id),
+        send_and_receive_sdm_migration_attest_info(
+            spdm_requester,
+            session_id,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        ),
     )
     .await;
     match res {
@@ -380,6 +384,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
 pub async fn send_and_receive_sdm_migration_attest_info(
     spdm_requester: &mut RequesterContext,
     session_id: u32,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> SpdmResult {
     if spdm_requester.common.provision_info.my_pub_key.is_none()
         || spdm_requester.common.provision_info.peer_pub_key.is_none()
@@ -567,12 +572,14 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         let session = spdm_requester
             .common
             .get_session_via_id(session_id)
-            .unwrap();
+            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
         session.teardown();
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
     #[cfg(not(feature = "policy_v2"))]
     let verified_report_peer = res.unwrap();
+    #[cfg(feature = "policy_v2")]
+    let quote_dst_vec = quote_dst.to_vec();
 
     //event log dst
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
@@ -583,14 +590,11 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    #[cfg(not(feature = "policy_v2"))]
     let event_log_dst = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     #[cfg(feature = "policy_v2")]
-    let _event_log_dst = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let event_log_dst_vec = event_log_dst.to_vec();
 
     #[cfg(not(feature = "policy_v2"))]
     {
@@ -616,9 +620,43 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
+    #[cfg(feature = "policy_v2")]
+    let mig_policy_hash_dst = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    #[cfg(not(feature = "policy_v2"))]
     let _mig_policy_hash_dst = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+
+    #[cfg(feature = "policy_v2")]
+    {
+        let remote_policy_hash =
+            digest_sha384(&remote_policy).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+        if mig_policy_hash_dst != remote_policy_hash.as_slice() {
+            error!(
+                "The received mig policy hash does not match the expected remote policy hash!\n"
+            );
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+
+        let policy_check_result = mig_policy::authenticate_remote(
+            true,
+            quote_dst_vec.as_slice(),
+            &remote_policy,
+            event_log_dst_vec.as_slice(),
+        );
+        if let Err(e) = &policy_check_result {
+            error!("Policy v2 check failed, below is the detail information:\n");
+            error!("{:x?}\n", e);
+            let session = spdm_requester
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+    }
 
     let vdm_attest_info_src_hash =
         digest_sha384(&send_buffer[..used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
