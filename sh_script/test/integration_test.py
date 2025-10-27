@@ -452,3 +452,6 @@ def test_cycle(device_type):
         
         ctx.terminate_mig_td()
         ctx.terminate_socat()
+
+def test_policy_v2(device_type):
+    test_cycle(device_type)

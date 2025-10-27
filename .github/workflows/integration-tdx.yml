@@ -63,6 +63,15 @@ jobs:
           sudo pytest -k "pre_binding" --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin)
           popd
       
+      - name: Build Migration TD binary with policy v2
+        run: cargo image  --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+      
+      - name: Run Tests - Test policy v2
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "policy_v2"
+          popd
+      
       - name: Build all test binaries
         run: bash sh_script/build_final.sh -t test -c -a on
 
@@ -102,6 +111,15 @@ jobs:
         run: |
           pushd sh_script/test
           sudo pytest -k "pre_binding" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin)
+          popd
+      
+      - name: Build Migration TD binary with policy v2
+        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+      
+      - name: Run Tests - Test policy v2
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "policy_v2" --device_type serial
           popd
       
       - name: Build all test binaries
