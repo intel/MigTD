@@ -18,13 +18,17 @@ permissions:
   contents: read
 
 jobs:
-  build_migtd_release:
-    name: Build final migtd - release
+  build:
+    name: Build (${{ matrix.device }} / ${{ matrix.policy_version}} / ${{ matrix.protocol }} / ${{ matrix.build_type }})
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
-
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [virtio-vsock, virtio-serial, vmcall-vsock, vmcall-raw]
+        policy_version: [v1, v2]
+        protocol: [tls, spdm]
+        build_type: [release, debug]
     steps:
-      # Install first since it's needed to build NASM
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@98e68e10c96dffcb7bfed8b2144541a66b49aa02 # v2.0.8
         with:
@@ -59,64 +63,24 @@ jobs:
       - name: Preparation Work
         run: bash sh_script/preparation.sh
 
-      - name: Build MigTD binary with a default production migration policy(virtio-vsock)
-        run: cargo image
-
-      - name: Build MigTD binary with a default production migration policy(virtio-serial)
-        run: cargo image --no-default-features --features main,stack-guard,virtio-serial
-
-      - name: Build MigTD binary with a default production migration policy(vmcall-vsock)
-        run: cargo image --no-default-features --features main,stack-guard,vmcall-vsock
-
-      - name: Build MigTD binary with feature `test_disable_ra_and_accept_all`
-        run: cargo image --features test_disable_ra_and_accept_all
-
-      - name: Build MigTD binary with policy v2
-        run: cargo image --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
-
-  build_migtd_debug:
-    name: Build final migtd - debug
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45
-
-    steps:
-      # Install first since it's needed to build NASM
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@98e68e10c96dffcb7bfed8b2144541a66b49aa02 # v2.0.8
-        with:
-          version: "10.0"
-          directory: ${{ runner.temp }}/llvm
-      
-      - name: Install libtinfo5
-        run: sudo apt-get update -y && sudo apt-get install libtinfo5 -y
-
-      - name: Install NASM
-        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
-
-      - name: Install tools for sgx lib
-        run:  sudo apt-get install build-essential ocaml ocamlbuild automake autoconf libtool wget python-is-python3 libssl-dev git cmake perl
-
-      - name: Checkout sources
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          submodules: recursive
-
-      - name: Install toolchain
-        uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1.0.7
-        with:
-          profile: ${{ env.TOOLCHAIN_PROFILE }}
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          override: true
-          components: rust-src
-
-      - name: Add `x86_64-unknown-none` target
-        run: rustup target add x86_64-unknown-none
-        
-      - name: Preparation Work
-        run: bash sh_script/preparation.sh
-
-      - name: Build MigTD binary with a default production migration policy(virtio-vsock)
-        run: cargo image --debug
-
-      - name: Build MigTD binary with a default production migration policy(virtio-serial)
-        run: cargo image --debug --no-default-features --features main,stack-guard,virtio-serial
+      - name: Build MigTD binary (${{ matrix.device }} / ${{ matrix.policy_version}} / ${{ matrix.protocol }} / ${{ matrix.build_type }})
+        run: |
+          BUILD_CMD="cargo image"
+          if [ "${{matrix.device}}" != "virtio-vsock" ]; then
+            BUILD_CMD="$BUILD_CMD --no-default-features --features stack-guard,${{ matrix.device }}"
+            if [ "${{ matrix.protocol }}" = "spdm" ]; then
+              BUILD_CMD="$BUILD_CMD,spdm_attestation"
+            fi
+          else
+            if [ "${{ matrix.protocol }}" = "spdm" ]; then
+              BUILD_CMD="$BUILD_CMD --features spdm_attestation"
+            fi
+          fi
+          if [ "${{matrix.policy_version}}" = "v2" ]; then
+            BUILD_CMD="$BUILD_CMD --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem"
+          fi
+          if [ "${{ matrix.build_type }}" = "debug" ]; then
+            BUILD_CMD="$BUILD_CMD --debug"
+          fi
+          $BUILD_CMD
+          
