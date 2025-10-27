@@ -821,6 +821,7 @@ dependencies = [
  "async_runtime",
  "attestation",
  "bitfield",
+ "bitfield-struct 0.11.0",
  "cc-measurement",
  "chrono",
  "codec",
