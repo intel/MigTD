@@ -1,5 +1,5 @@
 {
-    "__usage": "This helps generate compile-time constant sizes for SPDM arrays. See src/config.rs generated for details.",
+    "__usage": "This helps generate compile-time constant sizes for SPDM library when spdm_attestation is used. sender_buffer_size/receiver_buffer_size should be aligned to io device buffer size (current equal to DEFAULT_BUF_SIZE to support virtio serial).",
     "cert_config": {
         "max_cert_chain_data_size": 4096
     },
@@ -14,8 +14,8 @@
     "max_opaque_list_elements_count": 3,
     "max_session_count": 4,
     "transport_config": {
-        "sender_buffer_size": 4160,
-        "receiver_buffer_size": 4160
+        "sender_buffer_size": 4096,
+        "receiver_buffer_size": 4096
     },
     "max_spdm_msg_size": 65536,
     "heartbeat_period_value": 0,
