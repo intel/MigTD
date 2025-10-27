@@ -852,17 +852,27 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         let mut spdm_requester =
             spdm::spdm_requester(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-        spdm::spdm_requester_transfer_msk(&mut spdm_requester, &info.mig_info)
-            .await
-            .map_err(|_| MigrationResult::MutualAttestationError)?;
+        spdm::spdm_requester_transfer_msk(
+            &mut spdm_requester,
+            &info.mig_info,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        )
+        .await
+        .map_err(|_| MigrationResult::MutualAttestationError)?;
         log::info!("MSK exchange completed\n");
     } else {
         let mut spdm_responder =
             spdm::spdm_responder(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-        spdm::spdm_responder_transfer_msk(&mut spdm_responder, &info.mig_info)
-            .await
-            .map_err(|_| MigrationResult::MutualAttestationError)?;
+        spdm::spdm_responder_transfer_msk(
+            &mut spdm_responder,
+            &info.mig_info,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        )
+        .await
+        .map_err(|_| MigrationResult::MutualAttestationError)?;
         log::info!("MSK exchange completed\n");
     }
 
