@@ -216,6 +216,13 @@ impl BuildArgs {
         let sh = Shell::new()?;
         sh.set_var("CC_x86_64_unknown_none", "clang");
         sh.set_var("AR_x86_64_unknown_none", "llvm-ar");
+        sh.set_var(
+            "SPDM_CONFIG",
+            PROJECT_ROOT
+                .join("config/spdm_config.json")
+                .to_str()
+                .unwrap(),
+        );
 
         cmd!(
             sh,
