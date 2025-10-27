@@ -51,6 +51,7 @@ function proccess_args() {
         vmcall) MIGTD_FEATURE+=",vmcall-vsock";;
         serial) MIGTD_FEATURE+=",virtio-serial";;
         spdm_attestation) MIGTD_FEATURE+=",spdm_attestation,virtio-vsock";;
+        spdm_attestation_serial) MIGTD_FEATURE+=",spdm_attestation,virtio-serial";;
         *) MIGTD_FEATURE+=",virtio-vsock";;
     esac
 }
