@@ -10,6 +10,7 @@ required-features = ["main"]
 
 [dev-dependencies]
 attestation = { path = "../attestation", default-features = false, features = ["test"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dependencies]
 bitfield = "0.13.2"
@@ -44,6 +45,7 @@ x86 = "0.47.0"
 x86_64 = { version = "0.14", default-features = false, features = ["instructions"] }
 zerocopy = { version = "0.7", features = ["derive"] }
 bitfield-struct = "0.11"
+raw-cpuid = "11.6.0"
 
 # AzCVMEmu optional deps (grouped)
 tdx-tdcall-emu = { path = "../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }

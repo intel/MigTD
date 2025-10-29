@@ -240,6 +240,20 @@ pub struct ReportStatusResponse {
 }
 
 #[cfg(feature = "vmcall-raw")]
+#[derive(AsBytes, FromBytes, FromZeroes, Debug)]
+#[repr(C, packed)]
+pub struct RequestDataBufferHeader {
+    pub datastatus: u64,
+    pub length: u32,
+}
+
+#[cfg(feature = "vmcall-raw")]
+pub struct RequestDataBuffer<'a> {
+    pub header: RequestDataBufferHeader,
+    pub data: &'a [u8],
+}
+
+#[cfg(feature = "vmcall-raw")]
 pub enum WaitForRequestResponse {
     StartMigration(MigrationInformation),
     GetTdReport(ReportInfo),
@@ -368,6 +382,7 @@ fn create_migration_information(
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "vmcall-raw"))]
 mod test {
     use super::*;
     use crate::migration::VMCALL_SERVICE_COMMON_GUID;

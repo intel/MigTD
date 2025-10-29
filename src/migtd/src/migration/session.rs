@@ -17,6 +17,8 @@ use core::{future::poll_fn, mem::size_of, task::Poll};
 #[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
 use event::VMCALL_SERVICE_FLAG;
 use lazy_static::lazy_static;
+#[cfg(feature = "vmcall-raw")]
+use log::Level;
 use spin::Mutex;
 use td_payload::mm::shared::SharedMemory;
 use tdx_tdcall::{
@@ -27,9 +29,10 @@ use tdx_tdcall::{
 #[cfg(feature = "vmcall-raw")]
 use tdx_tdcall::{tdreport::TdxReport, tdreport::TD_REPORT_ADDITIONAL_DATA_SIZE};
 use zerocopy::AsBytes;
-
 type Result<T> = core::result::Result<T, MigrationResult>;
 
+#[cfg(feature = "vmcall-raw")]
+use super::logging::entrylog;
 use super::{data::*, *};
 use crate::driver::ticks::with_timeout;
 #[cfg(not(feature = "spdm_attestation"))]
@@ -37,9 +40,10 @@ use crate::ratls;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
 
-const TDCALL_STATUS_SUCCESS: u64 = 0;
 #[cfg(feature = "vmcall-raw")]
 const PAGE_SIZE: usize = 0x1_000;
+const TDCALL_STATUS_SUCCESS: u64 = 0;
+
 const TDCS_FIELD_MIG_DEC_KEY: u64 = 0x9810_0003_0000_0010;
 const TDCS_FIELD_MIG_ENC_KEY: u64 = 0x9810_0003_0000_0018;
 const TDCS_FIELD_MIG_VERSION: u64 = 0x9810_0001_0000_0020;
@@ -57,6 +61,9 @@ struct TdxReportBuf(TdxReport);
 #[cfg(feature = "vmcall-raw")]
 #[repr(C, align(64))]
 struct AdditionalDataBuf([u8; TD_REPORT_ADDITIONAL_DATA_SIZE]);
+
+#[cfg(feature = "vmcall-raw")]
+const DEFAULT_MIGREQUEST_ID: u64 = u64::MAX;
 
 #[cfg(feature = "vmcall-raw")]
 const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
@@ -189,27 +196,46 @@ pub fn query() -> Result<()> {
 }
 
 #[cfg(feature = "vmcall-raw")]
-fn process_buffer(buffer: &mut [u8]) -> (u64, u32) {
-    assert!(buffer.len() >= 12, "Buffer too small!");
-    let (header, _payload_buffer) = buffer.split_at_mut(12); // Split at 12th byte
+fn process_buffer(buffer: &mut [u8]) -> RequestDataBufferHeader {
+    let length = size_of::<RequestDataBufferHeader>();
+    let mut outputbuffer = RequestDataBufferHeader {
+        datastatus: 0,
+        length: 0,
+    };
+    if buffer.len() < length {
+        entrylog(
+            &format!(
+                "process_buffer: Buffer too small! - len = {:x}\n",
+                buffer.len()
+            )
+            .into_bytes(),
+            Level::Debug,
+            DEFAULT_MIGREQUEST_ID,
+        );
+        return outputbuffer;
+    }
+    let (header, _payload_buffer) = buffer.split_at_mut(length); // Split at 12th byte
 
-    let data_status = u64::from_le_bytes(header[0..8].try_into().unwrap()); // First 8 bytes
-    let data_length = u32::from_le_bytes(header[8..12].try_into().unwrap()); // Next 4 bytes
+    outputbuffer = RequestDataBufferHeader {
+        datastatus: u64::from_le_bytes(header[0..8].try_into().unwrap()),
+        length: u32::from_le_bytes(header[8..12].try_into().unwrap()),
+    };
 
-    (data_status, data_length)
+    outputbuffer
 }
 
 #[cfg(feature = "vmcall-raw")]
 pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
-    let data_status: u64 = 0;
-    let data_length: u32 = 0;
-
+    let mut reqbufferhdr = RequestDataBufferHeader {
+        datastatus: 0,
+        length: 0,
+    };
+    let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
     let mut data_buffer = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
     let data_buffer = data_buffer.as_mut_bytes();
 
-    data_buffer[0..8].copy_from_slice(&u64::to_le_bytes(data_status));
-    data_buffer[8..12].copy_from_slice(&u32::to_le_bytes(data_length));
+    data_buffer[0..reqbufferhdrlen].copy_from_slice(&reqbufferhdr.as_bytes());
 
     tdx::tdvmcall_migtd_waitforrequest(data_buffer, event::VMCALL_SERVICE_VECTOR)?;
 
@@ -220,10 +246,15 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
             return Poll::Pending;
         }
 
-        let (data_status, data_length) = process_buffer(data_buffer);
-
-        let data_status_bytes = data_status.to_le_bytes();
+        reqbufferhdr = process_buffer(data_buffer);
+        let data_status = reqbufferhdr.datastatus;
+        let data_length = reqbufferhdr.length;
+        if (data_status == 0) && (data_length == 0) {
+            return Poll::Pending;
+        }
+        let data_status_bytes = &data_status.to_le_bytes();
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
+            entrylog(&format!("wait_for_request: data_status byte[0] failure\n").into_bytes(), Level::Error, DEFAULT_MIGREQUEST_ID);
             return Poll::Pending;
         }
 
@@ -232,9 +263,16 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
             // data_length should be MigtdMigrationInformation
             let expected_datalength = size_of::<MigtdMigrationInformation>();
             if data_length != expected_datalength as u32 {
+                if data_length >= size_of::<u64>() as u32 {
+                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
+                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, mig_request_id);
+                } else {
+                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                }
                 return Poll::Pending;
             }
-            let slice = &data_buffer[12..12 + data_length as usize];
+            let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
             let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
 
             VMCALL_MIG_REPORTSTATUS_FLAGS
@@ -260,14 +298,21 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         } else if operation == DataStatusOperation::GetReportData as u8 {
             let mut reportdata: [u8; 64] = [0; 64];
             let mut mig_request_id: u64 = 0;
-            // data_length should MigRequestID (+ optional REPORTDATA)
+            // data length should MigRequestID (+ optional REPORTDATA)
             if data_length != size_of_val(&mig_request_id) as u32
                 && data_length
-                    != (size_of_val(&mig_request_id) + TD_REPORT_ADDITIONAL_DATA_SIZE) as u32
+                    != size_of::<ReportInfo>() as u32
             {
+                if data_length >= size_of::<u64>() as u32 {
+                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
+                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} or {:x} actual {:x}\n", size_of_val(&mig_request_id), size_of::<ReportInfo>(), data_length).into_bytes(), Level::Debug, mig_request_id);
+                } else {
+                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} or {:x} actual {:x}\n", size_of_val(&mig_request_id), size_of::<ReportInfo>(), data_length).into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                }
                 return Poll::Pending;
             }
-            let slice = &data_buffer[12..12 + data_length as usize];
+            let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
             mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
 
             if data_length == (size_of_val(&mig_request_id) + TD_REPORT_ADDITIONAL_DATA_SIZE) as u32
@@ -293,11 +338,22 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         } else if operation == DataStatusOperation::EnableLogArea as u8 {
             let expected_datalength = size_of::<EnableLogAreaInfo>();
             if data_length != expected_datalength as u32 {
+                if data_length >= size_of::<u64>() as u32 {
+                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
+                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+                    entrylog(&format!("wait_for_request: EnableLogArea operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, mig_request_id);
+                } else {
+                    entrylog(&format!("wait_for_request: EnableLogArea operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                }
                 return Poll::Pending;
             }
 
-            let slice = &data_buffer[12..12 + data_length as usize];
+            let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
             let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+
+            VMCALL_MIG_REPORTSTATUS_FLAGS
+                .lock()
+                .insert(mig_request_id, AtomicBool::new(false));
 
             let wfr_info = EnableLogAreaInfo {
                 mig_request_id,
@@ -418,6 +474,7 @@ pub fn shutdown() -> Result<()> {
 pub async fn get_tdreport(
     additional_data: &[u8; TD_REPORT_ADDITIONAL_DATA_SIZE],
     data: &mut Vec<u8>,
+    request_id: u64,
 ) -> Result<()> {
     const TDVMCALL_TDREPORT: u64 = 0x00004;
     let mut report_buf = TdxReportBuf(TdxReport::default());
@@ -433,11 +490,26 @@ pub async fn get_tdreport(
 
     let ret = td_call(&mut args);
     if ret != TDCALL_STATUS_SUCCESS {
+        entrylog(
+            &format!("get_tdreport: TDG.MR.REPORT failure {:x}\n", ret).into_bytes(),
+            Level::Debug,
+            request_id,
+        );
         return Err(MigrationResult::TdxModuleError);
     }
 
     data.extend_from_slice(report_buf.0.as_bytes());
     if data.len() != tdreportsize {
+        entrylog(
+            &format!(
+                "get_tdreport: tdreport incorrect data length - expected {:x} actual {:x}\n",
+                tdreportsize,
+                data.len()
+            )
+            .into_bytes(),
+            Level::Debug,
+            request_id,
+        );
         return Err(MigrationResult::InvalidParameter);
     }
     Ok(())
@@ -445,12 +517,15 @@ pub async fn get_tdreport(
 
 #[cfg(feature = "vmcall-raw")]
 pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Result<()> {
-    let data_status: u64 = 0;
     let mut reportstatus = ReportStatusResponse::new()
         .with_pre_migration_status(0)
         .with_error_code(0)
         .with_reserved(0);
-    let mut data_length: u32 = 0;
+    let mut reqbufferhdr = RequestDataBufferHeader {
+        datastatus: 0,
+        length: 0,
+    };
+    let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
     let mut data_buffer = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
     if let Some(value) = u8_to_migration_result(status) {
@@ -460,18 +535,27 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
                 .with_error_code(status);
         }
     } else {
+        entrylog(
+            &format!(
+                "report_status: Invalid Migration Status code: {:x}\n",
+                status
+            )
+            .into_bytes(),
+            Level::Error,
+            request_id,
+        );
         return Err(MigrationResult::InvalidParameter);
     }
 
-    if data.len() > 0 && data.len() < (PAGE_SIZE - 12) {
-        data_length += data.len() as u32;
+    if data.len() > 0 && data.len() < (PAGE_SIZE - reqbufferhdrlen) {
+        reqbufferhdr.length += data.len() as u32;
     }
 
     let data_buffer = data_buffer.as_mut_bytes();
-    data_buffer[0..8].copy_from_slice(&u64::to_le_bytes(data_status));
-    data_buffer[8..12].copy_from_slice(&u32::to_le_bytes(data_length));
-    if data.len() > 0 && data.len() < (PAGE_SIZE - 12) {
-        data_buffer[12..data.len() + 12].copy_from_slice(&data[0..data.len()]);
+    data_buffer[0..reqbufferhdrlen].copy_from_slice(&reqbufferhdr.as_bytes());
+    if data.len() > 0 && data.len() < (PAGE_SIZE - reqbufferhdrlen) {
+        data_buffer[reqbufferhdrlen..data.len() + reqbufferhdrlen]
+            .copy_from_slice(&data[0..data.len()]);
     }
 
     tdx::tdvmcall_migtd_reportstatus(
@@ -492,10 +576,14 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
             return Poll::Pending;
         }
 
-        let (data_status, _data_length) = process_buffer(data_buffer);
-        let data_status_bytes = data_status.to_le_bytes();
-
+        reqbufferhdr = process_buffer(data_buffer);
+        let data_status_bytes = &reqbufferhdr.datastatus.to_le_bytes();
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
+            entrylog(
+                &format!("report_status: data_status byte[0] failure\n").into_bytes(),
+                Level::Error,
+                request_id,
+            );
             return Poll::Pending;
         }
 
@@ -845,6 +933,12 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         write_msk(&info.mig_info, &remote_information.key)?;
 
         log::info!("Set MSK and report status\n");
+        #[cfg(feature = "vmcall-raw")]
+        entrylog(
+            &format!("Set MSK and report status\n").into_bytes(),
+            Level::Info,
+            info.mig_info.mig_request_id,
+        );
         exchange_information.key.clear();
         remote_information.key.clear();
     }
