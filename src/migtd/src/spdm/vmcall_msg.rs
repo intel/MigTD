@@ -94,7 +94,10 @@ impl Codec for VmCallMessageHeader {
             return None;
         }
         let msg_type = VmCallMessageType::read(r)?;
-        let _ = u8::read(r)?; // reserved byte
+        let reserved_byte = u8::read(r)?; // reserved byte
+        if reserved_byte != 0 {
+            return None;
+        }
         let length = u32::read(r)?;
 
         Some(Self {
