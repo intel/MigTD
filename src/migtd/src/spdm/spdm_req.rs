@@ -237,6 +237,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
 
     let vdm_exchange_pub_key = VdmMessage {
         major_version: VDM_MESSAGE_MAJOR_VERSION,
+        minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangePubKeyReq,
         element_count: 1,
     };
@@ -295,6 +296,20 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
     let mut reader =
         Reader::init(&vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize]);
     let vdm_message = VdmMessage::read(&mut reader).unwrap();
+    if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
+        error!(
+            "Invalid VDM message major_version: {:x?}\n",
+            vdm_message.major_version
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    if vdm_message.minor_version != VDM_MESSAGE_MINOR_VERSION {
+        error!(
+            "Invalid VDM message minor_version: {:x?}\n",
+            vdm_message.minor_version
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
     if vdm_message.op_code != VdmMessageOpCode::ExchangePubKeyRsp {
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
@@ -378,6 +393,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     let vdm_exchange_attest_info = VdmMessage {
         major_version: VDM_MESSAGE_MAJOR_VERSION,
+        minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
         element_count: 3,
     };
@@ -497,6 +513,20 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         &vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize],
     );
     let vdm_message = VdmMessage::read(reader).unwrap();
+    if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
+        error!(
+            "Invalid VDM message major_version: {:x?}\n",
+            vdm_message.major_version
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    if vdm_message.minor_version != VDM_MESSAGE_MINOR_VERSION {
+        error!(
+            "Invalid VDM message minor_version: {:x?}\n",
+            vdm_message.minor_version
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
     if vdm_message.op_code != VdmMessageOpCode::ExchangeMigrationAttestInfoRsp {
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
@@ -608,6 +638,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
 
     let vdm_exchange_migration_info = VdmMessage {
         major_version: VDM_MESSAGE_MAJOR_VERSION,
+        minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationInfoReq,
         element_count: 2,
     };
@@ -688,18 +719,29 @@ async fn send_and_receive_sdm_exchange_migration_info(
     let reader = &mut Reader::init(
         &vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize],
     );
-    let vdm_exchange_migration_info = VdmMessage::read(reader).unwrap();
-    if vdm_exchange_migration_info.op_code != VdmMessageOpCode::ExchangeMigrationInfoRsp {
+    let vdm_message = VdmMessage::read(reader).unwrap();
+    if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
         error!(
-            "Invalid VDM message op_code: {:x?}\n",
-            vdm_exchange_migration_info.op_code
+            "Invalid VDM message major_version: {:x?}\n",
+            vdm_message.major_version
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_exchange_migration_info.element_count != 2 {
+    if vdm_message.minor_version != VDM_MESSAGE_MINOR_VERSION {
+        error!(
+            "Invalid VDM message minor_version: {:x?}\n",
+            vdm_message.minor_version
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    if vdm_message.op_code != VdmMessageOpCode::ExchangeMigrationInfoRsp {
+        error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    if vdm_message.element_count != 2 {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
-            vdm_exchange_migration_info.element_count
+            vdm_message.element_count
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
