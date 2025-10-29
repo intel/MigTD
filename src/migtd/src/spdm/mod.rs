@@ -153,16 +153,11 @@ impl Codec for SpdmAppContextData {
         size += self.migration_info.target_td_uuid.encode(bytes)?;
         size += self.migration_info.binding_handle.encode(bytes)?;
 
-        size += if cfg!(not(feature = "vmcall-raw")) {
-            self.migration_info.mig_policy_id.encode(bytes)?
-        } else {
-            0
-        };
-        size += if cfg!(not(feature = "vmcall-raw")) {
-            self.migration_info.communication_id.encode(bytes)?
-        } else {
-            0
-        };
+        #[cfg(not(feature = "vmcall-raw"))]
+        {
+            size += self.migration_info.mig_policy_id.encode(bytes)?;
+            size += self.migration_info.communication_id.encode(bytes)?
+        }
 
         size += self.private_key.encode(bytes)?;
         Ok(size)
@@ -175,16 +170,11 @@ impl Codec for SpdmAppContextData {
         migration_info.target_td_uuid = <[u64; 4]>::read(reader)?;
         migration_info.binding_handle = u64::read(reader)?;
 
-        migration_info.mig_policy_id = if cfg!(not(feature = "vmcall-raw")) {
-            u64::read(reader)?
-        } else {
-            0
-        };
-        migration_info.communication_id = if cfg!(not(feature = "vmcall-raw")) {
-            u64::read(reader)?
-        } else {
-            0
-        };
+        #[cfg(not(feature = "vmcall-raw"))]
+        {
+            migration_info.mig_policy_id = u64::read(reader)?;
+            migration_info.communication_id = u64::read(reader)?;
+        }
 
         let private_key = PrivateKeyDer::read(reader)?;
         Some(Self {
