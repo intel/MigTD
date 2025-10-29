@@ -4,6 +4,7 @@
 
 pub mod data;
 pub mod event;
+pub mod logging;
 #[cfg(feature = "main")]
 pub mod session;
 

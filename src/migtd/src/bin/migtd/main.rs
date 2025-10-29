@@ -10,16 +10,22 @@ extern crate alloc;
 use core::future::poll_fn;
 use core::task::Poll;
 
+#[cfg(feature = "vmcall-raw")]
+use alloc::format;
 #[cfg(feature = "policy_v2")]
 use alloc::string::String;
 #[cfg(feature = "vmcall-raw")]
 use alloc::vec::Vec;
 use log::info;
+#[cfg(feature = "vmcall-raw")]
+use log::Level;
 use migtd::event_log::*;
 #[cfg(not(feature = "vmcall-raw"))]
 use migtd::migration::data::MigrationInformation;
 #[cfg(feature = "vmcall-raw")]
 use migtd::migration::data::WaitForRequestResponse;
+#[cfg(feature = "vmcall-raw")]
+use migtd::migration::logging::*;
 use migtd::migration::session::*;
 use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
@@ -50,6 +56,12 @@ fn main() {
 
 pub fn runtime_main() {
     let _ = td_logger::init();
+
+    // Create LogArea per vCPU
+    #[cfg(feature = "vmcall-raw")]
+    {
+        let _ = create_logarea();
+    }
 
     // Dump basic information of MigTD
     basic_info();
@@ -244,28 +256,106 @@ fn handle_pre_mig() {
                                 .await
                                 .map(|_| MigrationResult::Success)
                                 .unwrap_or_else(|e| e);
+                            if status == MigrationResult::Success {
+                                entrylog(
+                                    &format!("Successfully completed key exchange\n").into_bytes(),
+                                    Level::Trace,
+                                    wfr_info.mig_info.mig_request_id,
+                                );
+                            } else {
+                                entrylog(
+                                    &format!(
+                                        "Failure during key exchange, status code: {:x}\n",
+                                        status.clone() as u8
+                                    )
+                                    .into_bytes(),
+                                    Level::Error,
+                                    wfr_info.mig_info.mig_request_id,
+                                );
+                            }
                             let _ = report_status(
                                 status as u8,
                                 wfr_info.mig_info.mig_request_id,
                                 &data,
                             )
                             .await;
+                            entrylog(
+                                &format!("ReportStatus for key exchange completed\n").into_bytes(),
+                                Level::Trace,
+                                wfr_info.mig_info.mig_request_id,
+                            );
                             REQUESTS.lock().remove(&wfr_info.mig_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
-                            let status = get_tdreport(&wfr_info.reportdata, &mut data)
-                                .await
-                                .map(|_| MigrationResult::Success)
-                                .unwrap_or_else(|e| e);
+                            let status = get_tdreport(
+                                &wfr_info.reportdata,
+                                &mut data,
+                                wfr_info.mig_request_id,
+                            )
+                            .await
+                            .map(|_| MigrationResult::Success)
+                            .unwrap_or_else(|e| e);
+                            if status == MigrationResult::Success {
+                                entrylog(
+                                    &format!("Successfully completed get TDREPORT\n").into_bytes(),
+                                    Level::Trace,
+                                    wfr_info.mig_request_id,
+                                );
+                            } else {
+                                entrylog(
+                                    &format!(
+                                        "Failure during get TDREPORT, status code: {:x}\n",
+                                        status.clone() as u8
+                                    )
+                                    .into_bytes(),
+                                    Level::Error,
+                                    wfr_info.mig_request_id,
+                                );
+                            }
                             let _ =
                                 report_status(status as u8, wfr_info.mig_request_id, &data).await;
+                            entrylog(
+                                &format!("ReportStatus for get TDREPORT completed\n").into_bytes(),
+                                Level::Trace,
+                                wfr_info.mig_request_id,
+                            );
                             REQUESTS.lock().remove(&wfr_info.mig_request_id);
                         }
                         WaitForRequestResponse::EnableLogArea(wfr_info) => {
-                            // TODO: support this feature
-                            let status = MigrationResult::UnsupportedOperationError;
+                            let status = enable_logarea(
+                                wfr_info.log_max_level,
+                                wfr_info.mig_request_id,
+                                &mut data,
+                            )
+                            .await
+                            .map(|_| MigrationResult::Success)
+                            .unwrap_or_else(|e| e);
+                            if status == MigrationResult::Success {
+                                entrylog(
+                                    &format!("Successfully completed Enable LogArea\n")
+                                        .into_bytes(),
+                                    Level::Trace,
+                                    wfr_info.mig_request_id,
+                                );
+                            } else {
+                                entrylog(
+                                    &format!(
+                                        "Failure during Enable LogArea, status code: {:x}\n",
+                                        status.clone() as u8
+                                    )
+                                    .into_bytes(),
+                                    Level::Error,
+                                    wfr_info.mig_request_id,
+                                );
+                            }
                             let _ =
                                 report_status(status as u8, wfr_info.mig_request_id, &data).await;
+                            entrylog(
+                                &format!("ReportStatus for Enable LogArea completed\n")
+                                    .into_bytes(),
+                                Level::Trace,
+                                wfr_info.mig_request_id,
+                            );
                             REQUESTS.lock().remove(&wfr_info.mig_request_id);
                         }
                     }
