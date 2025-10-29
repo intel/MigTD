@@ -17,6 +17,7 @@ use crate::spdm::spdm_rsp::*;
 pub const VDM_MESSAGE_VENDOR_ID: [u8; 4] = [0x57, 0x1, 0x0, 0x0];
 pub const VDM_MESSAGE_VENDOR_ID_LEN: usize = 4;
 pub const VDM_MESSAGE_MAJOR_VERSION: u8 = 0;
+pub const VDM_MESSAGE_MINOR_VERSION: u8 = 0;
 
 enum_builder! {
     @U8
@@ -35,17 +36,6 @@ enum_builder! {
 //        ExchangeRebindInfoRsp => 0x0A
     }
 }
-impl VdmMessageOpCode {
-    pub fn encode_minor_version(&self, bytes: &mut Writer) -> Result<usize, codec::EncodeErr> {
-        let mut cnt = 0usize;
-        cnt += 0u8.encode(bytes)?; // minor version is 0
-        Ok(cnt)
-    }
-
-    pub fn check_minor_version(&self, _minor_version: u8) -> bool {
-        true
-    }
-}
 
 #[allow(clippy::derivable_impls)]
 impl Default for VdmMessageOpCode {
@@ -57,6 +47,7 @@ impl Default for VdmMessageOpCode {
 #[derive(Debug)]
 pub struct VdmMessage {
     pub major_version: u8,
+    pub minor_version: u8,
     pub op_code: VdmMessageOpCode,
     pub element_count: u8,
 }
@@ -65,7 +56,7 @@ impl Codec for VdmMessage {
     fn encode(&self, bytes: &mut Writer) -> Result<usize, codec::EncodeErr> {
         let mut cnt = 0usize;
         cnt += self.major_version.encode(bytes)?;
-        cnt += self.op_code.encode_minor_version(bytes)?;
+        cnt += self.minor_version.encode(bytes)?;
         cnt += self.op_code.encode(bytes)?;
         cnt += self.element_count.encode(bytes)?;
         Ok(cnt)
@@ -75,12 +66,10 @@ impl Codec for VdmMessage {
         let major_version = u8::read(r)?;
         let minor_version = u8::read(r)?;
         let op_code = VdmMessageOpCode::read(r)?;
-        if !op_code.check_minor_version(minor_version) {
-            return None;
-        }
         let element_count = u8::read(r)?;
         Some(VdmMessage {
             major_version,
+            minor_version,
             op_code,
             element_count,
         })
