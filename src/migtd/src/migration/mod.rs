@@ -4,6 +4,7 @@
 
 pub mod data;
 pub mod event;
+pub mod logging;
 #[cfg(feature = "main")]
 pub mod session;
 
@@ -155,7 +156,7 @@ pub struct MigtdMigpolicy {
 }
 
 #[repr(u8)]
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub enum MigrationResult {
     Success = 0,
     InvalidParameter = 1,
