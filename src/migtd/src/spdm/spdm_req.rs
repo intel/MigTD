@@ -239,7 +239,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangePubKeyReq,
-        element_count: 1,
+        element_count: VDM_MESSAGE_EXCHANGE_PUB_KEY_ELEMENT_COUNT,
     };
     cnt += vdm_exchange_pub_key
         .encode(&mut writer)
@@ -314,7 +314,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_message.element_count != 1 {
+    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_PUB_KEY_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_message.element_count
@@ -395,7 +395,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
-        element_count: 3,
+        element_count: VDM_MESSAGE_EXCHANGE_MIG_ATTEST_INFO_ELEMENT_COUNT,
     };
 
     cnt += vdm_exchange_attest_info
@@ -531,7 +531,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_message.element_count != 3 {
+    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_MIG_ATTEST_INFO_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_message.element_count
@@ -640,7 +640,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationInfoReq,
-        element_count: 2,
+        element_count: VDM_MESSAGE_EXCHANGE_MIG_INFO_ELEMENT_COUNT,
     };
 
     cnt += vdm_exchange_migration_info
@@ -650,7 +650,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
     //Migration Export Version
     let mig_export_version_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigrationExportVersion,
-        length: 4,
+        length: VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_VERSION_SIZE,
     };
     cnt += mig_export_version_element
         .encode(&mut writer)
@@ -667,7 +667,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
     //Forward Migration Session Key
     let mig_session_key_element = VdmMessageElement {
         element_type: VdmMessageElementType::ForwardMigrationSessionKey,
-        length: 32,
+        length: VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_SESSION_KEY_SIZE,
     };
     cnt += mig_session_key_element
         .encode(&mut writer)
@@ -738,7 +738,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_message.element_count != 2 {
+    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_MIG_INFO_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_message.element_count
@@ -753,7 +753,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if mig_export_version_element.length != 4 {
+    if mig_export_version_element.length != VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_VERSION_SIZE {
         error!(
             "Invalid VDM message element length: {:x?}\n",
             mig_export_version_element.length
@@ -770,7 +770,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if mig_session_key_element.length != 32 {
+    if mig_session_key_element.length != VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_SESSION_KEY_SIZE {
         error!(
             "Invalid VDM message element length: {:x?}\n",
             mig_session_key_element.length
