@@ -183,7 +183,7 @@ pub fn handle_exchange_pub_key_req(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_request.element_count != 1 {
+    if vdm_request.element_count != VDM_MESSAGE_EXCHANGE_PUB_KEY_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_request.element_count
@@ -231,7 +231,7 @@ pub fn handle_exchange_pub_key_req(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangePubKeyRsp,
-        element_count: 1,
+        element_count: VDM_MESSAGE_EXCHANGE_PUB_KEY_ELEMENT_COUNT,
     };
 
     cnt += vdm_exchange_pub_key
@@ -327,7 +327,7 @@ pub fn handle_exchange_mig_attest_info_req(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_request.element_count != 3 {
+    if vdm_request.element_count != VDM_MESSAGE_EXCHANGE_MIG_ATTEST_INFO_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_request.element_count
@@ -446,7 +446,7 @@ pub fn handle_exchange_mig_attest_info_req(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoRsp,
-        element_count: 3,
+        element_count: VDM_MESSAGE_EXCHANGE_MIG_ATTEST_INFO_ELEMENT_COUNT,
     };
 
     cnt += vdm_exchange_attest_info
@@ -536,7 +536,7 @@ pub fn handle_exchange_mig_info_req(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_request.element_count != 2 {
+    if vdm_request.element_count != VDM_MESSAGE_EXCHANGE_MIG_INFO_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_request.element_count
@@ -547,7 +547,7 @@ pub fn handle_exchange_mig_info_req(
     let mig_export_version_element =
         VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_FIELD)?;
     if mig_export_version_element.element_type != VdmMessageElementType::MigrationExportVersion
-        || mig_export_version_element.length != 4
+        || mig_export_version_element.length != VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_VERSION_SIZE
     {
         error!("invalid migration info payload!\n");
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
@@ -558,7 +558,8 @@ pub fn handle_exchange_mig_info_req(
     let mig_session_key_element =
         VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_FIELD)?;
     if mig_session_key_element.element_type != VdmMessageElementType::ForwardMigrationSessionKey
-        || mig_session_key_element.length != 32
+        || mig_session_key_element.length
+            != VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_SESSION_KEY_SIZE
     {
         error!("invalid forward migration session key!\n");
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
@@ -602,14 +603,14 @@ pub fn handle_exchange_mig_info_req(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationInfoRsp,
-        element_count: 2,
+        element_count: VDM_MESSAGE_EXCHANGE_MIG_INFO_ELEMENT_COUNT,
     };
     cnt += vdm_exchange_mig_info
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     let mig_import_version_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigrationImportVersion,
-        length: 4,
+        length: VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_VERSION_SIZE,
     };
     cnt += mig_import_version_element
         .encode(&mut writer)
@@ -622,7 +623,7 @@ pub fn handle_exchange_mig_info_req(
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     let mig_session_key_element = VdmMessageElement {
         element_type: VdmMessageElementType::BackwardMigrationSessionKey,
-        length: 32,
+        length: VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_SESSION_KEY_SIZE,
     };
     cnt += mig_session_key_element
         .encode(&mut writer)
