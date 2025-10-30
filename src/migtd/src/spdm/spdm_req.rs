@@ -213,7 +213,7 @@ pub async fn spdm_requester_transfer_msk(
 }
 
 async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> SpdmResult {
-    let signing_key = EcdsaPk::new().unwrap();
+    let signing_key = EcdsaPk::new().map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let my_pub_key = signing_key.public_key_spki();
 
     //Save private to spdm context for signing
@@ -252,7 +252,9 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
     cnt += pub_key_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(my_pub_key.as_slice()).unwrap();
+    cnt += writer
+        .extend_from_slice(my_pub_key.as_slice())
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     let vdm_payload = VendorDefinedReqPayloadStruct {
         req_length: cnt as u32,
@@ -288,14 +290,13 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         .receive_message(None, &mut receive_buffer, false)
         .await?;
 
-    let vdm_payload = spdm_requester
-        .handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])
-        .unwrap();
+    let vdm_payload =
+        spdm_requester.handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])?;
 
     // Format checks and save the received public key
     let mut reader =
         Reader::init(&vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize]);
-    let vdm_message = VdmMessage::read(&mut reader).unwrap();
+    let vdm_message = VdmMessage::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
         error!(
             "Invalid VDM message major_version: {:x?}\n",
@@ -321,7 +322,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let vdm_element = VdmMessageElement::read(&mut reader).unwrap();
+    let vdm_element = VdmMessageElement::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::PubKeyMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
@@ -337,7 +338,9 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let peer_pub_key = reader.take(vdm_element.length as usize).unwrap();
+    let peer_pub_key = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
     // Provision the public keys to spdm context
     let mut my_pub_key_prov = SpdmCertChainData {
@@ -354,15 +357,17 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
     peer_pub_key_prov.data[..peer_pub_key.len()].copy_from_slice(peer_pub_key);
     spdm_requester.common.provision_info.peer_pub_key = Some(peer_pub_key_prov);
 
-    let vdm_pub_key_src_hash = digest_sha384(&send_buffer[..used]).unwrap();
-    let vdm_pub_key_dst_hash = digest_sha384(&receive_buffer[..receive_used]).unwrap();
+    let vdm_pub_key_src_hash =
+        digest_sha384(&send_buffer[..used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let vdm_pub_key_dst_hash =
+        digest_sha384(&receive_buffer[..receive_used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let mut transcript_before_key_exchange = ManagedVdmBuffer::default();
     transcript_before_key_exchange
         .append_message(vdm_pub_key_src_hash.as_slice())
-        .unwrap();
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
     transcript_before_key_exchange
         .append_message(vdm_pub_key_dst_hash.as_slice())
-        .unwrap();
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     spdm_requester
         .common
@@ -430,7 +435,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         let session = spdm_requester
             .common
             .get_session_via_id(session_id)
-            .unwrap();
+            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
         session.teardown();
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
@@ -444,7 +449,9 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     cnt += quote_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(quote_src.as_slice()).unwrap();
+    cnt += writer
+        .extend_from_slice(quote_src.as_slice())
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     //event log src
     let event_log_src = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
@@ -455,11 +462,14 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     cnt += event_log_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(event_log_src).unwrap();
+    cnt += writer
+        .extend_from_slice(event_log_src)
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     //mig policy src
-    let mig_policy_src = get_policy().unwrap();
-    let mig_policy_src_hash = digest_sha384(mig_policy_src).unwrap();
+    let mig_policy_src = get_policy().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let mig_policy_src_hash =
+        digest_sha384(mig_policy_src).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
 
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
@@ -468,7 +478,9 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     cnt += mig_policy_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer.extend_from_slice(&mig_policy_src_hash).unwrap();
+    cnt += writer
+        .extend_from_slice(&mig_policy_src_hash)
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     let vdm_payload = VendorDefinedReqPayloadStruct {
         req_length: cnt as u32,
@@ -504,15 +516,14 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         .receive_message(None, &mut receive_buffer, false)
         .await?;
 
-    let vdm_payload = spdm_requester
-        .handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])
-        .unwrap();
+    let vdm_payload =
+        spdm_requester.handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])?;
 
     //Format checks
     let reader = &mut Reader::init(
         &vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize],
     );
-    let vdm_message = VdmMessage::read(reader).unwrap();
+    let vdm_message = VdmMessage::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
         error!(
             "Invalid VDM message major_version: {:x?}\n",
@@ -539,7 +550,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
     //quote dst
-    let vdm_element = VdmMessageElement::read(reader).unwrap();
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::QuoteMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
@@ -547,7 +558,9 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let quote_dst = reader.take(vdm_element.length as usize).unwrap();
+    let quote_dst = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let res = attestation::verify_quote(quote_dst);
     if res.is_err() {
         error!("mutual attestation failed, end the session!\n");
@@ -562,7 +575,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     let verified_report_peer = res.unwrap();
 
     //event log dst
-    let vdm_element = VdmMessageElement::read(reader).unwrap();
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::EventLogMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
@@ -571,9 +584,13 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
     #[cfg(not(feature = "policy_v2"))]
-    let event_log_dst = reader.take(vdm_element.length as usize).unwrap();
+    let event_log_dst = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     #[cfg(feature = "policy_v2")]
-    let _event_log_dst = reader.take(vdm_element.length as usize).unwrap();
+    let _event_log_dst = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
     #[cfg(not(feature = "policy_v2"))]
     {
@@ -591,7 +608,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     }
 
     //mig policy dst
-    let vdm_element = VdmMessageElement::read(reader).unwrap();
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::MigPolicyMy {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
@@ -599,17 +616,21 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let _mig_policy_hash_dst = reader.take(vdm_element.length as usize).unwrap();
+    let _mig_policy_hash_dst = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
-    let vdm_attest_info_src_hash = digest_sha384(&send_buffer[..used]).unwrap();
-    let vdm_attest_info_dst_hash = digest_sha384(&receive_buffer[..receive_used]).unwrap();
+    let vdm_attest_info_src_hash =
+        digest_sha384(&send_buffer[..used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let vdm_attest_info_dst_hash =
+        digest_sha384(&receive_buffer[..receive_used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let mut transcript_before_finish = ManagedVdmBuffer::default();
     transcript_before_finish
         .append_message(vdm_attest_info_src_hash.as_slice())
-        .unwrap();
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
     transcript_before_finish
         .append_message(vdm_attest_info_dst_hash.as_slice())
-        .unwrap();
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
     if let Some(s) = spdm_requester.common.get_session_via_id(session_id) {
         s.runtime_info.vdm_message_transcript_before_finish = Some(transcript_before_finish);
     } else {
@@ -713,13 +734,12 @@ async fn send_and_receive_sdm_exchange_migration_info(
         .await?;
 
     let vdm_payload = spdm_requester
-        .handle_spdm_vendor_defined_respond(session_id, &receive_buffer[..receive_used])
-        .unwrap();
+        .handle_spdm_vendor_defined_respond(session_id, &receive_buffer[..receive_used])?;
 
     let reader = &mut Reader::init(
         &vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize],
     );
-    let vdm_message = VdmMessage::read(reader).unwrap();
+    let vdm_message = VdmMessage::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
         error!(
             "Invalid VDM message major_version: {:x?}\n",
@@ -745,7 +765,8 @@ async fn send_and_receive_sdm_exchange_migration_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let mig_export_version_element = VdmMessageElement::read(reader).unwrap();
+    let mig_export_version_element =
+        VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if mig_export_version_element.element_type != VdmMessageElementType::MigrationImportVersion {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
@@ -760,9 +781,10 @@ async fn send_and_receive_sdm_exchange_migration_info(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let min_import_version = u16::read(reader).unwrap();
-    let max_import_version = u16::read(reader).unwrap();
-    let mig_session_key_element = VdmMessageElement::read(reader).unwrap();
+    let min_import_version = u16::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let max_import_version = u16::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let mig_session_key_element =
+        VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if mig_session_key_element.element_type != VdmMessageElementType::BackwardMigrationSessionKey {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
@@ -782,7 +804,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         min_ver: min_import_version,
         max_ver: max_import_version,
         key: MigrationSessionKey {
-            fields: <[u64; 4]>::read(reader).unwrap(),
+            fields: <[u64; 4]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?,
         },
     };
 
