@@ -86,7 +86,8 @@ pub fn gen_quote_spdm(report_data: &[u8]) -> Result<Vec<u8>, MigrationResult> {
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
     let td_report = tdx_tdcall::tdreport::tdcall_report(&additional_data)?;
 
-    let res = attestation::get_quote(td_report.as_bytes()).unwrap();
+    let res =
+        attestation::get_quote(td_report.as_bytes()).map_err(|_| MigrationResult::Unsupported)?;
     Ok(res)
 }
 

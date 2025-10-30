@@ -6,7 +6,7 @@ use codec::{enum_builder, Codec, Reader, Writer};
 use crypto::hash::digest_sha384;
 use spdmlib::{
     common::{ManagedVdmBuffer, SpdmCodec},
-    error::{SpdmResult, SPDM_STATUS_INVALID_MSG_FIELD, SPDM_STATUS_INVALID_STATE_LOCAL},
+    error::*,
     message::*,
     responder::ResponderContext,
 };
@@ -186,7 +186,13 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
 
     let mut reader =
         Reader::init(&req_payload.vendor_defined_req_payload[0..req_payload.req_length as usize]);
-    let vdm_request = VdmMessage::read(&mut reader).unwrap();
+    let vdm_request = if let Some(vdm_request) = VdmMessage::read(&mut reader) {
+        vdm_request
+    } else {
+        responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorInvalidRequest, 0, &mut writer);
+        let used = writer.used();
+        return (Err(SPDM_STATUS_INVALID_MSG_SIZE), Some(&rsp_bytes[..used]));
+    };
 
     let rsp_payload = match vdm_request.op_code {
         VdmMessageOpCode::ExchangePubKeyReq => {
@@ -233,6 +239,7 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
 
     let res = response.spdm_encode(&mut responder_context.common, &mut writer);
     if res.is_err() {
+        writer.clear();
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
         let used = writer.used();
         return (
@@ -245,30 +252,104 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
 
     match vdm_request.op_code {
         VdmMessageOpCode::ExchangePubKeyReq => {
-            let vdm_pub_key_src_hash = digest_sha384(req_bytes).unwrap();
-            let vdm_pub_key_dst_hash = digest_sha384(writer.used_slice()).unwrap();
+            let vdm_pub_key_src_hash = match digest_sha384(req_bytes) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    writer.clear();
+                    responder_context.write_spdm_error(
+                        SpdmErrorCode::SpdmErrorUnspecified,
+                        0,
+                        &mut writer,
+                    );
+                    return (Err(SPDM_STATUS_CRYPTO_ERROR), Some(&rsp_bytes[..len]));
+                }
+            };
+            let vdm_pub_key_dst_hash = match digest_sha384(writer.used_slice()) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    writer.clear();
+                    responder_context.write_spdm_error(
+                        SpdmErrorCode::SpdmErrorUnspecified,
+                        0,
+                        &mut writer,
+                    );
+                    return (Err(SPDM_STATUS_CRYPTO_ERROR), Some(&rsp_bytes[..len]));
+                }
+            };
             let mut transcript_before_key_exchange = ManagedVdmBuffer::default();
-            transcript_before_key_exchange
-                .append_message(vdm_pub_key_src_hash.as_slice())
-                .unwrap();
-            transcript_before_key_exchange
-                .append_message(vdm_pub_key_dst_hash.as_slice())
-                .unwrap();
+            let res =
+                transcript_before_key_exchange.append_message(vdm_pub_key_src_hash.as_slice());
+            if res.is_none() {
+                writer.clear();
+                responder_context.write_spdm_error(
+                    SpdmErrorCode::SpdmErrorUnspecified,
+                    0,
+                    &mut writer,
+                );
+                return (Err(SPDM_STATUS_BUFFER_FULL), Some(&rsp_bytes[..len]));
+            }
+            let res =
+                transcript_before_key_exchange.append_message(vdm_pub_key_dst_hash.as_slice());
+            if res.is_none() {
+                writer.clear();
+                responder_context.write_spdm_error(
+                    SpdmErrorCode::SpdmErrorUnspecified,
+                    0,
+                    &mut writer,
+                );
+                return (Err(SPDM_STATUS_BUFFER_FULL), Some(&rsp_bytes[..len]));
+            }
             responder_context
                 .common
                 .runtime_info
                 .vdm_message_transcript_before_key_exchange = Some(transcript_before_key_exchange);
         }
         VdmMessageOpCode::ExchangeMigrationAttestInfoReq => {
-            let vdm_attest_info_src_hash = digest_sha384(req_bytes).unwrap();
-            let vdm_attest_info_dst_hash = digest_sha384(writer.used_slice()).unwrap();
+            let vdm_attest_info_src_hash = match digest_sha384(req_bytes) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    writer.clear();
+                    responder_context.write_spdm_error(
+                        SpdmErrorCode::SpdmErrorUnspecified,
+                        0,
+                        &mut writer,
+                    );
+                    return (Err(SPDM_STATUS_CRYPTO_ERROR), Some(&rsp_bytes[..len]));
+                }
+            };
+            let vdm_attest_info_dst_hash = match digest_sha384(writer.used_slice()) {
+                Ok(hash) => hash,
+                Err(_) => {
+                    writer.clear();
+                    responder_context.write_spdm_error(
+                        SpdmErrorCode::SpdmErrorUnspecified,
+                        0,
+                        &mut writer,
+                    );
+                    return (Err(SPDM_STATUS_CRYPTO_ERROR), Some(&rsp_bytes[..len]));
+                }
+            };
             let mut transcript_before_finish = ManagedVdmBuffer::default();
-            transcript_before_finish
-                .append_message(vdm_attest_info_src_hash.as_slice())
-                .unwrap();
-            transcript_before_finish
-                .append_message(vdm_attest_info_dst_hash.as_slice())
-                .unwrap();
+            let res = transcript_before_finish.append_message(vdm_attest_info_src_hash.as_slice());
+            if res.is_none() {
+                writer.clear();
+                responder_context.write_spdm_error(
+                    SpdmErrorCode::SpdmErrorUnspecified,
+                    0,
+                    &mut writer,
+                );
+                return (Err(SPDM_STATUS_BUFFER_FULL), Some(&rsp_bytes[..len]));
+            }
+            let res = transcript_before_finish.append_message(vdm_attest_info_dst_hash.as_slice());
+            if res.is_none() {
+                writer.clear();
+                responder_context.write_spdm_error(
+                    SpdmErrorCode::SpdmErrorUnspecified,
+                    0,
+                    &mut writer,
+                );
+                return (Err(SPDM_STATUS_BUFFER_FULL), Some(&rsp_bytes[..len]));
+            }
             let session_id = responder_context.common.runtime_info.get_last_session_id();
             if let Some(sid) = session_id {
                 if let Some(s) = responder_context.common.get_session_via_id(sid) {
