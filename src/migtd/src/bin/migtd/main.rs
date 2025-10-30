@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-#![no_std]
-#![no_main]
+#![cfg_attr(not(feature = "AzCVMEmu"), no_std)]
+#![cfg_attr(not(feature = "AzCVMEmu"), no_main)]
 
 extern crate alloc;
 
@@ -25,8 +25,12 @@ use migtd::migration::MigrationResult;
 use migtd::{config, event_log, migration};
 use spin::Mutex;
 
+#[cfg(feature = "AzCVMEmu")]
+mod cvmemu;
+
 const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg(not(feature = "AzCVMEmu"))]
 #[no_mangle]
 pub extern "C" fn main() {
     #[cfg(feature = "test_stack_size")]
@@ -34,6 +38,12 @@ pub extern "C" fn main() {
         td_benchmark::StackProfiling::init(0x5a5a_5a5a_5a5a_5a5a, 0xd000);
     }
     runtime_main()
+}
+
+// AzCVMEmu entry point - standard Rust main function
+#[cfg(feature = "AzCVMEmu")]
+fn main() {
+    cvmemu::main();
 }
 
 pub fn runtime_main() {

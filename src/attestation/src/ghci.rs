@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+// This module is only compiled for non-AzCVMEmu modes
+#![cfg(not(feature = "AzCVMEmu"))]
+
 use core::ops::Range;
 use core::sync::atomic::{AtomicU8, Ordering};
 use core::{ffi::c_void, slice::from_raw_parts_mut};

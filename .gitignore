@@ -18,6 +18,11 @@ coverage
 # migtd-core
 clear-*-kvm.img*
 fat*.img
+
+# Test artifacts
+dest.out.log
+*.log
+core*
 test_data
 *.o
 *.obj

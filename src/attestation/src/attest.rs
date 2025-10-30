@@ -5,15 +5,16 @@
 #[cfg(feature = "attest-lib-ext")]
 use crate::binding::verify_quote_integrity_ex;
 use crate::{
-    binding::{
-        get_quote as get_quote_inner, init_heap, verify_quote_integrity, AttestLibError,
-        QveCollateral,
-    },
+    binding::{init_heap, verify_quote_integrity, AttestLibError, QveCollateral},
     root_ca::ROOT_CA_PUBLIC_KEY,
     Error, TD_VERIFIED_REPORT_SIZE,
 };
 use alloc::{ffi::CString, vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void, ops::Range};
+
+#[cfg(not(feature = "AzCVMEmu"))]
+use crate::binding::get_quote as get_quote_inner;
+#[cfg(not(feature = "AzCVMEmu"))]
 use tdx_tdcall::tdreport::*;
 
 const TD_QUOTE_SIZE: usize = 0x2000;
@@ -71,6 +72,7 @@ pub fn attest_init_heap() -> Option<usize> {
     Some(ATTEST_HEAP_SIZE)
 }
 
+#[cfg(not(feature = "AzCVMEmu"))]
 pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
     let mut quote = vec![0u8; TD_QUOTE_SIZE];
     let mut quote_size = TD_QUOTE_SIZE as u32;
@@ -86,6 +88,68 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
         }
     }
     quote.truncate(quote_size as usize);
+    Ok(quote)
+}
+
+#[cfg(feature = "AzCVMEmu")]
+pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
+    // Create a GetQuote buffer following TDX GHCI format
+    // This approach works for both AzCVMEmu and normal modes
+    let tdreport_length = td_report.len();
+    let buffer_size = 32 + tdreport_length + TD_QUOTE_SIZE; // Header + TDReport + space for quote
+    let mut buffer = vec![0u8; buffer_size];
+
+    // Fill GetQuote buffer header
+    // Version (offset 0-7)
+    let version = 1u64.to_le_bytes();
+    buffer[0..8].copy_from_slice(&version);
+
+    // Status will be filled by VMM (offset 8-15)
+    // Initially set to "in flight"
+    let status = 0xFFFFFFFFFFFFFFFFu64.to_le_bytes();
+    buffer[8..16].copy_from_slice(&status);
+
+    // TDREPORT length (offset 16-23)
+    let tdreport_len_bytes = (tdreport_length as u64).to_le_bytes();
+    buffer[16..24].copy_from_slice(&tdreport_len_bytes);
+
+    // Quote buffer length (offset 24-31) - will be updated by VMM
+    let quote_buf_len_bytes = (TD_QUOTE_SIZE as u64).to_le_bytes();
+    buffer[24..32].copy_from_slice(&quote_buf_len_bytes);
+
+    // Copy TDREPORT data (offset 32+)
+    buffer[32..32 + tdreport_length].copy_from_slice(td_report);
+
+    // Call tdvmcall_get_quote with our emulated implementation
+    use tdx_tdcall_emu::tdx::tdvmcall_get_quote;
+
+    if tdvmcall_get_quote(&mut buffer).is_err() {
+        return Err(Error::GetQuote);
+    }
+
+    // Check status for success
+    let status = u64::from_le_bytes([
+        buffer[8], buffer[9], buffer[10], buffer[11], buffer[12], buffer[13], buffer[14],
+        buffer[15],
+    ]);
+
+    if status != 0 {
+        return Err(Error::GetQuote);
+    }
+
+    // Read quote length
+    let quote_length = u64::from_le_bytes([
+        buffer[24], buffer[25], buffer[26], buffer[27], buffer[28], buffer[29], buffer[30],
+        buffer[31],
+    ]) as usize;
+
+    // Extract quote data
+    let quote_start = 32 + tdreport_length;
+    if buffer.len() < quote_start + quote_length {
+        return Err(Error::GetQuote);
+    }
+
+    let quote = buffer[quote_start..quote_start + quote_length].to_vec();
     Ok(quote)
 }
 
