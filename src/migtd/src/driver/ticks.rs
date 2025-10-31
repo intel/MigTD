@@ -32,6 +32,7 @@ fn now() -> u64 {
 }
 
 /// Runs a given future with a timeout.
+#[cfg(not(feature = "AzCVMEmu"))]
 pub async fn with_timeout<F: Future>(timeout: Duration, fut: F) -> Result<F::Output, TimeoutError> {
     use futures_util::{
         future::{select, Either},
@@ -42,6 +43,15 @@ pub async fn with_timeout<F: Future>(timeout: Duration, fut: F) -> Result<F::Out
     match select(fut, timeout_fut).await {
         Either::Left((r, _)) => Ok(r),
         Either::Right(_) => Err(TimeoutError),
+    }
+}
+
+/// Runs a given future with a timeout (AzCVMEmu version using tokio).
+#[cfg(feature = "AzCVMEmu")]
+pub async fn with_timeout<F: Future>(timeout: Duration, fut: F) -> Result<F::Output, TimeoutError> {
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(v) => Ok(v),
+        Err(_elapsed) => Err(TimeoutError),
     }
 }
 

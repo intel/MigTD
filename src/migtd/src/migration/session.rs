@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+#[cfg(not(feature = "spdm_attestation"))]
+use crate::driver::ticks::with_timeout;
 #[cfg(feature = "vmcall-raw")]
 use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
 use alloc::collections::BTreeSet;
@@ -16,7 +18,11 @@ use core::{future::poll_fn, mem::size_of, task::Poll};
 use event::VMCALL_SERVICE_FLAG;
 use lazy_static::lazy_static;
 use spin::Mutex;
+#[cfg(not(feature = "AzCVMEmu"))]
 use td_payload::mm::shared::SharedMemory;
+#[cfg(feature = "AzCVMEmu")]
+use td_payload_emu::mm::shared::SharedMemory;
+#[cfg(not(feature = "AzCVMEmu"))]
 use tdx_tdcall::{
     td_call,
     tdx::{self, tdcall_servtd_wr},
@@ -24,6 +30,12 @@ use tdx_tdcall::{
 };
 #[cfg(feature = "vmcall-raw")]
 use tdx_tdcall::{tdreport::TdxReport, tdreport::TD_REPORT_ADDITIONAL_DATA_SIZE};
+#[cfg(feature = "AzCVMEmu")]
+use tdx_tdcall_emu::{
+    td_call,
+    tdx::{self, tdcall_servtd_wr},
+    TdcallArgs,
+};
 use zerocopy::AsBytes;
 
 type Result<T> = core::result::Result<T, MigrationResult>;

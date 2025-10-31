@@ -5,8 +5,20 @@
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
+
+// For AzCVMEmu builds, alias td_payload_emu as td_payload so downstream modules can
+// keep using upstream-style `td_payload::...` imports without changes.
+#[cfg(feature = "AzCVMEmu")]
+extern crate td_payload_emu as td_payload;
+// No mutual exclusivity needed: real stack is the default, AzCVMEmu swaps to emu stack.
 use core::fmt::{self, Display};
 use rust_std_stub::{error, io};
+
+// Conditional imports based on feature
+#[cfg(feature = "AzCVMEmu")]
+use tdx_tdcall_emu::TdVmcallError;
+
+#[cfg(not(feature = "AzCVMEmu"))]
 use tdx_tdcall::TdVmcallError;
 
 pub mod stream;

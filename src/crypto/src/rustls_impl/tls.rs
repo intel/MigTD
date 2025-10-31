@@ -947,9 +947,17 @@ pub(crate) struct TlsTimeProvider;
 
 impl TimeProvider for TlsTimeProvider {
     fn current_time(&self) -> Option<UnixTime> {
-        Some(UnixTime::since_unix_epoch(Duration::new(
-            sys_time::get_sys_time()? as u64,
-            0,
-        )))
+        // Avoid RTC access in AzCVMEmu; use a fixed timestamp.
+        #[cfg(feature = "AzCVMEmu")]
+        {
+            Some(UnixTime::since_unix_epoch(Duration::new(1704067200u64, 0)))
+        }
+        #[cfg(not(feature = "AzCVMEmu"))]
+        {
+            Some(UnixTime::since_unix_epoch(Duration::new(
+                sys_time::get_sys_time()? as u64,
+                0,
+            )))
+        }
     }
 }

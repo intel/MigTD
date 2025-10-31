@@ -31,6 +31,10 @@ pub use spdm_req::spdm_requester;
 pub use spdm_req::spdm_requester_transfer_msk;
 pub use spdm_rsp::spdm_responder;
 pub use spdm_rsp::spdm_responder_transfer_msk;
+#[cfg(not(feature = "AzCVMEmu"))]
+use tdx_tdcall;
+#[cfg(feature = "AzCVMEmu")]
+use tdx_tdcall_emu as tdx_tdcall;
 
 pub use spdm_vdm::*;
 
@@ -157,7 +161,7 @@ impl Codec for SpdmAppContextData {
         #[cfg(not(feature = "vmcall-raw"))]
         {
             size += self.migration_info.mig_policy_id.encode(bytes)?;
-            size += self.migration_info.communication_id.encode(bytes)?
+            size += self.migration_info.communication_id.encode(bytes)?;
         }
 
         size += self.private_key.encode(bytes)?;

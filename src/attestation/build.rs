@@ -51,5 +51,21 @@ fn main() {
     );
 
     println!("cargo:rustc-link-search=native={}", search_dir);
+
+    // Use different linking approach based on feature
+    #[cfg(feature = "AzCVMEmu")]
+    {
+        // Run the fixup script to create the modified library for AzCVMEmu
+        let script_path = crate_path.join("fixup-libservtd-attest-lib.sh");
+        let status = Command::new("bash")
+            .arg(&script_path)
+            .current_dir(&crate_path)
+            .status()
+            .expect("failed to run fixup-libservtd-attest-lib.sh script!");
+        assert!(status.success(), "failed to run fixup script: {status}");
+        println!("cargo:rustc-link-arg=-lservtd_attest_app");
+        println!("cargo:rustc-link-arg=-lcrypto");
+    }
+    #[cfg(not(feature = "AzCVMEmu"))]
     println!("cargo:rustc-link-lib=static=servtd_attest");
 }

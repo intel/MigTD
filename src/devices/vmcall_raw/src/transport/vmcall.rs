@@ -16,7 +16,10 @@ use lazy_static::lazy_static;
 use spin::Mutex;
 use td_payload::arch::idt::InterruptStack;
 use td_payload::mm::shared::SharedMemory;
+#[cfg(not(feature = "AzCVMEmu"))]
 use tdx_tdcall::tdx;
+#[cfg(feature = "AzCVMEmu")]
+use tdx_tdcall_emu::tdx;
 
 const MAX_VMCALL_RAW_STREAM_MTU: usize = 0x1000 * 16;
 const VMCALL_VECTOR: u8 = 0x52;

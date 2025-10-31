@@ -19,6 +19,8 @@ use super::*;
 #[cfg(feature = "policy_v2")]
 use crate::config::get_policy;
 use crate::event_log::get_event_log;
+#[cfg(feature = "AzCVMEmu")]
+use tdx_tdcall_emu as tdx_tdcall;
 use verify::*;
 
 type Result<T> = core::result::Result<T, RatlsError>;
@@ -276,6 +278,14 @@ mod verify {
     }
 
     fn verify_public_key(verified_report: &[u8], public_key: &[u8]) -> CryptoResult<()> {
+        if cfg!(feature = "AzCVMEmu") {
+            // In AzCVMEmu mode, REPORTDATA is constructed differently.
+            // Bypass public key hash check in this development environment.
+            log::warn!(
+                "AzCVMEmu mode: Skipping public key verification in TD report. This is NOT secure for production use.\n"
+            );
+            return Ok(());
+        }
         const PUBLIC_KEY_HASH_SIZE: usize = 48;
 
         let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];
