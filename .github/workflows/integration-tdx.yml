@@ -206,3 +206,41 @@ jobs:
           pushd sh_script/test
           sudo pytest -k "function" --device_type serial
           popd
+
+  spdm_attestation_policy_v2:
+    name: Run SPDM Attestation Test with Policy V2
+    runs-on: [self-hosted, tdx]
+
+    steps:
+      - name: Clean test repository
+        run: |
+          sudo rm -rf sh_script/test/
+
+      - name: Checkout sources
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with: 
+          submodules: recursive
+      
+      - name: Preparation Work
+        run: bash sh_script/preparation.sh
+
+      - name: Set Spdm Config
+        run: echo "SPDM_CONFIG=../../../config/spdm_config_policy_v2.json" >> "$GITHUB_ENV"
+
+      - name: Build Migration TD binary with SPDM feature and Policy V2
+        run: cargo image --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+
+      - name: Run Tests - Test Migration TD 20 Cycles
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "cycle"
+          popd
+
+      - name: Build Migration TD binary with SPDM feature and Policy V2
+        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+
+      - name: Run Tests - Test Migration TD 20 Cycles
+        run: |
+          pushd sh_script/test
+          sudo pytest -k "cycle" --device_type serial
+          popd
