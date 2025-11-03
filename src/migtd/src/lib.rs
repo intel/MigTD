@@ -26,18 +26,11 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     use td_payload::arch;
     use td_payload::mm::layout::*;
 
-    #[cfg(not(feature = "spdm_attestation"))]
-    const STACK_SIZE: usize = 0xA_2000;
-    #[cfg(not(feature = "spdm_attestation"))]
-    const HEAP_SIZE: usize = 0x6E_0000;
-
-    #[cfg(feature = "spdm_attestation")]
-    const STACK_SIZE: usize = 0x40_0000;
-    #[cfg(feature = "spdm_attestation")]
-    const HEAP_SIZE: usize = 0x40_0000;
+    const STACK_SIZE: usize = 0x6D_1000;
+    const HEAP_SIZE: usize = 0x4D_2000;
 
     const PT_SIZE: usize = 0x8_0000;
-    const SHARED_MEMORY_SIZE: usize = 0x1E_0000;
+    const SHARED_MEMORY_SIZE: usize = 0xD_4000;
     const SHADOW_STACK_SIZE: usize = 0x10000;
 
     extern "C" {

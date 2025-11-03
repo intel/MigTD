@@ -168,7 +168,7 @@ fn initialize_policy() -> String {
 }
 
 fn handle_pre_mig() {
-    const MAX_CONCURRENCY_REQUESTS: usize = 12;
+    const MAX_CONCURRENCY_REQUESTS: usize = 2;
 
     #[cfg(not(feature = "vmcall-raw"))]
     // Set by `wait_for_request` async task when getting new request from VMM.
