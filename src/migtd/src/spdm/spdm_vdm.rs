@@ -187,8 +187,14 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
         return (Err(SPDM_STATUS_INVALID_MSG_FIELD), Some(&rsp_bytes[..used]));
     }
 
-    let mut reader =
-        Reader::init(&req_payload.vendor_defined_req_payload[0..req_payload.req_length as usize]);
+    let req_len = req_payload.req_length as usize;
+    // Validate that req_length does not exceed the backing buffer to avoid OOB slice panics
+    if req_len > req_payload.vendor_defined_req_payload.len() {
+        responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorInvalidRequest, 0, &mut writer);
+        let used = writer.used();
+        return (Err(SPDM_STATUS_INVALID_MSG_FIELD), Some(&rsp_bytes[..used]));
+    }
+    let mut reader = Reader::init(&req_payload.vendor_defined_req_payload[..req_len]);
     let vdm_request = VdmMessage::read(&mut reader).unwrap();
 
     let rsp_payload = match vdm_request.op_code {

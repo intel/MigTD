@@ -291,9 +291,13 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         .handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])
         .unwrap();
 
+    // Validate rsp_length before slicing to avoid OOB
+    let rsp_len = vdm_payload.rsp_length as usize;
+    if rsp_len > vdm_payload.vendor_defined_rsp_payload.len() {
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
     // Format checks and save the received public key
-    let mut reader =
-        Reader::init(&vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize]);
+    let mut reader = Reader::init(&vdm_payload.vendor_defined_rsp_payload[..rsp_len]);
     let vdm_message = VdmMessage::read(&mut reader).unwrap();
     if vdm_message.op_code != VdmMessageOpCode::ExchangePubKeyRsp {
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
@@ -332,6 +336,9 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
     my_pub_key_prov.data[..my_pub_key.len()].copy_from_slice(&my_pub_key);
     spdm_requester.common.provision_info.my_pub_key = Some(my_pub_key_prov);
 
+    if peer_pub_key.len() > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE {
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
     let mut peer_pub_key_prov = SpdmCertChainData {
         data_size: peer_pub_key.len() as u32,
         data: [0u8; config::MAX_SPDM_CERT_CHAIN_DATA_SIZE],

@@ -135,12 +135,17 @@ impl SpdmTransportEncap for VmCallTransportEncap {
             .map_err(|_| SPDM_STATUS_ENCAP_FAIL)?;
         let header_size = writer.used();
 
-        if transport_buffer.len() < header_size + spdm_buffer.len() {
+        // Prevent integer overflow and check destination fits
+        let payload_len = spdm_buffer.len();
+        if let Some(total) = header_size.checked_add(payload_len) {
+            if transport_buffer.len() < total {
+                return Err(SPDM_STATUS_ENCAP_FAIL);
+            }
+            transport_buffer[header_size..total].copy_from_slice(&spdm_buffer);
+            Ok(total)
+        } else {
             return Err(SPDM_STATUS_ENCAP_FAIL);
         }
-        transport_buffer[header_size..(header_size + spdm_buffer.len())]
-            .copy_from_slice(&spdm_buffer);
-        Ok(header_size + spdm_buffer.len())
     }
 
     async fn decap(
@@ -153,7 +158,12 @@ impl SpdmTransportEncap for VmCallTransportEncap {
             VmCallMessageHeader::read(&mut reader).ok_or(SPDM_STATUS_DECAP_FAIL)?;
         let header_size = reader.used();
         let payload_size = vmcall_msg_header.length as usize;
-        if transport_buffer.len() < header_size + payload_size {
+        // Check for overflow when adding header and payload sizes
+        let total = match header_size.checked_add(payload_size) {
+            Some(t) => t,
+            None => return Err(SPDM_STATUS_DECAP_FAIL),
+        };
+        if transport_buffer.len() < total {
             return Err(SPDM_STATUS_DECAP_FAIL);
         }
         let mut spdm_buffer = spdm_buffer.lock();
@@ -161,7 +171,7 @@ impl SpdmTransportEncap for VmCallTransportEncap {
         if spdm_buffer.len() < payload_size {
             return Err(SPDM_STATUS_DECAP_FAIL);
         }
-        let payload = &transport_buffer[header_size..(header_size + payload_size)];
+        let payload = &transport_buffer[header_size..total];
         spdm_buffer[..payload_size].copy_from_slice(payload);
         let secured_message = vmcall_msg_header.msg_type == VmCallMessageType::SecuredSpdmMessage;
 

@@ -181,7 +181,8 @@ pub fn handle_exchange_pub_key_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let peer_pub_key = reader.take(peer_pub_key_element.length as usize).unwrap();
+    let peer_pub_key_len = peer_pub_key_element.length as usize;
+    let peer_pub_key = reader.take(peer_pub_key_len).unwrap();
 
     let signing_key = EcdsaPk::new().unwrap();
     let my_pub_key = signing_key.public_key_spki();
@@ -227,11 +228,14 @@ pub fn handle_exchange_pub_key_req(
     my_pub_key_prov.data[..my_pub_key.len()].copy_from_slice(&my_pub_key);
     spdm_responder.common.provision_info.my_pub_key = Some(my_pub_key_prov);
 
+    if peer_pub_key_len > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE {
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
     let mut peer_pub_key_prov = SpdmCertChainData {
-        data_size: peer_pub_key_element.length as u32,
+        data_size: peer_pub_key_len as u32,
         data: [0u8; config::MAX_SPDM_CERT_CHAIN_DATA_SIZE],
     };
-    peer_pub_key_prov.data[..peer_pub_key_element.length as usize].copy_from_slice(peer_pub_key);
+    peer_pub_key_prov.data[..peer_pub_key_len].copy_from_slice(peer_pub_key);
     spdm_responder.common.provision_info.peer_pub_key = Some(peer_pub_key_prov);
 
     Ok(VendorDefinedRspPayloadStruct {
