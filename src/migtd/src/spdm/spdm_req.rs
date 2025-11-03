@@ -249,9 +249,14 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
+    let my_pub_key_len = my_pub_key.len();
+    let my_pub_key_len_u16 = match u16::try_from(my_pub_key_len) {
+        Ok(v) => v,
+        Err(_) => return Err(SPDM_STATUS_BUFFER_FULL),
+    };
     let pub_key_element = VdmMessageElement {
         element_type: VdmMessageElementType::PubKeyMy,
-        length: my_pub_key.len() as u16,
+        length: my_pub_key_len_u16,
     };
     cnt += pub_key_element
         .encode(&mut writer)
@@ -347,18 +352,34 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
     // Provision the public keys to spdm context
+    let my_pub_key_len = my_pub_key.len();
+    let my_pub_key_len_u32 = match u32::try_from(my_pub_key_len) {
+        Ok(v) => v,
+        Err(_) => return Err(SPDM_STATUS_BUFFER_FULL),
+    };
+    if my_pub_key_len > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE {
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
     let mut my_pub_key_prov = SpdmCertChainData {
-        data_size: my_pub_key.len() as u32,
+        data_size: my_pub_key_len_u32,
         data: [0u8; config::MAX_SPDM_CERT_CHAIN_DATA_SIZE],
     };
-    my_pub_key_prov.data[..my_pub_key.len()].copy_from_slice(&my_pub_key);
+    my_pub_key_prov.data[..my_pub_key_len].copy_from_slice(&my_pub_key);
     spdm_requester.common.provision_info.my_pub_key = Some(my_pub_key_prov);
 
+    let peer_pub_key_len = peer_pub_key.len();
+    let peer_pub_key_len_u32 = match u32::try_from(peer_pub_key_len) {
+        Ok(v) => v,
+        Err(_) => return Err(SPDM_STATUS_INVALID_MSG_SIZE),
+    };
+    if peer_pub_key_len > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE {
+        return Err(SPDM_STATUS_INVALID_MSG_SIZE);
+    }
     let mut peer_pub_key_prov = SpdmCertChainData {
-        data_size: peer_pub_key.len() as u32,
+        data_size: peer_pub_key_len_u32,
         data: [0u8; config::MAX_SPDM_CERT_CHAIN_DATA_SIZE],
     };
-    peer_pub_key_prov.data[..peer_pub_key.len()].copy_from_slice(peer_pub_key);
+    peer_pub_key_prov.data[..peer_pub_key_len].copy_from_slice(peer_pub_key);
     spdm_requester.common.provision_info.peer_pub_key = Some(peer_pub_key_prov);
 
     let vdm_pub_key_src_hash =

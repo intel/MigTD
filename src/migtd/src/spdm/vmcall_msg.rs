@@ -128,22 +128,31 @@ impl SpdmTransportEncap for VmCallTransportEncap {
             VmCallMessageType::SpdmMessage
         };
 
+        // Check that spdm_buffer.len() fits in u32 to avoid truncation.
+        let length_u32 = match u32::try_from(spdm_buffer.len()) {
+            Ok(v) => v,
+            Err(_) => return Err(SPDM_STATUS_ENCAP_FAIL),
+        };
         let vmcall_msg_header = VmCallMessageHeader {
             version: VMCALL_SPDM_VERSION,
             msg_type,
-            length: spdm_buffer.len() as u32,
+            length: length_u32,
         };
         vmcall_msg_header
             .encode(&mut writer)
             .map_err(|_| SPDM_STATUS_ENCAP_FAIL)?;
         let header_size = writer.used();
 
-        if transport_buffer.len() < header_size + spdm_buffer.len() {
+        // Prevent arithmetic overflow when adding header_size + payload size.
+        let total_size = match header_size.checked_add(spdm_buffer.len()) {
+            Some(v) => v,
+            None => return Err(SPDM_STATUS_ENCAP_FAIL),
+        };
+        if transport_buffer.len() < total_size {
             return Err(SPDM_STATUS_ENCAP_FAIL);
         }
-        transport_buffer[header_size..(header_size + spdm_buffer.len())]
-            .copy_from_slice(&spdm_buffer);
-        Ok(header_size + spdm_buffer.len())
+        transport_buffer[header_size..total_size].copy_from_slice(&spdm_buffer);
+        Ok(total_size)
     }
 
     async fn decap(
@@ -156,7 +165,12 @@ impl SpdmTransportEncap for VmCallTransportEncap {
             VmCallMessageHeader::read(&mut reader).ok_or(SPDM_STATUS_DECAP_FAIL)?;
         let header_size = reader.used();
         let payload_size = vmcall_msg_header.length as usize;
-        if transport_buffer.len() < header_size + payload_size {
+        // Prevent overflow when computing header_size + payload_size.
+        let total_needed = match header_size.checked_add(payload_size) {
+            Some(v) => v,
+            None => return Err(SPDM_STATUS_DECAP_FAIL),
+        };
+        if transport_buffer.len() < total_needed {
             return Err(SPDM_STATUS_DECAP_FAIL);
         }
         let mut spdm_buffer = spdm_buffer.lock();
@@ -164,7 +178,7 @@ impl SpdmTransportEncap for VmCallTransportEncap {
         if spdm_buffer.len() < payload_size {
             return Err(SPDM_STATUS_DECAP_FAIL);
         }
-        let payload = &transport_buffer[header_size..(header_size + payload_size)];
+        let payload = &transport_buffer[header_size..total_needed];
         spdm_buffer[..payload_size].copy_from_slice(payload);
         let secured_message = vmcall_msg_header.msg_type == VmCallMessageType::SecuredSpdmMessage;
 

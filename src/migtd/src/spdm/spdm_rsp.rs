@@ -537,26 +537,42 @@ pub fn handle_exchange_mig_attest_info_req(
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
     //quote dst
+    let quote_len = quote_dst.len();
+    let quote_len_u16 = match u16::try_from(quote_len) {
+        Ok(v) => v,
+        Err(_) => return Err(SPDM_STATUS_BUFFER_FULL),
+    };
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
-        length: quote_dst.len() as u16,
+        length: quote_len_u16,
     };
     cnt += quote_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    if writer.used().checked_add(quote_len).is_none() {
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
     cnt += writer
         .extend_from_slice(quote_dst.as_slice())
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     //event log dst
     let event_log_dst = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let event_log_len = event_log_dst.len();
+    let event_log_len_u16 = match u16::try_from(event_log_len) {
+        Ok(v) => v,
+        Err(_) => return Err(SPDM_STATUS_BUFFER_FULL),
+    };
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
-        length: event_log_dst.len() as u16,
+        length: event_log_len_u16,
     };
     cnt += event_log_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    if writer.used().checked_add(event_log_len).is_none() {
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
     cnt += writer
         .extend_from_slice(event_log_dst)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
@@ -565,13 +581,21 @@ pub fn handle_exchange_mig_attest_info_req(
     let mig_policy_dst = get_policy().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
     let mig_policy_dst_hash =
         digest_sha384(mig_policy_dst).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let mig_policy_len = mig_policy_dst_hash.len();
+    let mig_policy_len_u16 = match u16::try_from(mig_policy_len) {
+        Ok(v) => v,
+        Err(_) => return Err(SPDM_STATUS_BUFFER_FULL),
+    };
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
-        length: mig_policy_dst_hash.len() as u16,
+        length: mig_policy_len_u16,
     };
     cnt += mig_policy_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    if writer.used().checked_add(mig_policy_len).is_none() {
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
     cnt += writer
         .extend_from_slice(&mig_policy_dst_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
