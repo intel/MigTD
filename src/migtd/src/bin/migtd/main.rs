@@ -79,6 +79,7 @@ fn do_measurements() {
     get_policy_and_measure(event_log);
 
     // Get root certificate from CFV and measure it into RMTR
+    #[cfg(not(feature = "policy_v2"))]
     get_ca_and_measure(event_log);
 }
 
@@ -135,6 +136,7 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
     .expect("Failed to log policy issuer chain");
 }
 
+#[cfg(not(feature = "policy_v2"))]
 fn get_ca_and_measure(event_log: &mut [u8]) {
     let root_ca = config::get_root_ca().expect("Fail to get root certificate from CFV\n");
 
