@@ -178,6 +178,9 @@ impl SpdmTransportEncap for VmCallTransportEncap {
         _is_app_message: bool,
     ) -> SpdmResult<usize> {
         let mut app_buffer = app_buffer.lock();
+        if app_buffer.len() < spdm_buffer.len() {
+            return Err(SPDM_STATUS_ENCAP_FAIL);
+        }
         app_buffer[0..spdm_buffer.len()].copy_from_slice(&spdm_buffer);
         Ok(spdm_buffer.len())
     }
@@ -188,6 +191,9 @@ impl SpdmTransportEncap for VmCallTransportEncap {
         spdm_buffer: Arc<Mutex<&mut [u8]>>,
     ) -> SpdmResult<(usize, bool)> {
         let mut spdm_buffer = spdm_buffer.lock();
+        if spdm_buffer.len() < app_buffer.len() {
+            return Err(SPDM_STATUS_DECAP_FAIL);
+        }
         spdm_buffer[0..app_buffer.len()].copy_from_slice(&app_buffer);
         Ok((app_buffer.len(), false))
     }
