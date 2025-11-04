@@ -288,6 +288,13 @@ pub fn handle_exchange_pub_key_req(
         .extend_from_slice(my_pub_key.as_bytes())
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
+    if my_pub_key.len() > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE
+        || peer_pub_key.len() > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE
+    {
+        error!("Public key size is too large.\n");
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
+
     // Provision the public keys to spdm context
     let mut my_pub_key_prov = SpdmCertChainData {
         data_size: my_pub_key.len() as u32,
@@ -388,6 +395,10 @@ pub fn handle_exchange_mig_attest_info_req(
     // Build concatenated slice: "MigTDRsp" || th1
     let th1_len = th1.data_size as usize;
     // th1 for SHA-384 should be 48 bytes; 8 (prefix) + 48 digest = 56 bytes needed.
+    if th1_len > SPDM_MAX_HASH_SIZE {
+        error!("th1 length is too large: {}\n", th1_len);
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
     let mut report_data = [0u8; "MigTDRsp".len() + SPDM_MAX_HASH_SIZE];
     // Copy prefix
     report_data[..report_data_prefix_len].copy_from_slice(report_data_prefix);
@@ -537,6 +548,10 @@ pub fn handle_exchange_mig_attest_info_req(
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
     //quote dst
+    if quote_dst.len() > u16::MAX as usize {
+        error!("Quote size is too large: {}\n", quote_dst.len());
+        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+    }
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
         length: quote_dst.len() as u16,
@@ -550,6 +565,10 @@ pub fn handle_exchange_mig_attest_info_req(
 
     //event log dst
     let event_log_dst = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    if event_log_dst.len() > u16::MAX as usize {
+        error!("Event log size is too large: {}\n", event_log_dst.len());
+        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+    }
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
         length: event_log_dst.len() as u16,
@@ -770,6 +789,9 @@ fn sign_ecdsa_asym_algo(
     let signature = signature.as_ref();
 
     let mut full_signature: [u8; SPDM_MAX_ASYM_SIG_SIZE] = [0u8; SPDM_MAX_ASYM_SIG_SIZE];
+    if full_signature.len() < signature.len() || signature.len() > u16::MAX as usize {
+        return None;
+    }
     full_signature[..signature.len()].copy_from_slice(signature);
 
     Some(SpdmSignatureStruct {

@@ -346,6 +346,13 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
+    if my_pub_key.len() > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE
+        || peer_pub_key.len() > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE
+    {
+        error!("Public key size is too large.\n");
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
+
     // Provision the public keys to spdm context
     let mut my_pub_key_prov = SpdmCertChainData {
         data_size: my_pub_key.len() as u32,
@@ -424,6 +431,10 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     // Build concatenated slice: "MigTDReq" || th1
     let th1_len = th1.data_size as usize;
     // th1 for SHA-384 should be 48 bytes; 8 (prefix) + 48 digest = 56 bytes needed.
+    if th1_len > SPDM_MAX_HASH_SIZE {
+        error!("th1 length is too large: {}\n", th1_len);
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
     let mut report_data = [0u8; "MigTDReq".len() + SPDM_MAX_HASH_SIZE];
     // Copy prefix
     report_data[..report_data_prefix_len].copy_from_slice(report_data_prefix);
@@ -447,6 +458,10 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     #[cfg(not(feature = "policy_v2"))]
     let verified_report_local = res.unwrap();
 
+    if quote_src.len() > u16::MAX as usize {
+        error!("Quote size is too large: {}\n", quote_src.len());
+        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+    }
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
         length: quote_src.len() as u16,
@@ -460,6 +475,10 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     //event log src
     let event_log_src = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    if event_log_src.len() > u16::MAX as usize {
+        error!("Event log size is too large: {}\n", event_log_src.len());
+        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+    }
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
         length: event_log_src.len() as u16,
