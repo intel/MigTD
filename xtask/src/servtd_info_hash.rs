@@ -28,26 +28,28 @@ pub(crate) struct ServtdInfoHashArgs {
     output: Option<PathBuf>,
     #[clap(short, long)]
     test_disable_ra_and_accept_all: bool,
+    #[clap(long)]
+    policy_v2: bool,
 }
 
 impl ServtdInfoHashArgs {
     pub fn generate(&self) -> Result<()> {
         let sh = Shell::new()?;
-        let cmd = cmd!(sh, "cargo run -p migtd-hash  -- ")
+        let mut cmd = cmd!(sh, "cargo run -p migtd-hash  -- ")
             .args(&["--image", self.image()?.to_str().unwrap()])
             .args(&["--manifest", self.servtd_info()?.to_str().unwrap()]);
 
-        let cmd = if self.output.is_some() {
-            cmd.args(&["--output-file", self.output()?.to_str().unwrap()])
-        } else {
-            cmd
-        };
+        if self.output.is_some() {
+            cmd = cmd.args(&["--output-file", self.output()?.to_str().unwrap()])
+        }
 
-        let cmd = if self.test_disable_ra_and_accept_all {
-            cmd.args(&["--test-disable-ra-and-accept-all"])
-        } else {
-            cmd
-        };
+        if self.test_disable_ra_and_accept_all {
+            cmd = cmd.args(&["--test-disable-ra-and-accept-all"])
+        }
+
+        if self.policy_v2 {
+            cmd = cmd.args(&["--policy-v2"])
+        }
 
         cmd.run()?;
 

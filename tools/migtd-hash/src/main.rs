@@ -24,6 +24,9 @@ struct Config {
     /// The input MigTD image enables the `test_disable_ra_and_accept_all` feature
     #[clap(short, long)]
     pub test_disable_ra_and_accept_all: bool,
+    /// The input MigTD image enables the `policy_v2` feature
+    #[clap(long)]
+    pub policy_v2: bool,
     /// Servtd_attr value (default 0)
     #[clap(short, long)]
     pub servtd_attr: Option<u64>,
@@ -61,6 +64,7 @@ fn main() {
         &manifest,
         image,
         config.test_disable_ra_and_accept_all,
+        config.policy_v2,
         servtd_attr,
         igvmformat,
     )
