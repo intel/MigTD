@@ -5,7 +5,10 @@
 use anyhow::{anyhow, Error, Result};
 use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
 use migtd::{
-    config::{CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_ROOT_CA_FFS_GUID},
+    config::{
+        CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
+        MIGTD_ROOT_CA_FFS_GUID,
+    },
     event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
 };
 use std::{
@@ -35,6 +38,7 @@ pub fn calculate_servtd_info_hash(
     manifest: &[u8],
     mut image: File,
     is_ra_disabled: bool,
+    is_policy_v2: bool,
     servtd_attr: u64,
     igvmformat: bool,
 ) -> Result<Vec<u8>, Error> {
@@ -66,9 +70,12 @@ pub fn calculate_servtd_info_hash(
     } else {
         image.read(&mut cfv)?;
     }
+
+    let rtmr1 = rtmr1(&cfv, &td_info.rtmr1, is_policy_v2)?;
+    td_info.rtmr1.copy_from_slice(rtmr1.as_slice());
     td_info
         .rtmr2
-        .copy_from_slice(rtmr2(&cfv, is_ra_disabled)?.as_slice());
+        .copy_from_slice(rtmr2(&cfv, is_ra_disabled, is_policy_v2)?.as_slice());
 
     if (servtd_attr & SERVTD_ATTR_IGNORE_ATTRIBUTES) != 0 {
         td_info.attributes.fill(0);
@@ -109,16 +116,38 @@ pub fn calculate_servtd_info_hash(
     digest_sha384(&buffer).map_err(|_| anyhow!("Calculate digest"))
 }
 
-fn rtmr2(cfv: &[u8], is_ra_disabled: bool) -> Result<Vec<u8>, Error> {
+fn rtmr1(
+    cfv: &[u8],
+    rtmr1: &[u8; SHA384_DIGEST_SIZE],
+    is_policy_v2: bool,
+) -> Result<Vec<u8>, Error> {
+    let mut rtmr1 = Rtmr::new_with_value(rtmr1);
+    if is_policy_v2 {
+        let policy_issuer_chain = fv::get_file_from_fv(
+            cfv,
+            pi::fv::FV_FILETYPE_RAW,
+            MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
+        )
+        .ok_or(anyhow!("Unable to get policy issuer chain from image"))?;
+        rtmr1.extend_with_raw_data(policy_issuer_chain)?;
+    }
+
+    Ok(rtmr1.as_bytes().to_vec())
+}
+
+fn rtmr2(cfv: &[u8], is_ra_disabled: bool, is_policy_v2: bool) -> Result<Vec<u8>, Error> {
     let mut rtmr2 = Rtmr::new();
     if !is_ra_disabled {
         let policy = fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_POLICY_FFS_GUID)
             .ok_or(anyhow!("Unable to get policy from image"))?;
-        let root_ca = fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_ROOT_CA_FFS_GUID)
-            .ok_or(anyhow!("Unable to get root CA from image"))?;
-
         rtmr2.extend_with_raw_data(policy)?;
-        rtmr2.extend_with_raw_data(root_ca)?;
+
+        if !is_policy_v2 {
+            let root_ca =
+                fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_ROOT_CA_FFS_GUID)
+                    .ok_or(anyhow!("Unable to get root CA from image"))?;
+            rtmr2.extend_with_raw_data(root_ca)?;
+        }
     } else {
         rtmr2.extend_with_raw_data(TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT)?;
     }
@@ -134,6 +163,13 @@ impl Rtmr {
         Self {
             reg: [0u8; SHA384_DIGEST_SIZE * 2],
         }
+    }
+
+    fn new_with_value(value: &[u8; SHA384_DIGEST_SIZE]) -> Self {
+        let mut reg = [0u8; SHA384_DIGEST_SIZE * 2];
+        reg[..SHA384_DIGEST_SIZE].copy_from_slice(value);
+
+        Self { reg }
     }
 
     fn extend_with_raw_data(&mut self, data: &[u8]) -> Result<(), Error> {
