@@ -34,14 +34,14 @@ const SERVTD_ATTR_IGNORE_RTMR1: u64 = 0x80_0000_0000;
 const SERVTD_ATTR_IGNORE_RTMR2: u64 = 0x100_0000_0000;
 const SERVTD_ATTR_IGNORE_RTMR3: u64 = 0x200_0000_0000;
 
-pub fn calculate_servtd_info_hash(
+pub fn build_td_info(
     manifest: &[u8],
     mut image: File,
     is_ra_disabled: bool,
     is_policy_v2: bool,
     servtd_attr: u64,
     igvmformat: bool,
-) -> Result<Vec<u8>, Error> {
+) -> Result<TdInfoStruct, Error> {
     // Initialize the configurable fields of TD info structure.
     let manifest = serde_json::from_slice::<Manifest>(&manifest)?;
     let mut td_info = TdInfoStruct {
@@ -108,6 +108,10 @@ pub fn calculate_servtd_info_hash(
         td_info.rtmr3.fill(0);
     }
 
+    Ok(td_info)
+}
+
+pub fn calculate_servtd_info_hash(td_info: TdInfoStruct) -> Result<Vec<u8>, Error> {
     // Convert the TD info structure to bytes.
     let mut buffer = [0u8; size_of::<TdInfoStruct>()];
     td_info.pack(&mut buffer);
