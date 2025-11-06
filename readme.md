@@ -131,6 +131,14 @@ cargo image --no-default-features --features vmcall-raw,stack-guard,main,test_di
 
 Please refer to [policy_v2.md](doc/policy_v2.md) for policy v2 generation and image setup.
 
+### Build for Azure CVM Emulation (AzCVMEmu)
+
+To build MigTD as a standard Rust app that can run in Azure TDX CVM environment, for development and testing purpose:
+```
+cargo build --no-default-features --features AzCVMEmu
+```
+The detailed AzCVMEmu mode instructions can be found in `doc/AzCVMEmu.md`.
+
 ### Generate SERVTD_INFO_HASH
 
 `SERVTD_HASH_INFO` can be calculated based on a given MigTD image and a TD configuration such as

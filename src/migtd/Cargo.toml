@@ -45,6 +45,14 @@ x86_64 = { version = "0.14", default-features = false, features = ["instructions
 zerocopy = { version = "0.7", features = ["derive"] }
 bitfield-struct = "0.11"
 
+# AzCVMEmu optional deps (grouped)
+tdx-tdcall-emu = { path = "../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }
+td-payload-emu = { path = "../../deps/td-shim-AzCVMEmu/td-payload-emu", optional = true }
+td-shim-interface-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim-interface", optional = true, features = ["std"] }
+td-shim-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim", optional = true }
+env_logger = { version = "0.10.0", optional = true }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread"], optional = true }
+
 minicov = { version = "0.2", default-features = false, optional = true }
 td-benchmark = { path = "../../deps/td-shim/devtools/td-benchmark", default-features = false,  optional = true }
 
@@ -60,7 +68,7 @@ default = ["virtio-vsock"]
 cet-shstk = ["td-payload/cet-shstk"]
 coverage = ["minicov"]
 main = ["attestation", "policy/log"]
-policy_v2 = ["policy/policy_v2", "attestation/attest-lib-ext"]
+policy_v2 = ["policy/policy_v2", "attestation/attest-lib-ext", "td-shim-interface-emu?/policy_v2"]
 stack-guard = ["td-payload/stack-guard"]
 virtio-vsock = ["vsock/virtio-vsock"]
 virtio-serial = ["virtio_serial"]
@@ -70,8 +78,23 @@ vmcall-raw = ["vmcall_raw"]
 oneshot-apic = []
 test_heap_size = ["td-benchmark", "td-payload/test_heap_size"]
 test_stack_size = ["td-benchmark"]
-test_disable_ra_and_accept_all = ["attestation/test"] # Dangerous: can only be used for test purpose to bypass the remote attestation
+test_disable_ra_and_accept_all = ["attestation/test", "tdx-tdcall-emu?/test_mock_report"] # Dangerous: can only be used for test purpose to bypass the remote attestation
 spdm_attestation = ["main"]
+test_mock_report = ["AzCVMEmu", "tdx-tdcall-emu/test_mock_report"]
+AzCVMEmu = [
+	"main",                     # Include main feature by default
+	"attestation/AzCVMEmu",
+	"crypto/AzCVMEmu",
+	"policy/AzCVMEmu",
+	"vmcall-raw",               # Include vmcall-raw feature by default
+	"vmcall_raw/AzCVMEmu",
+	"td-shim-interface-emu",
+	"td-shim-emu",
+	"tdx-tdcall-emu",
+	"td-payload-emu",
+	"env_logger",
+	"tokio",
+]
 
 [patch.crates-io]
 sys_time = { path = "src/std-support/sys_time" }

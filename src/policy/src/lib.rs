@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-#![no_std]
+#![cfg_attr(not(any(test, feature = "AzCVMEmu")), no_std)]
 extern crate alloc;
 
 #[cfg(not(feature = "policy_v2"))]
@@ -448,6 +448,13 @@ pub(crate) fn replay_event_log_with_report_values(
     {
         Ok(())
     } else {
+        //In AzCVMEmu mode, RTMR extension is emulated (no-op), RTMR in MigTD QUOTE won't match eventlog.
+        //Return OK in this development environment.
+        #[cfg(feature = "AzCVMEmu")]
+        {
+            Ok(())
+        }
+        #[cfg(not(feature = "AzCVMEmu"))]
         Err(PolicyError::InvalidEventLog)
     }
 }

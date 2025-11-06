@@ -1,0 +1,16 @@
+[package]
+name = "td-shim-emu"
+version = "0.1.0-emu"
+license = "BSD-2-Clause-Patent"
+description = "TD-shim emulation for Azure CVM environment"
+
+edition = "2018"
+keywords = ["td-shim", "TDX", "intel", "azure", "emulation"]
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+cc-measurement = { path = "../../td-shim/cc-measurement"}
+zerocopy = { version = "0.7", features = ["derive"] }
