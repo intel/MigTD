@@ -1,0 +1,19 @@
+[package]
+name = "td-shim-interface-emu"
+version = "0.1.0-emu"
+license = "BSD-2-Clause-Patent"
+description = "TD-shim interface emulation for Azure CVM environment"
+
+edition = "2018"
+keywords = ["td-shim", "TDX", "intel", "azure", "emulation"]
+
+[dependencies]
+scroll = { version = "0.10", default-features = false, features = ["derive"] }
+r-efi = "3.2.0"
+zerocopy = { version = "0.7", features = ["derive"] }
+
+[features]
+default = ["std"]
+no-metadata-checks = []
+std = []
+policy_v2 = []

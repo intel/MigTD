@@ -28,6 +28,7 @@ default-members = [
 exclude = [
     "deps/td-shim",
     "deps/rustls",
+    "deps/td-shim-AzCVMEmu",
     "deps/spdm-rs/sys_time"
     ]
 

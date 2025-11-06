@@ -18,6 +18,11 @@ tdx-tdcall = { path = "../../../deps/td-shim/tdx-tdcall" }
 td-payload = { path = "../../../deps/td-shim/td-payload", features = ["tdx"] }
 td-shim-interface = { path = "../../../deps/td-shim/td-shim-interface", optional = true }
 
+# AzCVMEmu optional deps (grouped)
+tdx-tdcall-emu = { path = "../../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }
+td-payload-emu = { path = "../../../deps/td-shim-AzCVMEmu/td-payload-emu", optional = true }
+
 [features]
 vmcall-raw = ["td-shim-interface"]
 fuzz = []
+AzCVMEmu = ["tdx-tdcall-emu", "td-payload-emu"]

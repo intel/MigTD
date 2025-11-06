@@ -12,7 +12,13 @@ spin = "0.9.2"
 tdx-tdcall = { path = "../../deps/td-shim/tdx-tdcall"}
 td-payload = { path = "../../deps/td-shim/td-payload", features = ["tdx"] }
 
+# Use emulated versions for AzCVMEmu
+tdx-tdcall-emu = { path = "../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }
+td-payload-emu = { path = "../../deps/td-shim-AzCVMEmu/td-payload-emu", optional = true }
+
 [features]
 default = []
 test = []
+AzCVMEmu = ["tdx-tdcall-emu", "td-payload-emu"]
 attest-lib-ext = []
+policy_v2=[]

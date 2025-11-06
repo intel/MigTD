@@ -19,3 +19,4 @@ zeroize = "1.5.7"
 [features]
 default = ["rustls_impl"]
 rustls_impl = ["rustls", "ring"]
+AzCVMEmu = []

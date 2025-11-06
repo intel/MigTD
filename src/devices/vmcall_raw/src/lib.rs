@@ -5,6 +5,18 @@
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
+
+// Re-export TDX dependencies conditionally to avoid feature gates throughout the code
+#[cfg(not(feature = "AzCVMEmu"))]
+extern crate td_payload;
+#[cfg(not(feature = "AzCVMEmu"))]
+extern crate tdx_tdcall;
+
+#[cfg(feature = "AzCVMEmu")]
+extern crate td_payload_emu as td_payload;
+#[cfg(feature = "AzCVMEmu")]
+extern crate tdx_tdcall_emu as tdx_tdcall;
+
 use core::fmt::{self, Display};
 use rust_std_stub::{error, io};
 use tdx_tdcall::TdVmcallError;
