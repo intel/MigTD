@@ -13,7 +13,6 @@ use az_tdx_vtpm::tdx;
 #[cfg(not(feature = "test_mock_report"))]
 use az_tdx_vtpm::{hcl, imds, vtpm};
 use log::{debug, info};
-#[cfg(not(feature = "test_mock_report"))]
 use log::error;
 use original_tdx_tdcall::TdCallError;
 
@@ -196,7 +195,12 @@ pub fn get_quote_emulated(td_report_data: &[u8]) -> Result<Vec<u8>, QuoteError> 
 /// Create a mock TD report for testing purposes
 #[cfg(any(feature = "test_mock_report", feature = "mock_report_tools"))]
 pub fn create_mock_td_report() -> tdx::TdReport {
-    debug!("Creating mock TD report");
+    // Check if a custom quote file is specified
+    if let Ok(quote_file_path) = std::env::var("MOCK_QUOTE_FILE") {
+        return create_td_report_from_file(quote_file_path);
+    }
+    // No custom quote file - use hardcoded default TD report
+    debug!("Creating mock TD report with hardcoded data");
 
     // Use actual TD report data from logs
     let report_bytes = [
@@ -260,11 +264,9 @@ pub fn create_mock_td_report() -> tdx::TdReport {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
     ];
+
     // Convert byte array to TdReport structure
     let td_report = if report_bytes.len() >= core::mem::size_of::<tdx::TdReport>() {
         unsafe {
@@ -278,15 +280,155 @@ pub fn create_mock_td_report() -> tdx::TdReport {
     };
 
     // Convert to az-tdx-vtpm TdReport for compatibility
-    // This is a bit of a hack but necessary for type compatibility
     unsafe { core::mem::transmute(td_report) }
 }
 
-/// Create a mock quote for testing purposes
 #[cfg(any(feature = "test_mock_report", feature = "mock_report_tools"))]
-pub fn create_mock_quote(td_report_data: &[u8]) -> Vec<u8> {
-    debug!("Creating mock quote from TD report data (size: {})", td_report_data.len());
+fn create_td_report_from_file(quote_file_path: String) -> tdx::TdReport {
+    // Custom quote file specified - must load and parse it
+    use original_tdx_tdcall::tdreport::{ReportMac, ReportType, TdInfo, TdxReport, TeeTcbInfo};
 
+    debug!("Creating mock TD report from custom quote file: {}", quote_file_path);
+
+    let quote_data = match std::fs::read(&quote_file_path) {
+        Ok(data) => {
+            debug!("Successfully loaded quote file ({} bytes)", data.len());
+            data
+        }
+        Err(e) => {
+            error!("Failed to load quote from {}: {:?}", quote_file_path, e);
+            if let Ok(cwd) = std::env::current_dir() {
+                error!("Current working directory: {:?}", cwd);
+                error!("Hint: Use absolute path or ensure the path is relative to: {:?}", cwd);
+            }
+            panic!("Cannot create mock TD report without valid quote file");
+        }
+    };
+
+    // Parse the quote structure
+    // Quote layout: header (48 bytes) + body (584 bytes) + signature_data_len (4 bytes) + signature_data
+    const QUOTE_HEADER_SIZE: usize = 48;
+    const QUOTE_BODY_SIZE: usize = 584;
+    const MIN_QUOTE_SIZE: usize = QUOTE_HEADER_SIZE + QUOTE_BODY_SIZE + 4;
+
+    if quote_data.len() < MIN_QUOTE_SIZE {
+        error!("Quote file too small: {} bytes (expected at least {})", quote_data.len(), MIN_QUOTE_SIZE);
+        panic!("Invalid quote file: too small");
+    }
+
+    // Parse quote header (48 bytes)
+    let header_version = u16::from_le_bytes([quote_data[0], quote_data[1]]);
+    let tee_type = u32::from_le_bytes([quote_data[4], quote_data[5], quote_data[6], quote_data[7]]);
+
+    debug!("Quote header - version: {}, tee_type: 0x{:02x}", header_version, tee_type);
+
+    // Parse TD quote body (starts at offset 48)
+    let body_offset = QUOTE_HEADER_SIZE;
+
+    // Extract fields from TD quote body
+    let mut tee_tcb_svn = [0u8; 16];
+    tee_tcb_svn.copy_from_slice(&quote_data[body_offset..body_offset + 16]);
+
+    let mut mrseam = [0u8; 48];
+    mrseam.copy_from_slice(&quote_data[body_offset + 16..body_offset + 64]);
+
+    let mut mrsigner_seam = [0u8; 48];
+    mrsigner_seam.copy_from_slice(&quote_data[body_offset + 64..body_offset + 112]);
+
+    let mut seamattributes = [0u8; 8];
+    seamattributes.copy_from_slice(&quote_data[body_offset + 112..body_offset + 120]);
+
+    let mut tdattributes = [0u8; 8];
+    tdattributes.copy_from_slice(&quote_data[body_offset + 120..body_offset + 128]);
+
+    let mut xfam = [0u8; 8];
+    xfam.copy_from_slice(&quote_data[body_offset + 128..body_offset + 136]);
+
+    let mut mrtd = [0u8; 48];
+    mrtd.copy_from_slice(&quote_data[body_offset + 136..body_offset + 184]);
+
+    let mut mrconfigid = [0u8; 48];
+    mrconfigid.copy_from_slice(&quote_data[body_offset + 184..body_offset + 232]);
+
+    let mut mrowner = [0u8; 48];
+    mrowner.copy_from_slice(&quote_data[body_offset + 232..body_offset + 280]);
+
+    let mut mrownerconfig = [0u8; 48];
+    mrownerconfig.copy_from_slice(&quote_data[body_offset + 280..body_offset + 328]);
+
+    let mut rtmr0 = [0u8; 48];
+    rtmr0.copy_from_slice(&quote_data[body_offset + 328..body_offset + 376]);
+
+    let mut rtmr1 = [0u8; 48];
+    rtmr1.copy_from_slice(&quote_data[body_offset + 376..body_offset + 424]);
+
+    let mut rtmr2 = [0u8; 48];
+    rtmr2.copy_from_slice(&quote_data[body_offset + 424..body_offset + 472]);
+
+    let mut rtmr3 = [0u8; 48];
+    rtmr3.copy_from_slice(&quote_data[body_offset + 472..body_offset + 520]);
+
+    let mut reportdata = [0u8; 64];
+    reportdata.copy_from_slice(&quote_data[body_offset + 520..body_offset + 584]);
+
+    debug!("Successfully parsed TD quote body from file");
+
+    // Create TD report with values from parsed quote
+    let td_report = TdxReport {
+        report_mac: ReportMac {
+            report_type: ReportType {
+                r#type: tee_type as u8,
+                subtype: 0x00,
+                version: header_version as u8,
+                reserved: 0x00,
+            },
+            reserved0: [0u8; 12],
+            cpu_svn: tee_tcb_svn,
+            tee_tcb_info_hash: [0x42; 48], // Mock hash (not in quote)
+            tee_info_hash: [0x43; 48],     // Mock hash (not in quote)
+            report_data: reportdata,
+            reserved1: [0u8; 32],
+            mac: [0xBB; 32], // Mock MAC
+        },
+        tee_tcb_info: TeeTcbInfo {
+            valid: [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            tee_tcb_svn: tee_tcb_svn,
+            mrseam: mrseam,
+            mrsigner_seam: mrsigner_seam,
+            attributes: seamattributes,
+            reserved: [0u8; 111],
+        },
+        reserved: [0u8; 17],
+        td_info: TdInfo {
+            attributes: tdattributes,
+            xfam: xfam,
+            mrtd: mrtd,
+            mrconfig_id: mrconfigid,
+            mrowner: mrowner,
+            mrownerconfig: mrownerconfig,
+            rtmr0: rtmr0,
+            rtmr1: rtmr1,
+            rtmr2: rtmr2,
+            rtmr3: rtmr3,
+            servtd_hash: [0x4E; 48], // Mock value (not in quote body)
+            reserved: [0u8; 64],
+        },
+    };
+
+    debug!("Mock TD report created successfully from quote file");
+
+    // Convert to az-tdx-vtpm TdReport for compatibility
+    unsafe { core::mem::transmute(td_report) }
+}
+
+#[cfg(any(feature = "test_mock_report", feature = "mock_report_tools"))]
+pub fn create_mock_quote(_td_report_data: &[u8]) -> Vec<u8> {
+    // Check if a custom quote file is specified
+    if let Ok(quote_file_path) = std::env::var("MOCK_QUOTE_FILE") {
+        return create_td_quote_from_file(quote_file_path);
+    }
+    // No custom quote file - use hardcoded default quote
+    debug!("Creating mock TD quote with hardcoded data");
     // Using actual quote data captured from Azure CVM environment
     let quote = [
      0x04, 0x00, 0x02, 0x00, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f, 0x06, 0x07, 0xe3, 0xe9, 0x78, 0xc1, 0x07, 0x97, 0xc3, 0x24, 0xb3, 0xea, 0xac, 0x4a, 0xd8, 0xa6, 0xdd, 0x8e, 0x00, 0x00, 0x00, 0x00, 0x07, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -371,4 +513,24 @@ pub fn create_mock_quote(td_report_data: &[u8]) -> Vec<u8> {
  ];
     debug!("Mock quote created with size: {}", quote.len());
     quote.to_vec()
+}
+
+#[cfg(any(feature = "test_mock_report", feature = "mock_report_tools"))]
+fn create_td_quote_from_file(quote_file_path: String) -> Vec<u8> {
+    debug!("Creating TD quote from file: {}", quote_file_path);
+
+    match std::fs::read(&quote_file_path) {
+        Ok(quote) => {
+            debug!("Successfully loaded mock quote from {} ({} bytes)", quote_file_path, quote.len());
+            quote
+        }
+        Err(e) => {
+            error!("Failed to load mock quote from {}: {:?}", quote_file_path, e);
+            if let Ok(cwd) = std::env::current_dir() {
+                error!("Current working directory: {:?}", cwd);
+                error!("Hint: Use absolute path or ensure the path is relative to: {:?}", cwd);
+            }
+            Vec::new()
+        }
+    }
 }
