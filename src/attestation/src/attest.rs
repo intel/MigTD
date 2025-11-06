@@ -5,20 +5,39 @@
 #[cfg(feature = "attest-lib-ext")]
 use crate::binding::verify_quote_integrity_ex;
 use crate::{
-    binding::{
-        get_quote as get_quote_inner, init_heap, verify_quote_integrity, AttestLibError,
-        QveCollateral,
-    },
+    binding::{init_heap, verify_quote_integrity, AttestLibError, QveCollateral},
     root_ca::ROOT_CA_PUBLIC_KEY,
     Error, TD_VERIFIED_REPORT_SIZE,
 };
 use alloc::{ffi::CString, vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void, ops::Range};
-use tdx_tdcall::tdreport::*;
+
+use crate::ghci::ghci_get_quote;
 
 const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
 const ATTEST_HEAP_SIZE: usize = 0x80000;
+
+// TDX GHCI GetQuote status codes
+const GET_QUOTE_SUCCESS: u64 = 0x0;
+const GET_QUOTE_IN_FLIGHT: u64 = 0xFFFFFFFF_FFFFFFFF;
+const GET_QUOTE_ERROR: u64 = 0x80000000_00000000;
+const GET_QUOTE_SERVICE_UNAVAILABLE: u64 = 0x80000000_00000001;
+
+#[repr(C)]
+#[allow(dead_code)]
+struct ServtdTdxQuoteHdr {
+    /* Quote version, filled by TD */
+    version: u64,
+    /* Status code of Quote request, filled by VMM */
+    status: u64,
+    /* Length of TDREPORT, filled by TD */
+    in_len: u32,
+    /* Length of Quote, filled by VMM */
+    out_len: u32,
+    /* Actual Quote data or TDREPORT on input */
+    data: [u8; 0],
+}
 
 /// C-compatible version of Collateral with null-terminated strings
 #[derive(Debug)]
@@ -72,23 +91,60 @@ pub fn attest_init_heap() -> Option<usize> {
 }
 
 pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut quote = vec![0u8; TD_QUOTE_SIZE];
-    let mut quote_size = TD_QUOTE_SIZE as u32;
-    unsafe {
-        let result = get_quote_inner(
-            td_report.as_ptr() as *const c_void,
-            TD_REPORT_SIZE as u32,
-            quote.as_mut_ptr() as *mut c_void,
-            &mut quote_size as *mut u32,
-        );
-        if result != AttestLibError::Success {
-            return Err(Error::GetQuote);
-        }
+    // Create a GetQuote buffer following TDX GHCI format
+    // Header is 20 bytes (version:u64 + status:u64 + in_len:u32 + out_len:u32)
+    let tdreport_length = td_report.len();
+    let header_size = core::mem::size_of::<ServtdTdxQuoteHdr>();
+    let buffer_size = header_size + tdreport_length + TD_QUOTE_SIZE; // Header + TDReport + space for quote
+    let mut buffer = vec![0u8; buffer_size];
+
+    // Fill GetQuote buffer header using the struct
+    let hdr = ServtdTdxQuoteHdr {
+        version: 1,
+        status: 0,
+        in_len: td_report.len() as u32,
+        out_len: TD_QUOTE_SIZE as u32,
+        data: [],
+    };
+
+    let header_size = core::mem::size_of::<ServtdTdxQuoteHdr>();
+    let hdr_bytes =
+        unsafe { core::slice::from_raw_parts(&hdr as *const _ as *const u8, header_size) };
+    buffer[..header_size].copy_from_slice(hdr_bytes);
+
+    // Copy TDREPORT data immediately after header (offset 20)
+    buffer[header_size..header_size + tdreport_length].copy_from_slice(td_report);
+
+    // Call ghci_get_quote
+    let result = ghci_get_quote(buffer.as_mut_ptr() as *mut c_void, buffer.len() as u64);
+    if result != AttestLibError::Success as i32 {
+        return Err(Error::GetQuote);
     }
-    quote.truncate(quote_size as usize);
+
+    // Read header response
+    let buffer_ptr = buffer.as_ptr() as *const ServtdTdxQuoteHdr;
+    let (status, quote_length) = unsafe {
+        let hdr = &*buffer_ptr;
+        (hdr.status, hdr.out_len as usize)
+    };
+
+    if status != GET_QUOTE_SUCCESS {
+        return Err(Error::GetQuote);
+    }
+
+    if quote_length > TD_QUOTE_SIZE {
+        return Err(Error::GetQuote);
+    }
+
+    // Extract quote data
+    let quote_start = header_size + tdreport_length;
+    if buffer.len() < quote_start + quote_length {
+        return Err(Error::GetQuote);
+    }
+
+    let quote = buffer[quote_start..quote_start + quote_length].to_vec();
     Ok(quote)
 }
-
 pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
     let mut td_report_verify = vec![0u8; TD_REPORT_VERIFY_SIZE];
     let mut report_verify_size = TD_REPORT_VERIFY_SIZE as u32;

@@ -23,13 +23,17 @@ pub static NOTIFIER: AtomicU8 = AtomicU8::new(0);
 
 #[no_mangle]
 pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i32 {
+    ghci_get_quote(tdquote_req_buf, len)
+}
+
+pub fn ghci_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i32 {
     if tdquote_req_buf.is_null() || len > GET_QUOTE_MAX_SIZE {
         return AttestLibError::InvalidParameter as i32;
     }
 
     let input = unsafe { from_raw_parts_mut(tdquote_req_buf as *mut u8, len as usize) };
 
-    let mut shared = if let Some(shared) = SharedMemory::new(len as usize / 0x1000) {
+    let mut shared = if let Some(shared) = SharedMemory::new((len as usize + 0xfff) / 0x1000) {
         shared
     } else {
         return AttestLibError::OutOfMemory as i32;
