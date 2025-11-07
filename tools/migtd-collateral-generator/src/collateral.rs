@@ -72,7 +72,7 @@ impl Collaterals {
             fmspc: platform.fmspc,
             tcb_info_issuer_chain: platform.tcb_issuer_chain,
             tcb_info: String::from_utf8(platform.tcb)
-                .map_err(|e| anyhow!("Invalid UTF-8 in PCK CRL: {}", e))?,
+                .map_err(|e| anyhow!("Invalid UTF-8 in TCB info: {}", e))?,
         };
         self.platforms.push(platform);
 
