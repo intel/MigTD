@@ -4,19 +4,22 @@
 
 #[cfg(feature = "attest-lib-ext")]
 use crate::binding::verify_quote_integrity_ex;
+
+#[cfg(not(feature = "igvm-attest"))]
+use crate::binding::get_quote as get_quote_inner;
+
 use crate::{
-    binding::{
-        get_quote as get_quote_inner, init_heap, verify_quote_integrity, AttestLibError,
-        QveCollateral,
-    },
+    binding::{init_heap, verify_quote_integrity, AttestLibError, QveCollateral},
     root_ca::ROOT_CA_PUBLIC_KEY,
     Error, TD_VERIFIED_REPORT_SIZE,
 };
 use alloc::{ffi::CString, vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void, ops::Range};
+
+#[cfg(not(feature = "igvm-attest"))]
 use tdx_tdcall::tdreport::*;
 
-const TD_QUOTE_SIZE: usize = 0x2000;
+pub const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
 const ATTEST_HEAP_SIZE: usize = 0x80000;
 
@@ -72,21 +75,29 @@ pub fn attest_init_heap() -> Option<usize> {
 }
 
 pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut quote = vec![0u8; TD_QUOTE_SIZE];
-    let mut quote_size = TD_QUOTE_SIZE as u32;
-    unsafe {
-        let result = get_quote_inner(
-            td_report.as_ptr() as *const c_void,
-            TD_REPORT_SIZE as u32,
-            quote.as_mut_ptr() as *mut c_void,
-            &mut quote_size as *mut u32,
-        );
-        if result != AttestLibError::Success {
-            return Err(Error::GetQuote);
-        }
+    #[cfg(feature = "igvm-attest")]
+    {
+        return crate::igvmattest::get_quote_igvm(td_report);
     }
-    quote.truncate(quote_size as usize);
-    Ok(quote)
+
+    #[cfg(not(feature = "igvm-attest"))]
+    {
+        let mut quote = vec![0u8; TD_QUOTE_SIZE];
+        let mut quote_size = TD_QUOTE_SIZE as u32;
+        unsafe {
+            let result = get_quote_inner(
+                td_report.as_ptr() as *const c_void,
+                TD_REPORT_SIZE as u32,
+                quote.as_mut_ptr() as *mut c_void,
+                &mut quote_size as *mut u32,
+            );
+            if result != AttestLibError::Success {
+                return Err(Error::GetQuote);
+            }
+        }
+        quote.truncate(quote_size as usize);
+        Ok(quote)
+    }
 }
 
 pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
