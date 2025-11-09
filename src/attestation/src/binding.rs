@@ -78,6 +78,7 @@ mod attest_lib_binding {
         ///      - MIGTD_ATTEST_ERROR_UNEXPECTED: An unexpected internal error occurred. E.g.
         ///          the parameter is incorrect, failed to get quote from QGS, heap memory allocation error,
         ///          the input (*p_quote_size) is not enough to place the real Quote, etc.
+        #[cfg(not(feature = "igvm-attest"))]
         pub fn get_quote(
             p_tdx_report: *const ::core::ffi::c_void,
             tdx_report_size: u32,

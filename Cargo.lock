@@ -167,6 +167,7 @@ version = "0.1.0"
 dependencies = [
  "crypto",
  "der",
+ "log",
  "spin 0.9.8",
  "td-payload",
  "td-payload-emu",
