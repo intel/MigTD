@@ -31,6 +31,9 @@
 #   # Mock mode: generate policy from predictable test data (uses test_mock_report)
 #   ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report
 #
+#   # Fetch fresh collaterals from Azure THIM before generating policy
+#   ./sh_script/build_AzCVMEmu_policy_and_test.sh --fetch-collaterals --azure-region useast
+#
 #   # Skip the integration test at the end
 #   ./sh_script/build_AzCVMEmu_policy_and_test.sh --skip-test
 #
@@ -40,21 +43,22 @@
 #   # Show help
 #   ./sh_script/build_AzCVMEmu_policy_and_test.sh --help
 #
-# What it does (13 steps):
-#   1. Builds required tools (azcvm-extract-report from deps/td-shim-AzCVMEmu,
+# What it does:
+#   1. Optionally fetches fresh collaterals from Azure THIM (if --fetch-collaterals)
+#   2. Builds required tools (azcvm-extract-report from deps/td-shim-AzCVMEmu,
 #      json-signer, servtd-collateral-generator, migtd-policy-generator)
-#   2. Extracts report data from Azure vTPM OR generates mock data
-#   3. Updates td_identity.json template with extracted measurements
-#   4. Updates tcb_mapping.json template with extracted measurements
-#   5. Generates certificate chain (root CA + policy signing cert)
-#   6. Signs td_identity.json with policy signing key (testing only)
-#   7. Signs tcb_mapping.json with policy signing key (testing only)
-#   8. Generates servtd_collateral.json from signed components
-#   9. Merges policy data with collaterals
-#   10. Signs final policy with policy signing key
-#   11. Copies certificate chain to output directory
-#   12. Securely deletes private key with shred
-#   13. Optionally tests with ./migtdemu.sh (with --mock-report for mock data)
+#   3. Extracts report data from Azure vTPM OR generates mock data
+#   4. Updates td_identity.json template with extracted measurements
+#   5. Updates tcb_mapping.json template with extracted measurements
+#   6. Generates certificate chain (root CA + policy signing cert)
+#   7. Signs td_identity.json with policy signing key (testing only)
+#   8. Signs tcb_mapping.json with policy signing key (testing only)
+#   9. Generates servtd_collateral.json from signed components
+#   10. Merges policy data with collaterals
+#   11. Signs final policy with policy signing key
+#   12. Copies certificate chain to output directory
+#   13. Securely deletes private key with shred
+#   14. Optionally tests with ./migtdemu.sh (with --mock-report for mock data)
 #
 # Outputs:
 #   - config/AzCVMEmu/policy_v2_signed.json (196 KB) - Signed policy with your measurements
@@ -87,7 +91,7 @@ TOOLS_DIR="$PROJECT_ROOT/target/release"
 POLICY_DATA_RAW="$SOURCE_MATERIAL_DIR/policy_v2_raw.json"
 TD_IDENTITY_TEMPLATE="$SOURCE_MATERIAL_DIR/td_identity.json"
 TCB_MAPPING_TEMPLATE="$SOURCE_MATERIAL_DIR/tcb_mapping.json"
-COLLATERALS_FILE="$PROJECT_ROOT/config/collateral_production_fmspc.json"
+COLLATERALS_FILE="$SOURCE_MATERIAL_DIR/collateral_azure_thim.json"
 
 # Intermediate files
 REPORT_DATA_FILE="$TEMP_DIR/report_data.json"
@@ -203,6 +207,9 @@ generate_certificates() {
 
 # Parse command line arguments
 USE_MOCK_REPORT=false
+MOCK_QUOTE_FILE=""
+FETCH_COLLATERALS=false
+AZURE_REGION="useast"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -220,6 +227,14 @@ while [[ $# -gt 0 ]]; do
             USE_MOCK_REPORT=true
             shift
             ;;
+        --fetch-collaterals)
+            FETCH_COLLATERALS=true
+            shift
+            ;;
+        --azure-region)
+            AZURE_REGION="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo
@@ -227,6 +242,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir DIR             Output directory for generated files (default: config/AzCVMEmu)"
             echo "  --skip-test                  Skip running the MigTD test at the end"
             echo "  --mock-report                Use mock report data with test_mock_report feature"
+            echo "  --fetch-collaterals          Fetch fresh collaterals from Azure THIM before generating policy"
+            echo "  --azure-region REGION        Azure region for THIM (useast, westus, northeurope)"
+            echo "                               (default: useast, applies with --fetch-collaterals)"
             echo "  -h, --help                   Show this help message"
             echo
             echo "Examples:"
@@ -235,6 +253,8 @@ while [[ $# -gt 0 ]]; do
             echo
             echo "  # Mock report mode (uses test_mock_report feature):"
             echo "  $0 --mock-report"
+            echo
+            echo "  $0 --fetch-collaterals --azure-region useast"
             echo
             echo "  # Generate policy but skip test:"
             echo "  $0 --mock-report --skip-test"
@@ -253,6 +273,10 @@ echo "  Source material: $SOURCE_MATERIAL_DIR"
 echo "  Output directory: $OUTPUT_DIR"
 echo "  Temp directory: $TEMP_DIR"
 echo "  Mock report mode: $USE_MOCK_REPORT"
+echo "  Fetch collaterals: $FETCH_COLLATERALS"
+if [ "$FETCH_COLLATERALS" = true ]; then
+    echo "  Azure region: $AZURE_REGION"
+fi
 echo
 
 # Ensure output directory exists
@@ -260,12 +284,64 @@ mkdir -p "$OUTPUT_DIR"
 mkdir -p "$CERT_DIR"
 
 # Verify input files exist
-for file in "$POLICY_DATA_RAW" "$TD_IDENTITY_TEMPLATE" "$TCB_MAPPING_TEMPLATE" "$COLLATERALS_FILE"; do
+for file in "$POLICY_DATA_RAW" "$TD_IDENTITY_TEMPLATE" "$TCB_MAPPING_TEMPLATE"; do
     if [ ! -f "$file" ]; then
         echo -e "${RED}Error: Required input file not found: $file${NC}" >&2
         exit 1
     fi
 done
+
+#
+# Step 0: Fetch fresh collaterals from Azure THIM (optional)
+#
+if [ "$FETCH_COLLATERALS" = true ]; then
+    echo -e "${BLUE}=== Step 0: Fetching Fresh Collaterals from Azure THIM ===${NC}"
+
+    # Use temp directory for fetching, then move to final location
+    TEMP_COLLATERALS_FILE="$TEMP_DIR/collateral_azure_thim.json"
+
+    # Build migtd-collateral-generator first
+    echo "Building migtd-collateral-generator..."
+    cd "$PROJECT_ROOT"
+    cargo build --release -p migtd-collateral-generator 2>&1 | grep -E "(Compiling|Finished|error)" || true
+
+    if [ ! -f "$TOOLS_DIR/migtd-collateral-generator" ]; then
+        echo -e "${RED}Error: Tool 'migtd-collateral-generator' not found at $TOOLS_DIR/migtd-collateral-generator${NC}" >&2
+        exit 1
+    fi
+
+    # Fetch collaterals
+    echo "Fetching collaterals from Azure THIM ($AZURE_REGION)..."
+    if "$TOOLS_DIR/migtd-collateral-generator" --provider azure-thim --azure-region "$AZURE_REGION" -o "$TEMP_COLLATERALS_FILE"; then
+        echo -e "${GREEN}✓ Collaterals fetched successfully${NC}"
+
+        # Show summary
+        NUM_PLATFORMS=$(jq '.platforms | length' "$TEMP_COLLATERALS_FILE")
+        echo "  Platforms in collateral: $NUM_PLATFORMS"
+        if [ "$NUM_PLATFORMS" -gt 0 ]; then
+            echo "  FMSPCs:"
+            jq -r '.platforms[].fmspc' "$TEMP_COLLATERALS_FILE" | sed 's/^/    - /'
+        else
+            echo -e "${YELLOW}  Warning: No platform TCB info found. Policy will work but without platform-specific TCB verification.${NC}"
+            echo -e "${YELLOW}  Note: The tool queries Intel's FMSPC list and tries each against Azure THIM.${NC}"
+        fi
+
+        # Move to final location
+        mv "$TEMP_COLLATERALS_FILE" "$COLLATERALS_FILE"
+        echo -e "${GREEN}✓ Collaterals saved to: $COLLATERALS_FILE${NC}"
+    else
+        echo -e "${RED}Error: Failed to fetch collaterals from Azure THIM${NC}" >&2
+        exit 1
+    fi
+    echo
+else
+    # Use default collaterals file
+    if [ ! -f "$COLLATERALS_FILE" ]; then
+        echo -e "${RED}Error: Required collaterals file not found: $COLLATERALS_FILE${NC}" >&2
+        echo -e "${YELLOW}Tip: Use --fetch-collaterals to fetch fresh collaterals from Azure THIM${NC}" >&2
+        exit 1
+    fi
+fi
 #
 # Step 1: Build all required tools
 #
@@ -515,12 +591,18 @@ echo
 #
 # Step 13: Test the policy (optional)
 #
+TEST_CMD="./migtdemu.sh --policy-v2 --policy-file $OUTPUT_POLICY --policy-issuer-chain-file $OUTPUT_CERT_CHAIN --debug --both"
+if [ "$USE_MOCK_REPORT" = true ]; then
+    TEST_CMD="$TEST_CMD --mock-report"
+
+    # Add mock quote file if specified
+    if [[ -n "$MOCK_QUOTE_FILE" ]]; then
+        TEST_CMD="$TEST_CMD --mock-quote-file $MOCK_QUOTE_FILE"
+    fi
+fi
+
 if [ -z "$SKIP_TEST" ]; then
     echo -e "${BLUE}=== Step 13: Testing Policy ===${NC}"
-
-    # Build the migtdemu.sh command
-    TEST_CMD="./migtdemu.sh --policy-v2 --policy-file $OUTPUT_POLICY --policy-issuer-chain-file $OUTPUT_CERT_CHAIN --debug --both"
-
     if [ "$USE_MOCK_REPORT" = true ]; then
         TEST_CMD="$TEST_CMD --mock-report"
         echo "Running with mock report mode: $TEST_CMD"
