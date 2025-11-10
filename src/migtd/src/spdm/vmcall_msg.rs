@@ -13,6 +13,7 @@ use spdmlib::{
 };
 use spin::Mutex;
 
+pub const VMCALL_SPDM_MESSAGE_HEADER_SIZE: usize = 12;
 pub const VMCALL_SPDM_SIGNATURE: u32 = 0x4D445053; // 'SPDM'
 pub const VMCALL_SPDM_VERSION: u16 = 0x0100; // Version 1.0
 pub const VMCALL_SPDM_MESSAGE_TYPE_SPDM_MESSAGE: u8 = 0x1; // 1 – DSP0274 SPDM message
