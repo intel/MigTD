@@ -36,6 +36,7 @@ pub use spdm_vdm::*;
 
 use crate::migration::MigrationResult;
 use crate::migration::MigtdMigrationInformation;
+use crate::spdm::vmcall_msg::VMCALL_SPDM_MESSAGE_HEADER_SIZE;
 
 const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
@@ -63,14 +64,35 @@ impl<T: AsyncRead + AsyncWrite + Unpin> SpdmDeviceIo for MigtdTransport<T> {
         _timeout: usize,
     ) -> Result<usize, usize> {
         let mut buffer = buffer.lock();
-        let mut received = 0;
-        while received == 0 {
-            match self.transport.read(&mut buffer).await {
-                Ok(len) => received += len,
-                Err(_) => return Err(0),
-            }
+        let mut recvd = 0;
+        while recvd < VMCALL_SPDM_MESSAGE_HEADER_SIZE {
+            let n = self
+                .transport
+                .read(&mut buffer[recvd..])
+                .await
+                .map_err(|_| 0_usize)?;
+            recvd += n;
         }
-        Ok(received)
+
+        let mut reader = Reader::init(&buffer);
+        let vmcall_msg_header =
+            vmcall_msg::VmCallMessageHeader::read(&mut reader).ok_or(0_usize)?;
+        let payload_size = vmcall_msg_header.length as usize;
+
+        if buffer.len() < payload_size + VMCALL_SPDM_MESSAGE_HEADER_SIZE {
+            return Err(0_usize);
+        }
+
+        while recvd < payload_size + VMCALL_SPDM_MESSAGE_HEADER_SIZE {
+            let n = self
+                .transport
+                .read(&mut buffer[recvd..])
+                .await
+                .map_err(|_| 0_usize)?;
+            recvd += n;
+        }
+
+        Ok(recvd)
     }
 
     async fn flush_all(&mut self) -> SpdmResult {
