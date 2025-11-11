@@ -42,6 +42,9 @@ pub mod migration;
 pub mod ratls;
 pub mod spdm;
 
+pub const STACK_SIZE: usize = 0x40_0000;
+pub const HEAP_SIZE: usize = 0x50_0000;
+
 /// The entry point of MigTD-Core
 ///
 /// For the x86_64-unknown-none target, the entry point name is '_start'
@@ -51,16 +54,6 @@ pub mod spdm;
 pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
     use td_payload::arch;
     use td_payload::mm::layout::*;
-
-    #[cfg(not(feature = "spdm_attestation"))]
-    const STACK_SIZE: usize = 0xA_2000;
-    #[cfg(not(feature = "spdm_attestation"))]
-    const HEAP_SIZE: usize = 0x6E_0000;
-
-    #[cfg(feature = "spdm_attestation")]
-    const STACK_SIZE: usize = 0x40_0000;
-    #[cfg(feature = "spdm_attestation")]
-    const HEAP_SIZE: usize = 0x40_0000;
 
     const PT_SIZE: usize = 0x8_0000;
     const SHARED_MEMORY_SIZE: usize = 0x1E_0000;

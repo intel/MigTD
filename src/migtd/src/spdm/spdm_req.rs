@@ -1,3 +1,6 @@
+use core::future::poll_fn;
+use core::task::Poll;
+
 // Copyright (c) 2025 Intel Corporation
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -24,7 +27,7 @@ use spdmlib::{
 use spin::Mutex;
 extern crate alloc;
 use alloc::sync::Arc;
-use log::error;
+use log::{error, info};
 
 use crate::{
     config::get_policy, driver::ticks::with_timeout, event_log::get_event_log,
@@ -149,6 +152,16 @@ pub async fn spdm_requester_transfer_msk(
             return Err(SPDM_STATUS_RECEIVE_FAIL);
         }
     };
+
+    info!("poll pending.\n");
+    let _res = with_timeout(
+        SPDM_POOL_TIMEOUT,
+        poll_fn(
+            |_cx: &mut core::task::Context<'_>| -> Poll<Result<(), SpdmStatus>> { Poll::Pending },
+        ),
+    )
+    .await;
+    info!("poll pending end.\n");
 
     let res: Result<Result<(), SpdmStatus>, crate::driver::ticks::TimeoutError> = with_timeout(
         SPDM_TIMEOUT,

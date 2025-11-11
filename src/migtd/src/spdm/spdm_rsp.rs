@@ -18,9 +18,11 @@ use crate::{
 use alloc::sync::Arc;
 use async_io::{AsyncRead, AsyncWrite};
 use codec::{Codec, Reader, Writer};
+use core::future::poll_fn;
 use core::ops::DerefMut;
+use core::task::Poll;
 use crypto::{ecdsa::EcdsaPk, hash::digest_sha384};
-use log::error;
+use log::{error, info};
 
 use crate::spdm::{vmcall_msg::VmCallTransportEncap, *};
 use spdmlib::{
@@ -157,6 +159,7 @@ pub async fn spdm_responder_transfer_msk(
 
 pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result<(), SpdmStatus> {
     let mut sid = None;
+    let mut pooling = true;
     loop {
         let raw_packet = Arc::new(Mutex::new([0u8; config::RECEIVER_BUFFER_SIZE]));
         let mut raw_packet = raw_packet.lock();
@@ -179,6 +182,22 @@ pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result
         }
         if res.is_err() {
             return Err(SPDM_STATUS_RECEIVE_FAIL);
+        }
+        if sid.is_some() {
+            if pooling {
+                info!("poll pending.\n");
+                let _res = with_timeout(
+                    SPDM_POOL_TIMEOUT,
+                    poll_fn(
+                        |_cx: &mut core::task::Context<'_>| -> Poll<Result<(), SpdmStatus>> {
+                            Poll::Pending
+                        },
+                    ),
+                )
+                .await;
+                pooling = false;
+                info!("poll pending end.\n");
+            }
         }
     }
     Ok(())
