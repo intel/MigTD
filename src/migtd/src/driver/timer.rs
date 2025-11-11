@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use super::vmcall_raw::panic_with_guest_crash_reg_report;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Once;
 use td_payload::arch::apic::*;
@@ -121,7 +122,7 @@ fn set_timer_notification(vector: u8) {
     // Setup interrupt handler
     if register_interrupt_callback(vector as usize, InterruptCallback::new(timer_handler)).is_err()
     {
-        panic!("Failed to set interrupt callback for timer");
+        panic_with_guest_crash_reg_report(0xFF, b"Failed to set interrupt callback for timer");
     }
 }
 
