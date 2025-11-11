@@ -424,15 +424,14 @@ pub async fn vsock_transport_dequeue(stream: &VsockStream, _timeout: u32) -> Res
         let device = lock.get_mut().ok_or(VsockTransportError::Initilization)?;
 
         // Pop the used buffer in the rx queue.
-        if !device.rx.can_pop() {
-            Poll::Pending
-        } else {
+        if device.rx.can_pop() {
             device.pop_used_rx()?;
-            if let Some(data) = VirtioVsock::pop_buf_from_stream_queues(&stream.addr()) {
-                Poll::Ready(Ok(data))
-            } else {
-                Poll::Pending
-            }
+        }
+
+        if let Some(data) = VirtioVsock::pop_buf_from_stream_queues(&stream.addr()) {
+            Poll::Ready(Ok(data))
+        } else {
+            Poll::Pending
         }
     })
     .await
