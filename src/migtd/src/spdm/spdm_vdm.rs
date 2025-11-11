@@ -176,7 +176,8 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
     let vendor_id = vendor_defined_request_payload.vendor_id;
     let req_payload = vendor_defined_request_payload.req_payload;
 
-    if vendor_id.len != VDM_MESSAGE_VENDOR_ID_LEN as u8
+    if standard_id != RegistryOrStandardsBodyID::IANA
+        || vendor_id.len != VDM_MESSAGE_VENDOR_ID_LEN as u8
         || vendor_id.vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN] != VDM_MESSAGE_VENDOR_ID
     {
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorInvalidRequest, 0, &mut writer);
@@ -194,24 +195,67 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
         return (Err(SPDM_STATUS_INVALID_MSG_SIZE), Some(&rsp_bytes[..used]));
     };
 
-    let rsp_payload = match vdm_request.op_code {
-        VdmMessageOpCode::ExchangePubKeyReq => {
-            handle_exchange_pub_key_req(responder_context, &vdm_request, &mut reader)
+    let mut response = SpdmMessage {
+        header: SpdmMessageHeader {
+            version: responder_context.common.negotiate_info.spdm_version_sel,
+            request_response_code: SpdmRequestResponseCode::SpdmResponseVendorDefinedResponse,
+        },
+        payload: SpdmMessagePayload::SpdmVendorDefinedResponse(SpdmVendorDefinedResponsePayload {
+            standard_id: RegistryOrStandardsBodyID::IANA,
+            vendor_id: VendorIDStruct {
+                len: VDM_MESSAGE_VENDOR_ID_LEN as u8,
+                vendor_id: [0u8; MAX_SPDM_VENDOR_DEFINED_VENDOR_ID_LEN],
+            },
+            rsp_payload: VendorDefinedRspPayloadStruct {
+                rsp_length: 0,
+                vendor_defined_rsp_payload: [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE],
+            },
+        }),
+    };
+
+    let vdm_payload = match &mut response.payload {
+        SpdmMessagePayload::SpdmVendorDefinedResponse(vdm_payload) => vdm_payload,
+        _ => {
+            responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
+            let used = writer.used();
+            return (
+                Err(SPDM_STATUS_INVALID_STATE_LOCAL),
+                Some(&rsp_bytes[..used]),
+            );
         }
+    };
+
+    // Patch the vendor id field
+    vdm_payload.vendor_id.vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN]
+        .copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
+
+    //Patch the response payload
+    let rsp_payload = &mut vdm_payload.rsp_payload;
+    let vdm_payload_size = match vdm_request.op_code {
+        VdmMessageOpCode::ExchangePubKeyReq => handle_exchange_pub_key_req(
+            responder_context,
+            &vdm_request,
+            &mut reader,
+            &mut rsp_payload.vendor_defined_rsp_payload,
+        ),
         VdmMessageOpCode::ExchangeMigrationAttestInfoReq => handle_exchange_mig_attest_info_req(
             responder_context,
             session_id,
             &vdm_request,
             &mut reader,
+            &mut rsp_payload.vendor_defined_rsp_payload,
         ),
-        VdmMessageOpCode::ExchangeMigrationInfoReq => {
-            handle_exchange_mig_info_req(responder_context, session_id, &vdm_request, &mut reader)
-        }
+        VdmMessageOpCode::ExchangeMigrationInfoReq => handle_exchange_mig_info_req(
+            responder_context,
+            session_id,
+            &vdm_request,
+            &mut reader,
+            &mut rsp_payload.vendor_defined_rsp_payload,
+        ),
         _ => Err(SPDM_STATUS_INVALID_MSG_FIELD),
     };
-
-    let rsp_payload = if let Ok(payload) = rsp_payload {
-        payload
+    if let Ok(vdm_payload_size) = vdm_payload_size {
+        rsp_payload.rsp_length = vdm_payload_size as u32;
     } else {
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
         let used = writer.used();
@@ -219,22 +263,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             Err(SPDM_STATUS_INVALID_STATE_LOCAL),
             Some(&rsp_bytes[..used]),
         );
-    };
-
-    let mut vendor_id = [0u8; MAX_SPDM_VENDOR_DEFINED_VENDOR_ID_LEN];
-    vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
-    let vendor_id = VendorIDStruct { len: 4, vendor_id };
-
-    let response = SpdmMessage {
-        header: SpdmMessageHeader {
-            version: responder_context.common.negotiate_info.spdm_version_sel,
-            request_response_code: SpdmRequestResponseCode::SpdmResponseVendorDefinedResponse,
-        },
-        payload: SpdmMessagePayload::SpdmVendorDefinedResponse(SpdmVendorDefinedResponsePayload {
-            standard_id,
-            vendor_id,
-            rsp_payload,
-        }),
     };
 
     let res = response.spdm_encode(&mut responder_context.common, &mut writer);
