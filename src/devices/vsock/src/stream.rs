@@ -5,9 +5,8 @@
 use crate::protocol::field::{FLAG_SHUTDOWN_READ, FLAG_SHUTDOWN_WRITE, HEADER_LEN};
 use crate::protocol::{field, Packet};
 use crate::{
-    vsock_transport_can_recv, vsock_transport_dequeue, vsock_transport_enqueue,
-    vsock_transport_get_cid, VsockAddr, VsockAddrPair, VsockError, MAX_VSOCK_PKT_DATA_LEN,
-    VSOCK_BUF_ALLOC,
+    vsock_transport_dequeue, vsock_transport_enqueue, vsock_transport_get_cid, VsockAddr,
+    VsockAddrPair, VsockError, MAX_VSOCK_PKT_DATA_LEN, VSOCK_BUF_ALLOC,
 };
 
 use alloc::{collections::BTreeMap, collections::BTreeSet, collections::VecDeque, vec::Vec};
@@ -308,15 +307,7 @@ impl VsockStream {
         }
 
         while self.data_queue.is_empty() {
-            loop {
-                self.recv_packet_connected().await?;
-
-                // If there are received vsock packets, continue to pop them out and insert to the
-                // `data_queue`. If there is no vsock packet left in the device, break the loop.
-                if !vsock_transport_can_recv()? {
-                    break;
-                }
-            }
+            self.recv_packet_connected().await?;
         }
 
         let mut used = 0;
