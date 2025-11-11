@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use crate::driver::vmcall_raw::panic_with_guest_crash_reg_report;
 use alloc::collections::BTreeMap;
 use core::sync::atomic::{AtomicBool, Ordering};
 use lazy_static::lazy_static;
@@ -32,7 +33,10 @@ pub fn register_callback() {
     )
     .is_err()
     {
-        panic!("Failed to set interrupt callback for VMCALL_SERVICE");
+        panic_with_guest_crash_reg_report(
+            0xFF,
+            b"Failed to set interrupt callback for VMCALL_SERVICE",
+        );
     }
 }
 

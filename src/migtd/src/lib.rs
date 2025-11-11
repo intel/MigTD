@@ -80,6 +80,9 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
 
     // Run the global constructors
     init(payload);
+    // Init the vmcall-raw crash MSR support
+    #[cfg(feature = "vmcall-raw")]
+    driver::crash::initialize_crash_msr_support();
 
     // Initilize the APIC timer
     driver::timer::init_timer();
