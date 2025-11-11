@@ -25,3 +25,8 @@ test_data
 # vscode
 .vscode
 
+# pytest
+__pycache__
+.pytest_cache
+.venv
+*.log

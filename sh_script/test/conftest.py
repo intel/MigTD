@@ -17,8 +17,14 @@ LOG = logging.getLogger(__name__)
 
 
 def pytest_addoption(parser):
+    parser.addoption("--target", action="store", default="release", help="Build target debug/release")
     parser.addoption("--device_type", action="store", default="vsock", help="Device type vsock/serial")
     parser.addoption("--servtd_hash", action="store", default="", help="SERVTD_INFO_HASH of MigTD image")
+    parser.addoption("--cycle_num", action="store", default=1, help="Number of test cycles")
+
+@pytest.fixture()
+def target(request):
+    return request.config.getoption("--target")
 
 @pytest.fixture()
 def device_type(request):
@@ -27,6 +33,10 @@ def device_type(request):
 @pytest.fixture()
 def servtd_hash(request):
     return request.config.getoption("--servtd_hash")
+
+@pytest.fixture()
+def cycle_num(request):
+    return int(request.config.getoption("--cycle_num"))
 
 @contextmanager
 def migtd_context():
@@ -56,7 +66,6 @@ class MigtdTest:
         self.user_td_bios_img: str = None
         self.kernel_img: str = None
         self.guest_img: str = None
-        self.stress_test_cycles: str = None
         
         cfg = self._parse_toml_config()
         for k, v in cfg.items():
@@ -157,7 +166,7 @@ class MigtdTest:
         
     # type has src dst
     def start_user_td(self, is_pre_binding=False, type=None, hash=None):
-        command = f"sudo bash {self.user_td_script} -q {self.qemu} -i {self.guest_img} -k {self.kernel_img} -o {self.user_td_bios_img} -t {type}"
+        command = f"sudo bash {self.user_td_script} -q {self.qemu} -i {self.guest_img} -b grub -o {self.user_td_bios_img} -t {type}"
         if is_pre_binding:
             command += f" -g true -m {hash}"
         """

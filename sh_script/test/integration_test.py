@@ -411,29 +411,13 @@ def test_function_000(device_type):
         ctx.start_test_payload(bios_img=test_bin, type="src", device=device_type)
         ctx.terminate_all_tds()
 
-def test_pre_binding(device_type, servtd_hash):
+def test_pre_migration(target, device_type, servtd_hash, cycle_num):
     migtd_src = "../../target/release/migtd.bin"
     migtd_dst = "../../target/release/migtd.bin"
-    
-    with migtd_context() as ctx:
-        ctx.start_user_td(type="src", is_pre_binding=True, hash=servtd_hash)
-        ctx.start_user_td(type="dst", is_pre_binding=True, hash=servtd_hash)
-        ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
-        ctx.start_mig_td(bios_img=migtd_src, type="src", device=device_type)
-        if device_type == "vsock":
-            ctx.connect()
 
-        ctx.pre_migration(is_pre_binding=True)
-        ctx.check_migration_result()
-        ctx.terminate_user_td(type="src")
-        ctx.terminate_user_td(type="dst")
-        
-        ctx.terminate_mig_td()
-        ctx.terminate_socat()
-
-def test_cycle(device_type):
-    migtd_src = "../../target/release/migtd.bin"
-    migtd_dst = "../../target/release/migtd.bin"
+    if target == "debug":
+        migtd_src = "../../target/debug/migtd.bin"
+        migtd_dst = "../../target/debug/migtd.bin"
     
     with migtd_context() as ctx:
         ctx.start_mig_td(bios_img=migtd_dst, type="dst", device=device_type)
@@ -441,17 +425,19 @@ def test_cycle(device_type):
         if device_type == "vsock":
             ctx.connect()
         
-        for i in range(ctx.stress_test_cycles):
-            LOG.debug(f"#### Cycle Test: {i} ####")     
-            ctx.start_user_td(type="src")
-            ctx.start_user_td(type="dst")
-            ctx.pre_migration()
+        for i in range(cycle_num):
+            LOG.debug(f"#### Cycle Test: {i + 1} ####")
+            if device_type == "vsock":
+                ctx.start_user_td(type="src")
+                ctx.start_user_td(type="dst")
+                ctx.pre_migration()
+            else:
+                ctx.start_user_td(type="src", is_pre_binding=True, hash=servtd_hash)
+                ctx.start_user_td(type="dst", is_pre_binding=True, hash=servtd_hash)
+                ctx.pre_migration(is_pre_binding=True)
             ctx.check_migration_result()
             ctx.terminate_user_td(type="src")
             ctx.terminate_user_td(type="dst")
         
         ctx.terminate_mig_td()
         ctx.terminate_socat()
-
-def test_policy_v2(device_type):
-    test_cycle(device_type)
