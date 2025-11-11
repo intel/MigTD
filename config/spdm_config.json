@@ -11,13 +11,13 @@
         "max_psk_context_size": 64,
         "max_psk_hint_size": 32
     },
-    "max_opaque_list_elements_count": 3,
-    "max_session_count": 4,
+    "max_opaque_list_elements_count": 1,
+    "max_session_count": 1,
     "transport_config": {
         "sender_buffer_size": 4096,
         "receiver_buffer_size": 4096
     },
     "max_spdm_msg_size": 65536,
     "heartbeat_period_value": 0,
-    "max_root_cert_support": 10
+    "max_root_cert_support": 0
 }
