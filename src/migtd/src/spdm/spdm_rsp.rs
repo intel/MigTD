@@ -409,8 +409,12 @@ pub fn handle_exchange_mig_attest_info_req(
     let quote_dst = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
 
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     let res = attestation::verify_quote(quote_dst.as_slice());
     //  The session MUST be terminated immediately, if the mutual attestation failure
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    let res: Result<Vec<u8>, ()> = Ok(vec![]);
+
     if res.is_err() {
         error!("mutual attestation failed, end the session!\n");
         let session = responder_context
@@ -435,7 +439,11 @@ pub fn handle_exchange_mig_attest_info_req(
     let quote_src = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     let res = attestation::verify_quote(quote_src);
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    let res: Result<Vec<u8>, ()> = Ok(vec![]);
+
     //  The session MUST be terminated immediately, if the mutual attestation failure
     if res.is_err() {
         error!("mutual attestation failed, end the session!\n");
@@ -467,6 +475,7 @@ pub fn handle_exchange_mig_attest_info_req(
     let event_log_src_vec = event_log_src.to_vec();
 
     #[cfg(not(feature = "policy_v2"))]
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
         let policy_check_result = mig_policy::authenticate_policy(
             false,
@@ -514,21 +523,24 @@ pub fn handle_exchange_mig_attest_info_req(
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
-        let policy_check_result = mig_policy::authenticate_remote(
-            false,
-            quote_src_vec.as_slice(),
-            remote_policy,
-            event_log_src_vec.as_slice(),
-        );
-        if let Err(e) = &policy_check_result {
-            error!("Policy v2 check failed, below is the detail information:\n");
-            error!("{:x?}\n", e);
-            let session = responder_context
-                .common
-                .get_session_via_id(session_id)
-                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
+        {
+            let policy_check_result = mig_policy::authenticate_remote(
+                false,
+                quote_src_vec.as_slice(),
+                remote_policy,
+                event_log_src_vec.as_slice(),
+            );
+            if let Err(e) = &policy_check_result {
+                error!("Policy v2 check failed, below is the detail information:\n");
+                error!("{:x?}\n", e);
+                let session = responder_context
+                    .common
+                    .get_session_via_id(session_id)
+                    .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+                session.teardown();
+                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            }
         }
     }
 
