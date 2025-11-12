@@ -10,7 +10,7 @@ use serde_json::{self, value::RawValue};
 use crate::{
     parse_events,
     v2::{bytes_to_hex_string, hex_string_to_bytes, policy, verify_event_hash},
-    Collaterals, EventName, PolicyError, ServtdCollateral, TdIdentity, TdTcbMapping,
+    Collaterals, EventName, PolicyError, ServtdCollateral, TcbLevel, TdIdentity, TdTcbMapping,
 };
 
 #[derive(Debug)]
@@ -58,22 +58,57 @@ impl TryFrom<&str> for TcbStatus {
 #[derive(Debug, Clone, Default)]
 pub struct PolicyEvaluationInfo {
     /// The date of the Trusted Computing Base (TCB) in ISO-8601 format, e.g. "2023-06-19T00:00:00Z"
-    pub tcb_date: Option<String>,
+    tcb_date: Option<String>,
 
     /// The status of the TCB
-    pub tcb_status: Option<String>,
+    tcb_status: Option<String>,
 
     /// The TCB evaluation data number used to track TCB revocations and updates
-    pub tcb_evaluation_number: Option<u32>,
+    tcb_evaluation_number: Option<u32>,
 
     /// The FMSPC of platform
-    pub fmspc: Option<[u8; 6]>,
+    fmspc: Option<[u8; 6]>,
 
     /// The status of the MigTD TCB
-    pub migtd_tcb_status: Option<String>,
+    migtd_tcb_status: Option<String>,
 
     /// The date of the MigTD TCB in ISO-8601 format, e.g. "2023-06-19T00:00:00Z"
-    pub migtd_tcb_date: Option<String>,
+    migtd_tcb_date: Option<String>,
+}
+
+impl PolicyEvaluationInfo {
+    /// Creates a new `PolicyEvaluationInfo` instance, validating that required fields are present.
+    pub fn new(
+        tcb_date: Option<String>,
+        tcb_status: Option<String>,
+        tcb_evaluation_number: Option<u32>,
+        fmspc: Option<[u8; 6]>,
+        migtd_tcb: Option<&TcbLevel>,
+    ) -> Result<Self, PolicyError> {
+        let info = Self {
+            tcb_date,
+            tcb_status,
+            tcb_evaluation_number,
+            fmspc,
+            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
+            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+        };
+
+        if info.tcb_date.is_none()
+            || info.tcb_status.is_none()
+            || tcb_evaluation_number.is_none()
+            || fmspc.is_none()
+        {
+            return Err(PolicyError::PlatformTcbNotFound);
+        }
+
+        #[cfg(not(feature = "test_disable_tcb_mapping_check"))]
+        if info.migtd_tcb_date.is_none() || info.migtd_tcb_status.is_none() {
+            return Err(PolicyError::ServtdTcbNotFound);
+        }
+
+        Ok(info)
+    }
 }
 
 pub struct VerifiedPolicy<'a> {

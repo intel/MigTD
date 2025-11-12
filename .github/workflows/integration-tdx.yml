@@ -61,8 +61,8 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image  --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
-      
+        run: cargo image --features test_disable_tcb_mapping_check --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+
       - name: Run Tests
         run: |
           pushd sh_script/test
@@ -76,7 +76,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --features spdm_attestation,test_disable_tcb_mapping_check --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
 
       - name: Run Tests - Test pre-binding
         run: |
@@ -135,7 +135,7 @@ jobs:
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-default-features --features stack-guard,virtio-serial,test_disable_tcb_mapping_check --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -147,7 +147,7 @@ jobs:
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
+        run: cargo image --no-default-features --features stack-guard,virtio-serial,test_disable_tcb_mapping_check --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
       
       - name: Run Tests
         run: |
@@ -192,7 +192,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation,test_disable_tcb_mapping_check --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
 
       - name: Run Tests
         run: |
@@ -204,7 +204,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --debug
+        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation,test_disable_tcb_mapping_check --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --debug
 
       - name: Run Tests
         run: |

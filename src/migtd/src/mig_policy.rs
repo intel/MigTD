@@ -262,14 +262,13 @@ mod v2 {
 
         let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
 
-        Ok(PolicyEvaluationInfo {
-            tcb_date: Some(tcb_date.to_string()),
-            tcb_status: Some(tcb_status.as_str().to_string()),
-            tcb_evaluation_number: Some(tcb_evaluation_number),
-            fmspc: Some(fmspc),
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
-        })
+        PolicyEvaluationInfo::new(
+            Some(tcb_date.to_string()),
+            Some(tcb_status.as_str().to_string()),
+            Some(tcb_evaluation_number),
+            Some(fmspc),
+            migtd_tcb,
+        )
     }
 
     fn get_tcb_date_and_status_from_suppl_data(

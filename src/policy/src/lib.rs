@@ -52,6 +52,8 @@ pub enum PolicyError {
     InvalidReference,
     InvalidServtdIdentity,
     InvalidServtdTcbMapping,
+    PlatformTcbNotFound,
+    ServtdTcbNotFound,
     PolicyHashMismatch,
     InvalidQuote,
     SvnMismatch,

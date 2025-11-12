@@ -19,3 +19,4 @@ td-shim-interface = { path = "../../deps/td-shim/td-shim-interface"}
 std = []
 AzCVMEmu = []
 policy_v2 = []
+test_disable_tcb_mapping_check = []
