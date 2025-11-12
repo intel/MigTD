@@ -145,14 +145,10 @@ pub async fn spdm_responder_transfer_msk(
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
-    let res = with_timeout(SPDM_TIMEOUT, rsp_handle_message(spdm_responder)).await;
+    Box::pin(rsp_handle_message(spdm_responder)).await?;
     spdm_responder.common.app_context_data_buffer.zeroize();
 
-    match res {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err(SPDM_STATUS_RECEIVE_FAIL),
-    }
+    Ok(())
 }
 
 pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result<(), SpdmStatus> {
@@ -162,7 +158,7 @@ pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result
         let mut raw_packet = raw_packet.lock();
         let raw_packet = raw_packet.deref_mut();
         raw_packet.zeroize();
-        let res = spdm_responder.process_message(false, 0, raw_packet).await;
+        let res = Box::pin(spdm_responder.process_message(false, 0, raw_packet)).await;
 
         let session_id = spdm_responder.common.runtime_info.get_last_session_id();
         if session_id.is_some() {

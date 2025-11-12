@@ -38,7 +38,7 @@ use crate::migration::MigrationResult;
 use crate::migration::MigtdMigrationInformation;
 use crate::spdm::vmcall_msg::VMCALL_SPDM_MESSAGE_HEADER_SIZE;
 
-const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+pub const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
 pub struct MigtdTransport<T: AsyncRead + AsyncWrite + Unpin> {
     pub transport: T,
