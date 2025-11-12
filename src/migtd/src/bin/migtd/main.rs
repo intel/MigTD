@@ -35,7 +35,9 @@ const MIGTD_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub extern "C" fn main() {
     #[cfg(feature = "test_stack_size")]
     {
-        td_benchmark::StackProfiling::init(0x5a5a_5a5a_5a5a_5a5a, 0xd000);
+        use migtd::STACK_SIZE;
+
+        td_benchmark::StackProfiling::init(0x5a5a_5a5a_5a5a_5a5a, STACK_SIZE - 0x100000);
     }
     runtime_main()
 }
@@ -268,6 +270,8 @@ fn handle_pre_mig() {
                         }
                     }
                 }
+                #[cfg(any(feature = "test_stack_size", feature = "test_heap_size"))]
+                test_memory();
             });
         }
         sleep();
@@ -292,11 +296,11 @@ fn test_memory() {
     #[cfg(feature = "test_stack_size")]
     {
         let value = td_benchmark::StackProfiling::stack_usage().unwrap();
-        td_payload::println!("max stack usage: {}", value);
+        td_payload::println!("max stack usage: {:2x}", value);
     }
     #[cfg(feature = "test_heap_size")]
     {
         let value = td_benchmark::HeapProfiling::heap_usage().unwrap();
-        td_payload::println!("max heap usage: {}", value);
+        td_payload::println!("max heap usage: {:2x}", value);
     }
 }
