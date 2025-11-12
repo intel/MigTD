@@ -1163,10 +1163,10 @@ fn handle_quote_request(
             quote.len(), qgs_response_size, required_space
         );
     } else {
-        // Legacy response format: quote directly after input data
-        let quote_start_offset = 24 + in_len;
+        // Legacy response format: quote directly after header
+        let quote_start_offset = 24;
 
-        // Check if there's enough space after TDREPORT for the quote
+        // Check if there's enough space after header for the quote
         if buffer.len() < quote_start_offset + quote.len() {
             error!(
                 "GetQuote buffer too small for quote: need {} bytes, have {}",
@@ -1178,7 +1178,7 @@ fn handle_quote_request(
             return Err(TdVmcallError::VmcallOperandInvalid);
         }
 
-        // Write the generated quote after the TDREPORT
+        // Write the generated quote after the header
         buffer[quote_start_offset..quote_start_offset + quote.len()].copy_from_slice(&quote);
 
         // Update out_len field (u32 at offset 20) - just the quote size
