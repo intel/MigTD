@@ -137,7 +137,7 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
     }
 
     // Extract quote data
-    let quote_start = header_size + tdreport_length;
+    let quote_start = header_size;
     if buffer.len() < quote_start + quote_length {
         return Err(Error::GetQuote);
     }
