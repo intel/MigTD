@@ -31,6 +31,7 @@ use zerocopy::AsBytes;
 type Result<T> = core::result::Result<T, MigrationResult>;
 
 use super::{data::*, *};
+use crate::driver::ticks::with_timeout;
 #[cfg(not(feature = "spdm_attestation"))]
 use crate::ratls;
 #[cfg(feature = "spdm_attestation")]
@@ -766,7 +767,6 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
 
     #[cfg(not(feature = "spdm_attestation"))]
     {
-        use crate::driver::ticks::with_timeout;
         use core::time::Duration;
 
         const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
@@ -853,26 +853,32 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     if info.is_src() {
         let mut spdm_requester =
             spdm::spdm_requester(transport).map_err(|_| MigrationResult::SecureSessionError)?;
-        Box::pin(spdm::spdm_requester_transfer_msk(
-            &mut spdm_requester,
-            &info.mig_info,
-            #[cfg(feature = "policy_v2")]
-            remote_policy,
-        ))
-        .await
+        with_timeout(
+            spdm::SPDM_TIMEOUT,
+            spdm::spdm_requester_transfer_msk(
+                &mut spdm_requester,
+                &info.mig_info,
+                #[cfg(feature = "policy_v2")]
+                remote_policy,
+            ),
+        )
+        .await?
         .map_err(|_| MigrationResult::MutualAttestationError)?;
         log::info!("MSK exchange completed\n");
     } else {
         let mut spdm_responder =
             spdm::spdm_responder(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-        Box::pin(spdm::spdm_responder_transfer_msk(
-            &mut spdm_responder,
-            &info.mig_info,
-            #[cfg(feature = "policy_v2")]
-            remote_policy,
-        ))
-        .await
+        with_timeout(
+            spdm::SPDM_TIMEOUT,
+            spdm::spdm_responder_transfer_msk(
+                &mut spdm_responder,
+                &info.mig_info,
+                #[cfg(feature = "policy_v2")]
+                remote_policy,
+            ),
+        )
+        .await?
         .map_err(|_| MigrationResult::MutualAttestationError)?;
         log::info!("MSK exchange completed\n");
     }

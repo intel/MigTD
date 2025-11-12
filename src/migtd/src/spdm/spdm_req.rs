@@ -88,131 +88,34 @@ pub async fn spdm_requester_transfer_msk(
     mig_info: &MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
-    let res = with_timeout(SPDM_TIMEOUT, spdm_requester.send_receive_spdm_version()).await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
+    Box::pin(spdm_requester.send_receive_spdm_version()).await?;
+    Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
+    Box::pin(spdm_requester.send_receive_spdm_algorithm()).await?;
 
-    let res = with_timeout(SPDM_TIMEOUT, spdm_requester.send_receive_spdm_capability()).await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
+    Box::pin(send_and_receive_pub_key(spdm_requester)).await?;
+    let session_id = Box::pin(spdm_requester.send_receive_spdm_key_exchange(
+        0xff,
+        SpdmMeasurementSummaryHashType::SpdmMeasurementSummaryHashTypeNone,
+    ))
+    .await?;
 
-    let res = with_timeout(SPDM_TIMEOUT, spdm_requester.send_receive_spdm_algorithm()).await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
+    Box::pin(send_and_receive_sdm_migration_attest_info(
+        spdm_requester,
+        session_id,
+        #[cfg(feature = "policy_v2")]
+        remote_policy,
+    ))
+    .await?;
 
-    let res = with_timeout(SPDM_TIMEOUT, send_and_receive_pub_key(spdm_requester)).await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
+    Box::pin(spdm_requester.send_receive_spdm_finish(Some(0xff), session_id)).await?;
+    Box::pin(send_and_receive_sdm_exchange_migration_info(
+        spdm_requester,
+        mig_info,
+        Some(session_id),
+    ))
+    .await?;
+    Box::pin(spdm_requester.send_receive_spdm_end_session(session_id)).await?;
 
-    let res = with_timeout(
-        SPDM_TIMEOUT,
-        spdm_requester.send_receive_spdm_key_exchange(
-            0xff,
-            SpdmMeasurementSummaryHashType::SpdmMeasurementSummaryHashTypeNone,
-        ),
-    )
-    .await;
-    let session_id = match res {
-        Ok(Ok(sid)) => sid,
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
-
-    let res: Result<Result<(), SpdmStatus>, crate::driver::ticks::TimeoutError> = with_timeout(
-        SPDM_TIMEOUT,
-        send_and_receive_sdm_migration_attest_info(
-            spdm_requester,
-            session_id,
-            #[cfg(feature = "policy_v2")]
-            remote_policy,
-        ),
-    )
-    .await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
-    let res = with_timeout(
-        SPDM_TIMEOUT,
-        spdm_requester.send_receive_spdm_finish(Some(0xff), session_id),
-    )
-    .await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
-
-    let res = with_timeout(
-        SPDM_TIMEOUT,
-        send_and_receive_sdm_exchange_migration_info(spdm_requester, mig_info, Some(session_id)),
-    )
-    .await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
-
-    let res = with_timeout(
-        SPDM_TIMEOUT,
-        spdm_requester.send_receive_spdm_end_session(session_id),
-    )
-    .await;
-    match res {
-        Ok(Ok(_)) => {}
-        Ok(Err(e)) => {
-            return Err(e);
-        }
-        Err(_) => {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
-        }
-    };
     Ok(())
 }
 
