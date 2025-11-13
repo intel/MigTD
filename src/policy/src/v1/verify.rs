@@ -9,9 +9,8 @@ use super::{
     format_bytes_hex, MigTdInfo, PlatformInfo, Policy, QeInfo,
 };
 use crate::{
-    parse_events, replay_event_log_with_report_values, CcEvent, EventName, MigTdInfoProperty,
-    PlatformInfoProperty, PolicyError, QeInfoProperty, Report, TdxModuleInfoProperty,
-    REPORT_DATA_SIZE,
+    CcEvent, EventName, MigTdInfoProperty, PlatformInfoProperty, PolicyError, QeInfoProperty,
+    Report, TdxModuleInfoProperty, REPORT_DATA_SIZE,
 };
 
 // Attributes Mask:
@@ -52,9 +51,9 @@ pub fn verify_policy(
     is_src: bool,
     policy: &[u8],
     report: &[u8],
-    event_log: &[u8],
+    events: &BTreeMap<EventName, CcEvent>,
     report_peer: &[u8],
-    event_log_peer: &[u8],
+    events_peer: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
     if report.len() < REPORT_DATA_SIZE || report_peer.len() < REPORT_DATA_SIZE {
         return Err(PolicyError::InvalidParameter);
@@ -97,14 +96,9 @@ pub fn verify_policy(
             super::Policy::Platform(_) => continue,
             super::Policy::Qe(q) => verify_qe_info(is_src, &q, &report_local, &report_peer)?,
             super::Policy::TdxModule(_) => continue,
-            super::Policy::Migtd(m) => verify_migtd_info(
-                is_src,
-                &m,
-                event_log,
-                event_log_peer,
-                &report_local,
-                &report_peer,
-            )?,
+            super::Policy::Migtd(m) => {
+                verify_migtd_info(is_src, &m, events, events_peer, &report_local, &report_peer)?
+            }
         }
     }
 
@@ -235,8 +229,8 @@ fn verify_tdx_module_info(
 fn verify_migtd_info(
     is_src: bool,
     policy: &MigTdInfo,
-    event_log_local: &[u8],
-    event_log_peer: &[u8],
+    events_local: &BTreeMap<EventName, CcEvent>,
+    events_peer: &BTreeMap<EventName, CcEvent>,
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
@@ -276,13 +270,7 @@ fn verify_migtd_info(
     }
 
     if let Some(event_log_policy) = &policy.migtd.event_log {
-        verify_event_log(
-            is_src,
-            event_log_policy,
-            event_log_local,
-            event_log_peer,
-            peer_report,
-        )?;
+        verify_events(is_src, event_log_policy, events_local, events_peer)?;
     }
 
     Ok(())
@@ -294,29 +282,11 @@ fn mask_bytes_array(data: &mut [u8], mask: &[u8]) {
     }
 }
 
-fn verify_event_log(
-    is_src: bool,
-    policy: &BTreeMap<String, Property>,
-    event_log_local: &[u8],
-    event_log_peer: &[u8],
-    peer_report: &Report,
-) -> Result<(), PolicyError> {
-    replay_event_log_with_report_values(event_log_peer, peer_report)?;
-
-    if let (Some(log_local), Some(log_peer)) =
-        (parse_events(event_log_local), parse_events(event_log_peer))
-    {
-        verify_events(is_src, policy, &log_local, &log_peer)
-    } else {
-        Err(PolicyError::InvalidEventLog)
-    }
-}
-
 fn verify_events(
     is_src: bool,
     policy: &BTreeMap<String, Property>,
-    local_event_log: &BTreeMap<EventName, CcEvent>,
-    peer_event_log: &BTreeMap<EventName, CcEvent>,
+    local_events: &BTreeMap<EventName, CcEvent>,
+    peer_events: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
     for (name, value) in policy {
         let event_name = name.as_str().into();
@@ -325,8 +295,7 @@ fn verify_events(
             return Err(PolicyError::InvalidEventLog);
         }
 
-        let verify_result =
-            verify_event(is_src, &event_name, value, local_event_log, peer_event_log);
+        let verify_result = verify_event(is_src, &event_name, value, local_events, peer_events);
 
         if !verify_result {
             log_error_status(name.clone(), value.clone(), None, None, &[], &[]);
@@ -341,13 +310,10 @@ fn verify_event(
     is_src: bool,
     event_name: &EventName,
     policy: &Property,
-    local_event_log: &BTreeMap<EventName, CcEvent>,
-    peer_event_log: &BTreeMap<EventName, CcEvent>,
+    local_events: &BTreeMap<EventName, CcEvent>,
+    peer_events: &BTreeMap<EventName, CcEvent>,
 ) -> bool {
-    if let (Some(local), Some(peer)) = (
-        local_event_log.get(event_name),
-        peer_event_log.get(event_name),
-    ) {
+    if let (Some(local), Some(peer)) = (local_events.get(event_name), peer_events.get(event_name)) {
         if let Some(data) = local.data.as_ref() {
             if let Some(data_peer) = peer.data.as_ref() {
                 policy.verify(is_src, data, data_peer)
