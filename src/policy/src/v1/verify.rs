@@ -9,9 +9,8 @@ use super::{
     format_bytes_hex, MigTdInfo, PlatformInfo, Policy, QeInfo,
 };
 use crate::{
-    parse_events, replay_event_log_with_report_values, CcEvent, EventName, MigTdInfoProperty,
-    PlatformInfoProperty, PolicyError, QeInfoProperty, Report, TdxModuleInfoProperty,
-    REPORT_DATA_SIZE,
+    CcEvent, EventName, MigTdInfoProperty, PlatformInfoProperty, PolicyError, QeInfoProperty,
+    Report, TdxModuleInfoProperty, REPORT_DATA_SIZE,
 };
 
 // Attributes Mask:
@@ -52,9 +51,9 @@ pub fn verify_policy(
     is_src: bool,
     policy: &[u8],
     report: &[u8],
-    event_log: &[u8],
+    events: &BTreeMap<EventName, CcEvent>,
     report_peer: &[u8],
-    event_log_peer: &[u8],
+    events_peer: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
     if report.len() < REPORT_DATA_SIZE || report_peer.len() < REPORT_DATA_SIZE {
         return Err(PolicyError::InvalidParameter);
@@ -97,14 +96,9 @@ pub fn verify_policy(
             super::Policy::Platform(_) => continue,
             super::Policy::Qe(q) => verify_qe_info(is_src, &q, &report_local, &report_peer)?,
             super::Policy::TdxModule(_) => continue,
-            super::Policy::Migtd(m) => verify_migtd_info(
-                is_src,
-                &m,
-                event_log,
-                event_log_peer,
-                &report_local,
-                &report_peer,
-            )?,
+            super::Policy::Migtd(m) => {
+                verify_migtd_info(is_src, &m, events, events_peer, &report_local, &report_peer)?
+            }
         }
     }
 
@@ -235,8 +229,8 @@ fn verify_tdx_module_info(
 fn verify_migtd_info(
     is_src: bool,
     policy: &MigTdInfo,
-    event_log_local: &[u8],
-    event_log_peer: &[u8],
+    events_local: &BTreeMap<EventName, CcEvent>,
+    events_peer: &BTreeMap<EventName, CcEvent>,
     local_report: &Report,
     peer_report: &Report,
 ) -> Result<(), PolicyError> {
@@ -276,13 +270,7 @@ fn verify_migtd_info(
     }
 
     if let Some(event_log_policy) = &policy.migtd.event_log {
-        verify_event_log(
-            is_src,
-            event_log_policy,
-            event_log_local,
-            event_log_peer,
-            peer_report,
-        )?;
+        verify_events(is_src, event_log_policy, events_local, events_peer)?;
     }
 
     Ok(())
@@ -294,29 +282,11 @@ fn mask_bytes_array(data: &mut [u8], mask: &[u8]) {
     }
 }
 
-fn verify_event_log(
-    is_src: bool,
-    policy: &BTreeMap<String, Property>,
-    event_log_local: &[u8],
-    event_log_peer: &[u8],
-    peer_report: &Report,
-) -> Result<(), PolicyError> {
-    replay_event_log_with_report_values(event_log_peer, peer_report)?;
-
-    if let (Some(log_local), Some(log_peer)) =
-        (parse_events(event_log_local), parse_events(event_log_peer))
-    {
-        verify_events(is_src, policy, &log_local, &log_peer)
-    } else {
-        Err(PolicyError::InvalidEventLog)
-    }
-}
-
 fn verify_events(
     is_src: bool,
     policy: &BTreeMap<String, Property>,
-    local_event_log: &BTreeMap<EventName, CcEvent>,
-    peer_event_log: &BTreeMap<EventName, CcEvent>,
+    local_events: &BTreeMap<EventName, CcEvent>,
+    peer_events: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
     for (name, value) in policy {
         let event_name = name.as_str().into();
@@ -325,8 +295,7 @@ fn verify_events(
             return Err(PolicyError::InvalidEventLog);
         }
 
-        let verify_result =
-            verify_event(is_src, &event_name, value, local_event_log, peer_event_log);
+        let verify_result = verify_event(is_src, &event_name, value, local_events, peer_events);
 
         if !verify_result {
             log_error_status(name.clone(), value.clone(), None, None, &[], &[]);
@@ -341,13 +310,10 @@ fn verify_event(
     is_src: bool,
     event_name: &EventName,
     policy: &Property,
-    local_event_log: &BTreeMap<EventName, CcEvent>,
-    peer_event_log: &BTreeMap<EventName, CcEvent>,
+    local_events: &BTreeMap<EventName, CcEvent>,
+    peer_events: &BTreeMap<EventName, CcEvent>,
 ) -> bool {
-    if let (Some(local), Some(peer)) = (
-        local_event_log.get(event_name),
-        peer_event_log.get(event_name),
-    ) {
+    if let (Some(local), Some(peer)) = (local_events.get(event_name), peer_events.get(event_name)) {
         if let Some(data) = local.data.as_ref() {
             if let Some(data_peer) = peer.data.as_ref() {
                 policy.verify(is_src, data, data_peer)
@@ -393,17 +359,17 @@ fn log_error_status(
 mod tests {
     use super::*;
     use crate::*;
-    use alloc::{boxed::Box, vec};
-    use cc_measurement::log::{CcEventLogError, CcEventLogWriter};
-    use cc_measurement::UefiPlatformFirmwareBlob2;
-
-    const SHA384_DIGEST_SIZE: usize = 48;
-    type Result<T> = core::result::Result<T, CcEventLogError>;
-
-    fn extender(_digest: &[u8; SHA384_DIGEST_SIZE], _mr_index: u32) -> Result<()> {
-        // Do nothing
-        Ok(())
-    }
+    use alloc::vec;
+    use cc_measurement::{
+        TpmlDigestValues, TpmtHa, TpmuHa, UefiPlatformFirmwareBlob2,
+        EV_EFI_PLATFORM_FIRMWARE_BLOB2, EV_PLATFORM_CONFIG_FLAGS, TPML_ALG_SHA384,
+    };
+    use core::convert::TryInto;
+    use crypto::hash::digest_sha384;
+    use td_shim::event_log::{
+        TdShimPlatformConfigInfoHeader, PLATFORM_CONFIG_SECURE_AUTHORITY, PLATFORM_CONFIG_SVN,
+        PLATFORM_FIRMWARE_BLOB2_PAYLOAD,
+    };
 
     #[test]
     fn test_verify_invalid_parameter() {
@@ -412,9 +378,9 @@ mod tests {
             true,
             policy_bytes,
             &[0u8; REPORT_DATA_SIZE - 1],
-            &[0u8; 8],
+            &BTreeMap::new(),
             &[0u8; REPORT_DATA_SIZE],
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(verify_result, Err(PolicyError::InvalidParameter)));
 
@@ -422,9 +388,9 @@ mod tests {
             true,
             policy_bytes,
             &[0u8; REPORT_DATA_SIZE],
-            &[0u8; 8],
+            &BTreeMap::new(),
             &[0u8; REPORT_DATA_SIZE - 1],
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(verify_result, Err(PolicyError::InvalidParameter)));
     }
@@ -435,8 +401,14 @@ mod tests {
 
         // Take `self` as reference
         let policy_bytes = include_bytes!("../../test/policy_001.json");
-        let verify_result =
-            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &BTreeMap::new(),
+            template,
+            &BTreeMap::new(),
+        );
         assert!(verify_result.is_ok());
 
         // Only same platform is allowed
@@ -447,9 +419,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -457,8 +429,14 @@ mod tests {
         ));
 
         let policy_bytes = include_bytes!("../../test/policy_full1.json");
-        let verify_result =
-            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &BTreeMap::new(),
+            template,
+            &BTreeMap::new(),
+        );
         assert!(verify_result.is_ok());
 
         let mut report_peer = template.to_vec();
@@ -468,9 +446,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -486,9 +464,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -503,9 +481,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(verify_result.is_ok());
 
@@ -521,9 +499,9 @@ mod tests {
             true,
             policy_bytes,
             &report,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(verify_result.is_ok());
 
@@ -534,9 +512,9 @@ mod tests {
             true,
             policy_bytes,
             &report,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -550,8 +528,14 @@ mod tests {
 
         // Taking `self` as reference: pass
         let policy_bytes = include_bytes!("../../test/policy_001.json");
-        let verify_result =
-            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &BTreeMap::new(),
+            template,
+            &BTreeMap::new(),
+        );
         assert!(verify_result.is_ok());
 
         // Taking `self` as reference: mismatch tdx module major version
@@ -562,9 +546,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -573,8 +557,14 @@ mod tests {
 
         // Taking exact value as reference: pass
         let policy_bytes = include_bytes!("../../test/policy_full1.json");
-        let verify_result =
-            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &BTreeMap::new(),
+            template,
+            &BTreeMap::new(),
+        );
         assert!(verify_result.is_ok());
 
         // Taking exact value as reference: pass
@@ -584,9 +574,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(verify_result.is_ok());
 
@@ -597,9 +587,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -613,9 +603,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -629,9 +619,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -645,9 +635,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -661,8 +651,14 @@ mod tests {
         let template = include_bytes!("../../test/report.dat");
 
         let policy_bytes = include_bytes!("../../test/policy_no.json");
-        let verify_result =
-            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &BTreeMap::new(),
+            template,
+            &BTreeMap::new(),
+        );
         assert!(verify_result.is_ok());
 
         // different attributes, not equal, but attributes is not in policy
@@ -674,9 +670,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(verify_result.is_ok());
 
@@ -688,9 +684,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -703,9 +699,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(verify_result.is_ok());
 
@@ -715,9 +711,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -731,9 +727,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -746,9 +742,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(verify_result.is_ok());
 
@@ -759,9 +755,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -776,9 +772,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -793,9 +789,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -811,9 +807,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -828,9 +824,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -846,9 +842,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -863,9 +859,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -880,9 +876,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -897,9 +893,9 @@ mod tests {
             true,
             policy_bytes,
             template,
-            &[0u8; 8],
+            &BTreeMap::new(),
             &report_peer,
-            &[0u8; 8],
+            &BTreeMap::new(),
         );
         assert!(matches!(
             verify_result,
@@ -913,14 +909,21 @@ mod tests {
 
         let policy_bytes = include_bytes!("../../test/policy_full2.json");
         // Invalid event log
-        let verify_result =
-            verify_policy(true, policy_bytes, template, &[0u8; 8], template, &[0u8; 8]);
-        assert!(matches!(verify_result, Err(PolicyError::InvalidEventLog)));
+        let verify_result = verify_policy(
+            true,
+            policy_bytes,
+            template,
+            &BTreeMap::new(),
+            template,
+            &BTreeMap::new(),
+        );
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqualifiedMigTdInfo)
+        ));
 
-        let mut evt1 = vec![0u8; 0x1000];
+        let mut evt1 = BTreeMap::new();
         let payload = [0, 1, 2];
-
-        let mut writter = CcEventLogWriter::new(&mut evt1, Box::new(extender)).unwrap();
 
         let blob2 = UefiPlatformFirmwareBlob2::new(
             PLATFORM_FIRMWARE_BLOB2_PAYLOAD,
@@ -929,78 +932,140 @@ mod tests {
         )
         .expect("Invalid payload binary information or descriptor");
 
-        writter
-            .create_event_log(
+        evt1.insert(
+            EventName::MigTdCore,
+            create_event(
                 2,
                 EV_EFI_PLATFORM_FIRMWARE_BLOB2,
-                &[blob2.as_bytes()],
                 &payload,
-            )
-            .unwrap();
+                &[blob2.as_bytes()],
+                None,
+            ),
+        );
 
         let verify_result = verify_policy(true, policy_bytes, template, &evt1, template, &evt1);
-        assert!(matches!(verify_result, Err(PolicyError::InvalidEventLog)));
+        assert!(matches!(
+            verify_result,
+            Err(PolicyError::UnqualifiedMigTdInfo)
+        ));
     }
 
-    fn create_event_log(
+    fn create_event(
+        mr_index: u32,
+        event_type: u32,
+        data_to_hash: &[u8],
+        event_data: &[&[u8]],
+        data: Option<Vec<u8>>,
+    ) -> CcEvent {
+        let digest = digest_sha384(&data_to_hash).unwrap();
+        let event_header = CcEventHeader {
+            mr_index,
+            event_type,
+            digest: TpmlDigestValues {
+                count: 1,
+                digests: [TpmtHa {
+                    hash_alg: TPML_ALG_SHA384,
+                    digest: TpmuHa {
+                        sha384: digest.try_into().unwrap(),
+                    },
+                }],
+            },
+            event_size: event_data.iter().map(|s| s.len()).sum::<usize>() as u32,
+        };
+
+        CcEvent {
+            header: event_header,
+            data,
+        }
+    }
+
+    fn create_events(
         payload: &[u8],
         trust_anchor: Option<&[u8]>,
         payload_svn: Option<&[u8]>,
         policy: &[u8],
         root_key: &[u8],
-    ) -> Vec<u8> {
-        let mut event_log = vec![0u8; 8192];
+    ) -> BTreeMap<EventName, CcEvent> {
+        const EVENT_TYPE: u32 = 0x00000006;
+        const POLICY_EVENT_ID: u32 = 0x1;
+        const ROOT_CA_EVENT_ID: u32 = 0x2;
 
-        fn extender(
-            _digest: &[u8; 48],
-            _mr_index: u32,
-        ) -> core::result::Result<(), CcEventLogError> {
-            Ok(())
-        }
-        let mut writter = CcEventLogWriter::new(&mut event_log, Box::new(extender)).unwrap();
+        let mut events = BTreeMap::new();
 
         // Log the payload binary
-        td_shim::event_log::log_payload_binary(payload, &mut writter);
+        let blob2 = UefiPlatformFirmwareBlob2::new(
+            PLATFORM_FIRMWARE_BLOB2_PAYLOAD,
+            payload.as_ptr() as u64,
+            payload.len() as u64,
+        )
+        .unwrap();
+        events.insert(
+            EventName::MigTdCore,
+            create_event(
+                2,
+                EV_EFI_PLATFORM_FIRMWARE_BLOB2,
+                payload,
+                &[blob2.as_bytes()],
+                None,
+            ),
+        );
+
         // Log the trust_anchor (secure boot public key hash)
         trust_anchor.and_then(|anchor| {
-            td_shim::event_log::create_event_log_platform_config(
-                &mut writter,
-                1,
+            let config_header = TdShimPlatformConfigInfoHeader::new(
                 PLATFORM_CONFIG_SECURE_AUTHORITY,
-                anchor,
+                anchor.len() as u32,
             )
-            .ok()
+            .unwrap();
+            events.insert(
+                EventName::SecureBootKey,
+                create_event(
+                    1,
+                    EV_PLATFORM_CONFIG_FLAGS,
+                    anchor,
+                    &[config_header.as_bytes(), anchor],
+                    None,
+                ),
+            )
         });
         // Log the payload svn
         payload_svn.and_then(|svn| {
-            td_shim::event_log::create_event_log_platform_config(
-                &mut writter,
-                1,
-                PLATFORM_CONFIG_SVN,
-                svn,
+            let config_header =
+                TdShimPlatformConfigInfoHeader::new(PLATFORM_CONFIG_SVN, svn.len() as u32).unwrap();
+
+            events.insert(
+                EventName::MigTdCoreSvn,
+                create_event(
+                    1,
+                    EV_PLATFORM_CONFIG_FLAGS,
+                    svn,
+                    &[config_header.as_bytes(), svn],
+                    Some(svn.to_vec()),
+                ),
             )
-            .ok()
         });
 
         // Log the migration policy
         let mut policy_event = Vec::new();
-        policy_event.extend_from_slice(&TAGGED_EVENT_ID_POLICY.to_le_bytes());
+        policy_event.extend_from_slice(&POLICY_EVENT_ID.to_le_bytes());
         policy_event.extend_from_slice(&(policy.len() as u32).to_le_bytes());
         policy_event.extend_from_slice(policy);
-        writter
-            .create_event_log(3, EV_EVENT_TAG, &[policy_event.as_slice()], policy)
-            .unwrap();
+        events.insert(
+            EventName::MigTdPolicy,
+            create_event(3, EVENT_TYPE, policy, &[&policy_event], None),
+        );
 
         // Log the sgx attestation root key
         let mut root_key_event = Vec::new();
-        root_key_event.extend_from_slice(&TAGGED_EVENT_ID_ROOT_CA.to_le_bytes());
+        root_key_event.extend_from_slice(&ROOT_CA_EVENT_ID.to_le_bytes());
         root_key_event.extend_from_slice(&(root_key.len() as u32).to_le_bytes());
         root_key_event.extend_from_slice(root_key);
-        writter
-            .create_event_log(3, EV_EVENT_TAG, &[root_key_event.as_slice()], root_key)
-            .unwrap();
+        events.insert(
+            EventName::SgxRootKey,
+            create_event(3, EVENT_TYPE, root_key, &[root_key_event.as_slice()], None),
+        );
 
-        event_log
+        events
     }
 
     #[test]
@@ -1011,7 +1076,7 @@ mod tests {
         let svn = u64::to_le_bytes(0xf);
         let root_key = vec![0xffu8; 96];
 
-        let event_log = create_event_log(
+        let local_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1026,7 +1091,6 @@ mod tests {
             .event_log
             .as_ref()
             .unwrap();
-        let local_events = parse_events(&event_log).unwrap();
 
         assert!(verify_events(true, &event_log_policy, &local_events, &local_events).is_ok());
     }
@@ -1039,7 +1103,7 @@ mod tests {
         let svn = u64::to_le_bytes(0xf);
         let root_key = vec![0xffu8; 96];
 
-        let local_events = create_event_log(
+        let local_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1048,7 +1112,7 @@ mod tests {
         );
 
         let payload_peer = vec![0xfeu8; 1024];
-        let peer_events = create_event_log(
+        let peer_events = create_events(
             payload_peer.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1065,13 +1129,7 @@ mod tests {
             .as_ref()
             .unwrap();
 
-        assert!(verify_events(
-            true,
-            &event_log_policy,
-            &parse_events(&local_events).unwrap(),
-            &parse_events(&peer_events).unwrap(),
-        )
-        .is_err());
+        assert!(verify_events(true, &event_log_policy, &local_events, &peer_events,).is_err());
     }
 
     #[test]
@@ -1082,7 +1140,7 @@ mod tests {
         let svn = u64::to_le_bytes(0xf);
         let root_key = vec![0xffu8; 96];
 
-        let local_events = create_event_log(
+        let local_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1091,7 +1149,7 @@ mod tests {
         );
 
         let trust_anchor_peer = vec![0xfeu8; 128];
-        let peer_events = create_event_log(
+        let peer_events = create_events(
             payload.as_slice(),
             Some(trust_anchor_peer.as_slice()),
             Some(svn.as_slice()),
@@ -1108,13 +1166,7 @@ mod tests {
             .as_ref()
             .unwrap();
 
-        assert!(verify_events(
-            true,
-            &event_log_policy,
-            &parse_events(&local_events).unwrap(),
-            &parse_events(&peer_events).unwrap(),
-        )
-        .is_err());
+        assert!(verify_events(true, &event_log_policy, &local_events, &peer_events,).is_err());
     }
 
     #[test]
@@ -1125,7 +1177,7 @@ mod tests {
         let svn = u64::to_le_bytes(0x20);
         let root_key = vec![0xffu8; 96];
 
-        let local_events = create_event_log(
+        let local_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1142,13 +1194,7 @@ mod tests {
             .as_ref()
             .unwrap();
 
-        assert!(verify_events(
-            true,
-            &event_log_policy,
-            &parse_events(&local_events).unwrap(),
-            &parse_events(&local_events).unwrap(),
-        )
-        .is_err());
+        assert!(verify_events(true, &event_log_policy, &local_events, &local_events,).is_err());
     }
 
     #[test]
@@ -1159,7 +1205,7 @@ mod tests {
         let svn = u64::to_le_bytes(0xf);
         let root_key = vec![0xffu8; 96];
 
-        let local_events = create_event_log(
+        let local_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1168,7 +1214,7 @@ mod tests {
         );
 
         let policy_peer = include_bytes!("../../test/policy_invalid_guid.json");
-        let peer_events = create_event_log(
+        let peer_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1185,13 +1231,7 @@ mod tests {
             .as_ref()
             .unwrap();
 
-        assert!(verify_events(
-            true,
-            &event_log_policy,
-            &parse_events(&local_events).unwrap(),
-            &parse_events(&peer_events).unwrap(),
-        )
-        .is_err());
+        assert!(verify_events(true, &event_log_policy, &local_events, &peer_events,).is_err());
     }
 
     #[test]
@@ -1202,7 +1242,7 @@ mod tests {
         let svn = u64::to_le_bytes(0xf);
         let root_key = vec![0xffu8; 96];
 
-        let local_events = create_event_log(
+        let local_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1211,7 +1251,7 @@ mod tests {
         );
 
         let root_key_peer = vec![0xfeu8; 96];
-        let peer_events = create_event_log(
+        let peer_events = create_events(
             payload.as_slice(),
             Some(trust_anchor.as_slice()),
             Some(svn.as_slice()),
@@ -1228,13 +1268,7 @@ mod tests {
             .as_ref()
             .unwrap();
 
-        assert!(verify_events(
-            true,
-            &event_log_policy,
-            &parse_events(&local_events).unwrap(),
-            &parse_events(&peer_events).unwrap(),
-        )
-        .is_err());
+        assert!(verify_events(true, &event_log_policy, &local_events, &peer_events,).is_err());
     }
 
     #[test]

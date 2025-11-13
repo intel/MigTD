@@ -50,6 +50,7 @@ raw-cpuid = "11.6.0"
 # AzCVMEmu optional deps (grouped)
 tdx-tdcall-emu = { path = "../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }
 td-payload-emu = { path = "../../deps/td-shim-AzCVMEmu/td-payload-emu", optional = true }
+td-shim = { path = "../../deps/td-shim/td-shim", default-features = false }
 td-shim-interface-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim-interface", optional = true, features = ["std"] }
 td-shim-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim", optional = true }
 env_logger = { version = "0.10.0", optional = true }

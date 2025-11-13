@@ -10,7 +10,10 @@ mod v1 {
     use policy::verify_policy;
     pub use policy::PolicyError;
 
-    use crate::{config::get_policy, event_log::get_event_log};
+    use crate::{
+        config::get_policy,
+        event_log::{get_event_log, parse_events, verify_event_log},
+    };
 
     pub fn authenticate_policy(
         is_src: bool,
@@ -30,13 +33,18 @@ mod v1 {
             return Err(PolicyError::InvalidParameter);
         };
 
+        verify_event_log(event_log_peer, verified_report_peer)
+            .map_err(|_| PolicyError::InvalidEventLog)?;
+        let event_log = parse_events(event_log).ok_or(PolicyError::InvalidParameter)?;
+        let event_log_peer = parse_events(event_log_peer).ok_or(PolicyError::InvalidParameter)?;
+
         verify_policy(
             is_src,
             policy,
             verified_report_local,
-            event_log,
+            &event_log,
             verified_report_peer,
-            event_log_peer,
+            &event_log_peer,
         )
     }
 }
@@ -56,6 +64,7 @@ mod v2 {
     use spin::Once;
 
     use crate::config::get_policy_issuer_chain;
+    use crate::event_log::{parse_events, verify_event_log};
 
     lazy_static! {
         pub static ref LOCAL_TCB_INFO: Once<PolicyEvaluationInfo> = Once::new();
@@ -205,7 +214,8 @@ mod v2 {
             suppl_data
                 .get(..REPORT_DATA_SIZE)
                 .ok_or(PolicyError::QuoteVerification)?,
-        )?;
+        )
+        .map_err(|_| PolicyError::InvalidEventLog)?;
 
         // 3. Verify the integrity of migration policy, with the issuer chains from local policy
         let verified_policy = unverified_policy.verify(
@@ -215,7 +225,8 @@ mod v2 {
         )?;
 
         // 4. Check the integrity of the policy with its event log
-        check_policy_integrity(mig_policy, event_log)?;
+        let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
+        check_policy_integrity(mig_policy, &events)?;
 
         // 5. Get TCB evaluation info from the collaterals
         let evaluation_data = setup_evaluation_data(
