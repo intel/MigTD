@@ -2,15 +2,14 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{string::String, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::convert::TryFrom;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, value::RawValue};
 
 use crate::{
-    parse_events,
     v2::{bytes_to_hex_string, hex_string_to_bytes, policy, verify_event_hash},
-    Collaterals, EventName, PolicyError, ServtdCollateral, TdIdentity, TdTcbMapping,
+    CcEvent, Collaterals, EventName, PolicyError, ServtdCollateral, TdIdentity, TdTcbMapping,
 };
 
 #[derive(Debug)]
@@ -94,10 +93,11 @@ impl VerifiedPolicy<'_> {
     }
 }
 
-pub fn check_policy_integrity(policy: &[u8], event_log: &[u8]) -> Result<(), PolicyError> {
-    let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
-
-    if !verify_event_hash(&events, &EventName::MigTdPolicy, policy)? {
+pub fn check_policy_integrity(
+    policy: &[u8],
+    events: &BTreeMap<EventName, CcEvent>,
+) -> Result<(), PolicyError> {
+    if !verify_event_hash(events, &EventName::MigTdPolicy, policy)? {
         return Err(PolicyError::PolicyHashMismatch);
     }
 

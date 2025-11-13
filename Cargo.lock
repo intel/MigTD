@@ -1213,6 +1213,7 @@ dependencies = [
  "td-paging",
  "td-payload",
  "td-payload-emu",
+ "td-shim",
  "td-shim-emu",
  "td-shim-interface",
  "td-shim-interface-emu",

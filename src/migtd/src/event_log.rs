@@ -2,18 +2,22 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 use anyhow::anyhow;
 use anyhow::Result;
 use cc_measurement::log::CcEventLogReader;
 use cc_measurement::{
-    CcEventHeader, TcgPcrEventHeader, TpmlDigestValues, TpmtHa, TpmuHa, SHA384_DIGEST_SIZE,
-    TPML_ALG_SHA384,
+    CcEventHeader, TcgPcrEventHeader, TpmlDigestValues, TpmtHa, TpmuHa,
+    EV_EFI_PLATFORM_FIRMWARE_BLOB2, EV_PLATFORM_CONFIG_FLAGS, SHA384_DIGEST_SIZE, TPML_ALG_SHA384,
 };
 use core::mem::size_of;
 use crypto::hash::digest_sha384;
+use policy::{CcEvent, EventName, Report, REPORT_DATA_SIZE};
 use spin::Once;
 use td_payload::acpi::get_acpi_tables;
+use td_shim::event_log::{
+    PLATFORM_CONFIG_SECURE_AUTHORITY, PLATFORM_CONFIG_SVN, PLATFORM_FIRMWARE_BLOB2_PAYLOAD,
+};
 use td_shim_interface::acpi::Ccel;
 use tdx_tdcall::tdx;
 use zerocopy::{AsBytes, FromBytes};
@@ -32,6 +36,8 @@ pub const MR_INDEX_POLICY_ISSUER_CHAIN: u32 = 0x2;
 pub const MR_INDEX_POLICY: u32 = 0x3;
 pub const MR_INDEX_ROOT_CA: u32 = 0x3;
 pub const MR_INDEX_TEST_FEATURE: u32 = 0x3;
+
+const MAX_RTMR_INDEX: usize = 3;
 
 static CCEL: Once<Ccel> = Once::new();
 
@@ -160,4 +166,108 @@ pub fn extend_rtmr(digest: &[u8; SHA384_DIGEST_SIZE], mr_index: u32) -> Result<(
     };
 
     tdx::tdcall_extend_rtmr(&digest, rtmr_index).map_err(|e| anyhow!("Extend RTMR: {:?}", e))
+}
+
+pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEvent>> {
+    let mut map: BTreeMap<EventName, CcEvent> = BTreeMap::new();
+    let reader = CcEventLogReader::new(event_log)?;
+
+    for (event_header, event_data) in reader.cc_events {
+        match event_header.event_type {
+            EV_EFI_PLATFORM_FIRMWARE_BLOB2 => {
+                let desc_size = event_data[0] as usize;
+                if &event_data[1..1 + desc_size] == PLATFORM_FIRMWARE_BLOB2_PAYLOAD {
+                    map.insert(EventName::MigTdCore, CcEvent::new(event_header, None));
+                }
+            }
+            EV_PLATFORM_CONFIG_FLAGS => {
+                if event_data.starts_with(PLATFORM_CONFIG_SECURE_AUTHORITY) {
+                    map.insert(EventName::SecureBootKey, CcEvent::new(event_header, None));
+                } else if event_data.starts_with(PLATFORM_CONFIG_SVN) {
+                    if event_data.len() < 20 {
+                        return None;
+                    }
+                    let info_size: usize =
+                        u32::from_le_bytes(event_data[16..20].try_into().unwrap()) as usize;
+                    if event_data.len() < 20 + info_size {
+                        return None;
+                    }
+                    map.insert(
+                        EventName::MigTdCoreSvn,
+                        CcEvent::new(event_header, Some(event_data[20..20 + info_size].to_vec())),
+                    );
+                }
+            }
+            EV_EVENT_TAG => {
+                let tag_id = u32::from_le_bytes(event_data[..4].try_into().ok()?);
+                if tag_id == TAGGED_EVENT_ID_POLICY {
+                    map.insert(EventName::MigTdPolicy, CcEvent::new(event_header, None));
+                } else if tag_id == TAGGED_EVENT_ID_ROOT_CA {
+                    map.insert(EventName::SgxRootKey, CcEvent::new(event_header, None));
+                } else if tag_id == TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN {
+                    map.insert(
+                        EventName::MigTdPolicySigner,
+                        CcEvent::new(event_header, None),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Some(map)
+}
+
+pub fn verify_event_log(event_log: &[u8], report: &[u8]) -> Result<()> {
+    replay_event_log_with_report(event_log, report)
+}
+
+fn replay_event_log_with_report(event_log: &[u8], report: &[u8]) -> Result<()> {
+    let mut rtmrs: [[u8; 96]; 4] = [[0; 96]; 4];
+
+    let event_log = if let Some(event_log) = CcEventLogReader::new(event_log) {
+        event_log
+    } else {
+        return Err(anyhow!("Invalid event log"));
+    };
+
+    for (event_header, _) in event_log.cc_events {
+        let rtmr_index = match event_header.mr_index {
+            0 => 0xFF,
+            1..=4 => event_header.mr_index - 1,
+            _ => 0xFF,
+        } as usize;
+
+        if rtmr_index <= MAX_RTMR_INDEX {
+            rtmrs[rtmr_index][48..].copy_from_slice(&event_header.digest.digests[0].digest.sha384);
+            if let Ok(digest) = digest_sha384(&rtmrs[rtmr_index]) {
+                rtmrs[rtmr_index][0..48].copy_from_slice(&digest);
+            } else {
+                return Err(anyhow!("Calculate digest"));
+            }
+        } else {
+            return Err(anyhow!("Invalid event log"));
+        }
+    }
+
+    if report.len() < REPORT_DATA_SIZE {
+        return Err(anyhow!("Invalid report"));
+    }
+
+    if report[Report::R_MIGTD_RTMR0] == rtmrs[0][0..48]
+        && report[Report::R_MIGTD_RTMR1] == rtmrs[1][0..48]
+        && report[Report::R_MIGTD_RTMR2] == rtmrs[2][0..48]
+        && report[Report::R_MIGTD_RTMR3] == rtmrs[3][0..48]
+    {
+        Ok(())
+    } else {
+        //In AzCVMEmu mode, RTMR extension is emulated (no-op), RTMR in MigTD QUOTE won't match eventlog.
+        //Return OK in this development environment.
+        #[cfg(feature = "AzCVMEmu")]
+        {
+            Ok(())
+        }
+        #[cfg(not(feature = "AzCVMEmu"))]
+        Err(anyhow!("Invalid event log"))
+    }
 }
