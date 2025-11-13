@@ -16,7 +16,7 @@ log = { version = "0.4", default-features = false }
 
 # Azure CVM specific dependencies
 az-tdx-vtpm = { version = "0.7", git = "https://github.com/kinvolk/azure-cvm-tooling", package = "az-tdx-vtpm", default-features = false, features = ["attester"] }
-zerocopy = { version = "0.7", default-features = false }
+zerocopy = { version = "0.7", features = ["derive"] }
 
 # For compatibility with original tdx-tdcall interface
 bitflags = "2.0"

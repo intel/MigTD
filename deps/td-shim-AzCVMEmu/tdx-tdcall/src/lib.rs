@@ -29,6 +29,9 @@ pub mod tdx_emu;
 // Our emulated tdreport module
 pub mod tdreport_emu;
 
+// VMM-side logging emulation
+pub mod logging_emu;
+
 // Hardcoded collateral data for AzCVMEmu mode
 mod collateral_data;
 
@@ -120,8 +123,24 @@ pub mod tdreport {
 // Add td_call emulation support
 pub fn td_call(args: &mut TdcallArgs) -> u64 {
     const TDVMCALL_SYS_RD: u64 = 0x0000b;
+    const TDVMCALL_TDINFO: u64 = 0x00001;
 
     match args.rax {
+        0x00001 => {
+            // TDINFO - return TD information
+            // Detect actual number of CPUs available to the process
+            let num_cpus = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1); // Default to 1 if detection fails
+
+            log::info!("TDINFO emulation: detected {} CPUs", num_cpus);
+
+            args.r8 = num_cpus as u64; // num_vcpus
+            args.r9 = num_cpus as u64; // max_vcpus
+            args.r10 = 0; // vcpu_index - not used in emulation
+            args.r11 = 0; // reserved
+            0 // Success
+        }
         TDVMCALL_SYS_RD => {
             match crate::tdx_emu::tdcall_sys_rd(args.rcx) {
                 Ok((rdx, r8)) => {

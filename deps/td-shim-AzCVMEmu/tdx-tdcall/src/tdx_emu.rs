@@ -39,7 +39,7 @@ lazy_static! {
     /// Connected TCP stream for data exchange
     static ref TCP_STREAM: Mutex<Option<TcpStream>> = Mutex::new(None);
     /// Emulated pending migration request info for waitforrequest
-    static ref MIG_REQUEST: Mutex<Option<EmuMigRequest>> = Mutex::new(None);
+    static ref MIG_REQUEST: Mutex<Vec<EmuMigRequest>> = Mutex::new(Vec::new());
     /// Emulated MSK/TDCS field storage keyed by (binding_handle, target_uuid, field_identifier)
     static ref MSK_FIELDS: Mutex<HashMap<(u64, [u64;4], u64), u64>> = Mutex::new(HashMap::new());
     /// Emulated global-scope SYS fields keyed by field_identifier
@@ -82,16 +82,40 @@ impl Default for EmuMigRequest {
 
 /// Seed the emulation layer with a pending migration request returned by waitforrequest
 pub fn set_emulated_mig_request(req: EmuMigRequest) {
-    *MIG_REQUEST.lock() = Some(req);
+    MIG_REQUEST.lock().push(req);
 }
 
-/// Helper: Set a StartMigration request
+/// Helper: Set a complete migration flow with EnableLogArea, GetReportData, and StartMigration
+/// Automatically queues all three requests in sequence
+/// Uses request_id for migration, request_id | 0x8000_0000_0000_0000 for EnableLogArea,
+/// and request_id | 0x4000_0000_0000_0000 for GetReportData
 pub fn set_emulated_start_migration(
     request_id: u64,
     migration_source: u8,
     target_td_uuid: [u64; 4],
     binding_handle: u64,
 ) {
+    // Use different bit markers to distinguish each request type
+    let enable_log_request_id = request_id | 0x8000_0000_0000_0000; // High bit for EnableLogArea
+    let get_report_request_id = request_id | 0x4000_0000_0000_0000; // Second-high bit for GetReportData
+
+    // Step 1: Queue EnableLogArea with Info level (3)
+    set_emulated_mig_request(EmuMigRequest::EnableLogArea {
+        request_id: enable_log_request_id,
+        log_max_level: 3,
+    });
+
+    // Step 2: Queue GetReportData with default reportdata
+    let mut reportdata = [0u8; 64];
+    reportdata[0..8].copy_from_slice(&request_id.to_le_bytes());
+    reportdata[8..23].copy_from_slice(b"MIGTD_MIGRATION"); // 15 bytes
+    reportdata[23] = 0; // Null terminator
+    set_emulated_mig_request(EmuMigRequest::GetReportData {
+        request_id: get_report_request_id,
+        reportdata,
+    });
+
+    // Step 3: Queue the StartMigration request with original request_id
     set_emulated_mig_request(EmuMigRequest::StartMigration {
         request_id,
         migration_source,
@@ -101,7 +125,19 @@ pub fn set_emulated_start_migration(
 }
 
 /// Helper: Set a GetReportData request
+/// Automatically queues EnableLogArea request first, then the report request
+/// Uses request_id for report, and request_id | 0x8000_0000_0000_0000 for EnableLogArea
 pub fn set_emulated_get_report_data(request_id: u64, reportdata: [u8; 64]) {
+    // Use high-bit set for EnableLogArea to distinguish from main request
+    let enable_log_request_id = request_id | 0x8000_0000_0000_0000;
+
+    // First, queue EnableLogArea with Info level (3) and distinct request_id
+    set_emulated_mig_request(EmuMigRequest::EnableLogArea {
+        request_id: enable_log_request_id,
+        log_max_level: 3,
+    });
+
+    // Then queue the GetReportData request with original request_id
     set_emulated_mig_request(EmuMigRequest::GetReportData {
         request_id,
         reportdata,
@@ -128,6 +164,9 @@ pub fn init_tcp_emulation_with_mode(
     if ip.is_empty() {
         return Err("IP address cannot be empty");
     }
+
+    // Initialize VMM-side log area manager
+    crate::logging_emu::init_log_area_manager();
 
     // Set the TCP configuration
     {
@@ -356,6 +395,9 @@ pub fn tdvmcall_migtd_send_sync(
     // Update buffer to indicate success (status = 1, no payload response for send)
     format_ghci_buffer(data_buffer, 1, &[]);
 
+    // Read log entries from log area (VMM side behavior)
+    crate::logging_emu::read_log_entries();
+
     // Trigger the registered interrupt callback to emulate VMM signaling
     intr::trigger(interrupt);
     Ok(())
@@ -381,6 +423,9 @@ pub fn tdvmcall_migtd_receive_sync(
 
     format_ghci_buffer(data_buffer, 1, &received_payload);
 
+    // Read log entries from log area (VMM side behavior)
+    crate::logging_emu::read_log_entries();
+
     intr::trigger(interrupt);
     Ok(())
 }
@@ -402,10 +447,14 @@ pub fn tdvmcall_migtd_waitforrequest(
     const REPORT_DATA_PAYLOAD_LEN: usize = 72; // ReportInfo size (8 + 64)
     const ENABLE_LOG_AREA_PAYLOAD_LEN: usize = 16; // EnableLogAreaInfo size (8 + 1 + 7 reserved)
 
-    // Take the emulated request info; if none, do not signal and let caller poll again
+    // Take the first emulated request from the queue; if none, do not signal and let caller poll again
     let maybe_req = {
         let mut g = MIG_REQUEST.lock();
-        g.take()
+        if g.is_empty() {
+            None
+        } else {
+            Some(g.remove(0))
+        }
     };
 
     if let Some(req) = maybe_req {
@@ -581,22 +630,84 @@ pub fn tdvmcall_migtd_reportstatus(
             &payload_copy[0..display_len]
         );
 
-        // If it looks like a TD report (1024 bytes), show some key fields
-        if payload_copy.len() >= 1024 {
-            log::info!("tdvmcall_migtd_reportstatus: TD report detected (1024 bytes)");
-            // Report type is at offset 0
-            log::info!("  Report type: 0x{:02x}", payload_copy[0]);
-            // Report data is at offset 112 (after MAC)
-            if payload_copy.len() >= 176 {
-                log::info!(
-                    "  Report data (first 32 bytes): {:02x?}",
-                    &payload_copy[112..144]
+        // Check if this is EnableLogArea response by examining the request_id
+        // EnableLogArea uses high bit set (0x8000_0000_0000_0000) as a marker
+        if (mig_request_id & 0x8000_0000_0000_0000) != 0 {
+            // This is an EnableLogArea response
+            log::info!(
+                "tdvmcall_migtd_reportstatus: EnableLogArea response detected (request_id has high bit set)"
+            );
+            if pre_migration_status == 0 && payload_copy.len() >= 8 {
+                // Status 0 = success, validate payload format
+                let num_vcpus = u32::from_le_bytes(payload_copy[0..4].try_into().unwrap());
+                let expected_len = 8 + (num_vcpus as usize * 16);
+                if payload_copy.len() >= expected_len {
+                    log::info!(
+                        "tdvmcall_migtd_reportstatus: EnableLogArea payload valid ({} vCPUs)",
+                        num_vcpus
+                    );
+                    // Initialize VMM-side log area manager with the buffer addresses
+                    crate::logging_emu::enable_log_area(&payload_copy);
+                } else {
+                    log::warn!(
+                        "tdvmcall_migtd_reportstatus: EnableLogArea payload size mismatch (expected {}, got {})",
+                        expected_len,
+                        payload_copy.len()
+                    );
+                }
+            } else if pre_migration_status != 0 {
+                log::warn!(
+                    "tdvmcall_migtd_reportstatus: EnableLogArea failed with status {}",
+                    pre_migration_status
                 );
+            }
+        } else if (mig_request_id & 0x4000_0000_0000_0000) != 0 {
+            // This is a GetReportData response (second-high bit set)
+            log::info!(
+                "tdvmcall_migtd_reportstatus: GetReportData response detected (request_id has second-high bit set)"
+            );
+
+            // If it looks like a TD report (1024 bytes), show some key fields
+            if payload_copy.len() >= 1024 {
+                log::info!("tdvmcall_migtd_reportstatus: TD report detected (1024 bytes)");
+                // Report type is at offset 0
+                log::info!("  Report type: 0x{:02x}", payload_copy[0]);
+                // Report data is at offset 112 (after MAC)
+                if payload_copy.len() >= 176 {
+                    log::info!(
+                        "  Report data (first 32 bytes): {:02x?}",
+                        &payload_copy[112..144]
+                    );
+                }
+            }
+        } else {
+            // This is a migration or report request response (high bit not set)
+            log::info!(
+                "tdvmcall_migtd_reportstatus: Migration/Report request response (request_id={})",
+                mig_request_id
+            );
+
+            // If it looks like a TD report (1024 bytes), show some key fields
+            if payload_copy.len() >= 1024 {
+                log::info!("tdvmcall_migtd_reportstatus: TD report detected (1024 bytes)");
+                // Report type is at offset 0
+                log::info!("  Report type: 0x{:02x}", payload_copy[0]);
+                // Report data is at offset 112 (after MAC)
+                if payload_copy.len() >= 176 {
+                    log::info!(
+                        "  Report data (first 32 bytes): {:02x?}",
+                        &payload_copy[112..144]
+                    );
+                }
             }
         }
     } else {
         log::info!("tdvmcall_migtd_reportstatus: no payload data (empty response)");
     }
+
+    // Read log entries from log area (VMM side behavior)
+    // This is triggered on every report_status call
+    crate::logging_emu::read_log_entries();
 
     // For now, we'll simulate a successful status report
     // In a real implementation, this could send status over TCP if needed
