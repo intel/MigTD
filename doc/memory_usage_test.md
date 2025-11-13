@@ -265,9 +265,26 @@ max heap usage: 190585
 
 ### Current SPDM attestation memory data
 
-Current test result for spdm attestation are captured by destination migtd with policy v2 configuration.
+Current test result for spdm attestation are determined by destination migtd with policy v2 configuration.
 
 ```bash
-Stack Size = 0x2A_0000
-Heap Size = 0xB_0000 + 0x12_0000 * session_num
+Stack Size = 0x16_0000
+Heap Size = 0x12_0000 + 0x5_0000 * session_num
 ```
+
+Per session heap using mainly are about 0x2_8000 spdm context data, and 0x2_0000 remote policy data.
+
+The proposed memory consumption equations after adding buffers for worst case are
+
+```bash
+Stack Size = 0x20_0000
+Heap Size = 0x10_0000 + 0x8_0000 * session_num
+```
+
+We cannot test shared memory consumption with vsock since the shared memory are allocated in device layer for data sending and receiving whem vmcall is used, while vsock doesn't support multi links at same time. Thus, this readme provides an deductive equation to config shared memory:
+
+```bash
+Shared Memory Size = 0x4_0000 + 0x2_0000 * session_num
+```
+
+where 0x2_0000 is the max buffer size that allocated in shared memory for vmcall, current data determined by the size of v2 policy sent by vmcall-raw transport.
