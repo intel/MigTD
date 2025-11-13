@@ -43,7 +43,7 @@ pub extern "C" fn main() {
     {
         use migtd::STACK_SIZE;
 
-        td_benchmark::StackProfiling::init(0x5a5a_5a5a_5a5a_5a5a, STACK_SIZE - 0x100000);
+        td_benchmark::StackProfiling::init(0x5a5a_5a5a_5a5a_5a5a, STACK_SIZE - 0x40000);
     }
     runtime_main()
 }
