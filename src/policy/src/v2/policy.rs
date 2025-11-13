@@ -306,13 +306,14 @@ impl TcbPolicy {
         relative_reference: &PolicyEvaluationInfo,
     ) -> Result<(), PolicyError> {
         if let Some(property) = &self.tcb_evaluation_data_number {
-            if let Some(tcb_evaluation_number) = value.tcb_evaluation_number {
-                if !property.evaluate_integer(
-                    tcb_evaluation_number,
-                    relative_reference.tcb_evaluation_number,
-                )? {
-                    return Err(PolicyError::TcbEvaluation);
-                }
+            let tcb_evaluation_number = value
+                .tcb_evaluation_number
+                .ok_or(PolicyError::TcbEvaluation)?;
+            if !property.evaluate_integer(
+                tcb_evaluation_number,
+                relative_reference.tcb_evaluation_number,
+            )? {
+                return Err(PolicyError::TcbEvaluation);
             }
         }
 
@@ -356,14 +357,13 @@ impl PlatformPolicy {
         relative_reference: &PolicyEvaluationInfo,
     ) -> Result<(), PolicyError> {
         if let Some(property) = &self.fmspc {
-            if let Some(fmspc) = value.fmspc.as_ref() {
-                let relative = relative_reference
-                    .fmspc
-                    .as_ref()
-                    .map(|s| bytes_to_hex_string(s));
-                if !property.evaluate_string(&bytes_to_hex_string(fmspc), relative.as_deref())? {
-                    return Err(PolicyError::TcbEvaluation);
-                }
+            let fmspc = value.fmspc.as_ref().ok_or(PolicyError::TcbEvaluation)?;
+            let relative = relative_reference
+                .fmspc
+                .as_ref()
+                .map(|s| bytes_to_hex_string(s));
+            if !property.evaluate_string(&bytes_to_hex_string(fmspc), relative.as_deref())? {
+                return Err(PolicyError::TcbEvaluation);
             }
         }
 
