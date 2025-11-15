@@ -14,23 +14,11 @@ mod v2;
 #[cfg(feature = "policy_v2")]
 pub use v2::*;
 
-use core::{convert::TryInto, ops::Range};
-
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use cc_measurement::{
-    log::CcEventLogReader, CcEventHeader, EV_EFI_PLATFORM_FIRMWARE_BLOB2, EV_PLATFORM_CONFIG_FLAGS,
-};
-use crypto::hash::digest_sha384;
-use td_shim::event_log::{
-    PLATFORM_CONFIG_SECURE_AUTHORITY, PLATFORM_CONFIG_SVN, PLATFORM_FIRMWARE_BLOB2_PAYLOAD,
-};
+use cc_measurement::CcEventHeader;
+use core::ops::Range;
 
 pub const REPORT_DATA_SIZE: usize = 774;
-const MAX_RTMR_INDEX: usize = 3;
-const EV_EVENT_TAG: u32 = 0x00000006;
-const TAGGED_EVENT_ID_POLICY: u32 = 0x1;
-const TAGGED_EVENT_ID_ROOT_CA: u32 = 0x2;
-const TAGGED_EVENT_ID_POLICY_SIGNER: u32 = 0x3;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -80,10 +68,10 @@ impl<'a> Report<'a> {
     const R_MIGTD_MRCONFIGID: Range<usize> = 184..232;
     const R_MIGTD_MROWNER: Range<usize> = 232..280;
     const R_MIGTD_MROWNERCONFIG: Range<usize> = 280..328;
-    const R_MIGTD_RTMR0: Range<usize> = 328..376;
-    const R_MIGTD_RTMR1: Range<usize> = 376..424;
-    const R_MIGTD_RTMR2: Range<usize> = 424..472;
-    const R_MIGTD_RTMR3: Range<usize> = 472..520;
+    pub const R_MIGTD_RTMR0: Range<usize> = 328..376;
+    pub const R_MIGTD_RTMR1: Range<usize> = 376..424;
+    pub const R_MIGTD_RTMR2: Range<usize> = 424..472;
+    pub const R_MIGTD_RTMR3: Range<usize> = 472..520;
     const R_PLATFORM_FMSPC: Range<usize> = 584..590;
     const R_PLATFORM_TDX_TCB_COMPONENTS: Range<usize> = 590..606;
     const R_PLATFORM_PCE_SVN: Range<usize> = 606..608;
@@ -205,10 +193,7 @@ impl<'a> Report<'a> {
             .copied()
     }
 
-    pub(crate) fn get_migtd_info_property(
-        &self,
-        name: &MigTdInfoProperty,
-    ) -> Result<&[u8], PolicyError> {
+    pub fn get_migtd_info_property(&self, name: &MigTdInfoProperty) -> Result<&[u8], PolicyError> {
         self.migtd_info
             .get(name)
             .ok_or(PolicyError::InvalidParameter)
@@ -285,7 +270,7 @@ impl From<&str> for TdxModuleInfoProperty {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum MigTdInfoProperty {
+pub enum MigTdInfoProperty {
     Attributes,
     Xfam,
     MrTd,
@@ -317,7 +302,7 @@ impl From<&str> for MigTdInfoProperty {
     }
 }
 
-pub(crate) struct CcEvent {
+pub struct CcEvent {
     header: CcEventHeader,
     data: Option<Vec<u8>>,
 }
@@ -329,7 +314,7 @@ impl CcEvent {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum EventName {
+pub enum EventName {
     TdShim,
     SecureBootKey,
     MigTdCore,
@@ -351,110 +336,5 @@ impl From<&str> for EventName {
             "Digest.MigTdSgxRootKey" => Self::SgxRootKey,
             _ => Self::Unknown,
         }
-    }
-}
-
-pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEvent>> {
-    let mut map: BTreeMap<EventName, CcEvent> = BTreeMap::new();
-    let reader = CcEventLogReader::new(event_log)?;
-
-    for (event_header, event_data) in reader.cc_events {
-        match event_header.event_type {
-            EV_EFI_PLATFORM_FIRMWARE_BLOB2 => {
-                let desc_size = event_data[0] as usize;
-                if &event_data[1..1 + desc_size] == PLATFORM_FIRMWARE_BLOB2_PAYLOAD {
-                    map.insert(EventName::MigTdCore, CcEvent::new(event_header, None));
-                }
-            }
-            EV_PLATFORM_CONFIG_FLAGS => {
-                if event_data.starts_with(PLATFORM_CONFIG_SECURE_AUTHORITY) {
-                    map.insert(EventName::SecureBootKey, CcEvent::new(event_header, None));
-                } else if event_data.starts_with(PLATFORM_CONFIG_SVN) {
-                    if event_data.len() < 20 {
-                        return None;
-                    }
-                    let info_size: usize =
-                        u32::from_le_bytes(event_data[16..20].try_into().unwrap()) as usize;
-                    if event_data.len() < 20 + info_size {
-                        return None;
-                    }
-                    map.insert(
-                        EventName::MigTdCoreSvn,
-                        CcEvent::new(event_header, Some(event_data[20..20 + info_size].to_vec())),
-                    );
-                }
-            }
-            EV_EVENT_TAG => {
-                let tag_id = u32::from_le_bytes(event_data[..4].try_into().ok()?);
-                if tag_id == TAGGED_EVENT_ID_POLICY {
-                    map.insert(EventName::MigTdPolicy, CcEvent::new(event_header, None));
-                } else if tag_id == TAGGED_EVENT_ID_ROOT_CA {
-                    map.insert(EventName::SgxRootKey, CcEvent::new(event_header, None));
-                } else if tag_id == TAGGED_EVENT_ID_POLICY_SIGNER {
-                    map.insert(
-                        EventName::MigTdPolicySigner,
-                        CcEvent::new(event_header, None),
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Some(map)
-}
-
-pub fn verify_event_log<'a>(event_log: &[u8], report: &'a [u8]) -> Result<Report<'a>, PolicyError> {
-    let report_values = Report::new(report).map_err(|_| PolicyError::InvalidParameter)?;
-    replay_event_log_with_report_values(event_log, &report_values)?;
-    Ok(report_values)
-}
-
-pub(crate) fn replay_event_log_with_report_values(
-    event_log: &[u8],
-    report: &Report,
-) -> Result<(), PolicyError> {
-    let mut rtmrs: [[u8; 96]; 4] = [[0; 96]; 4];
-
-    let event_log = if let Some(event_log) = CcEventLogReader::new(event_log) {
-        event_log
-    } else {
-        return Err(PolicyError::InvalidEventLog);
-    };
-
-    for (event_header, _) in event_log.cc_events {
-        let rtmr_index = match event_header.mr_index {
-            0 => 0xFF,
-            1..=4 => event_header.mr_index - 1,
-            _ => 0xFF,
-        } as usize;
-
-        if rtmr_index <= MAX_RTMR_INDEX {
-            rtmrs[rtmr_index][48..].copy_from_slice(&event_header.digest.digests[0].digest.sha384);
-            if let Ok(digest) = digest_sha384(&rtmrs[rtmr_index]) {
-                rtmrs[rtmr_index][0..48].copy_from_slice(&digest);
-            } else {
-                return Err(PolicyError::Crypto);
-            }
-        } else {
-            return Err(PolicyError::InvalidEventLog);
-        }
-    }
-
-    if report.get_migtd_info_property(&MigTdInfoProperty::Rtmr0)? == &rtmrs[0][0..48]
-        && report.get_migtd_info_property(&MigTdInfoProperty::Rtmr1)? == &rtmrs[1][0..48]
-        && report.get_migtd_info_property(&MigTdInfoProperty::Rtmr2)? == &rtmrs[2][0..48]
-        && report.get_migtd_info_property(&MigTdInfoProperty::Rtmr3)? == &rtmrs[3][0..48]
-    {
-        Ok(())
-    } else {
-        //In AzCVMEmu mode, RTMR extension is emulated (no-op), RTMR in MigTD QUOTE won't match eventlog.
-        //Return OK in this development environment.
-        #[cfg(feature = "AzCVMEmu")]
-        {
-            Ok(())
-        }
-        #[cfg(not(feature = "AzCVMEmu"))]
-        Err(PolicyError::InvalidEventLog)
     }
 }
