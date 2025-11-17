@@ -18,8 +18,7 @@ use codec::Reader;
 use codec::Writer;
 use core::time::Duration;
 use spdmlib::common::SpdmDeviceIo;
-use spdmlib::error::SpdmResult;
-use spdmlib::error::SPDM_STATUS_SEND_FAIL;
+use spdmlib::error::*;
 use spin::Mutex;
 use zeroize::Zeroize;
 use zeroize::ZeroizeOnDrop;
@@ -206,5 +205,38 @@ impl Codec for SpdmAppContextData {
             migration_info,
             private_key,
         })
+    }
+}
+
+impl From<SpdmStatus> for MigrationResult {
+    fn from(spdm_status: SpdmStatus) -> Self {
+        if spdm_status.severity == StatusSeverity::SUCCESS {
+            MigrationResult::Success
+        } else if let StatusCode::VDM(vdm_error) = &spdm_status.status_code {
+            MigrationResult::try_from(vdm_error.vdm_error_code as u8)
+                .unwrap_or(MigrationResult::SecureSessionError)
+        } else {
+            MigrationResult::SecureSessionError
+        }
+    }
+}
+
+impl From<MigrationResult> for SpdmStatus {
+    fn from(mig_result: MigrationResult) -> Self {
+        if mig_result == MigrationResult::Success {
+            SpdmStatus {
+                severity: StatusSeverity::SUCCESS,
+                status_code: StatusCode::SUCCESS,
+                error_data: None,
+            }
+        } else {
+            SpdmStatus {
+                severity: StatusSeverity::ERROR,
+                status_code: StatusCode::VDM(StatusCodeVdmError {
+                    vdm_error_code: mig_result as u16,
+                }),
+                error_data: None,
+            }
+        }
     }
 }

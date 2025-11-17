@@ -4,7 +4,7 @@
 
 #[cfg(feature = "vmcall-raw")]
 use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
-#[cfg(any(feature = "policy_v2", feature = "spdm_attestation"))]
+#[cfg(feature = "policy_v2")]
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 #[cfg(feature = "policy_v2")]
@@ -75,26 +75,6 @@ pub enum DataStatusOperation {
     StartMigration = 1,
     GetReportData = 3,
     EnableLogArea = 4,
-}
-
-#[cfg(feature = "vmcall-raw")]
-fn u8_to_migration_result(value: u8) -> Option<MigrationResult> {
-    match value {
-        0 => Some(MigrationResult::Success),
-        1 => Some(MigrationResult::InvalidParameter),
-        2 => Some(MigrationResult::Unsupported),
-        3 => Some(MigrationResult::OutOfResource),
-        4 => Some(MigrationResult::TdxModuleError),
-        5 => Some(MigrationResult::NetworkError),
-        6 => Some(MigrationResult::SecureSessionError),
-        7 => Some(MigrationResult::MutualAttestationError),
-        8 => Some(MigrationResult::PolicyUnsatisfiedError),
-        9 => Some(MigrationResult::InvalidPolicyError),
-        10 => Some(MigrationResult::VmmCanceled),
-        11 => Some(MigrationResult::VmmInternalError),
-        12 => Some(MigrationResult::UnsupportedOperationError),
-        _ => None, // Handle cases where the u8 doesn't map to a valid Level
-    }
 }
 
 #[cfg(feature = "vmcall-raw")]
@@ -528,7 +508,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
     let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
     let mut data_buffer = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
 
-    if let Some(value) = u8_to_migration_result(status) {
+    if let Ok(value) = MigrationResult::try_from(status) {
         if value != MigrationResult::Success {
             reportstatus = reportstatus
                 .with_pre_migration_status(1)
@@ -956,8 +936,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 remote_policy,
             ),
         )
-        .await?
-        .map_err(|_| MigrationResult::MutualAttestationError)?;
+        .await??;
         log::info!("MSK exchange completed\n");
     } else {
         let mut spdm_responder =
@@ -972,8 +951,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 remote_policy,
             ),
         )
-        .await?
-        .map_err(|_| MigrationResult::MutualAttestationError)?;
+        .await??;
         log::info!("MSK exchange completed\n");
     }
 

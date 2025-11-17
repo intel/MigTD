@@ -260,7 +260,7 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
         let used = writer.used();
         return (
-            Err(SPDM_STATUS_INVALID_STATE_LOCAL),
+            Err(vdm_payload_size.err().unwrap()),
             Some(&rsp_bytes[..used]),
         );
     };

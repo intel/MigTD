@@ -5,7 +5,6 @@
 use crate::mig_policy;
 use crate::{
     config::get_policy,
-    driver::ticks::with_timeout,
     event_log::get_event_log,
     migration::{
         data::MigrationSessionKey,
@@ -173,8 +172,27 @@ pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result
             //Terminate the responder upon end_session received.
             break;
         }
-        if res.is_err() {
-            return Err(SPDM_STATUS_RECEIVE_FAIL);
+
+        match res {
+            Ok(spdm_result) => {
+                match spdm_result {
+                    Ok(_) => {}
+                    Err(spdm_status) => {
+                        if spdm_status.severity == StatusSeverity::ERROR
+                            && matches!(spdm_status.status_code, StatusCode::VDM(_))
+                        {
+                            return Err(spdm_status);
+                        }
+                        if spdm_status == SPDM_STATUS_INVALID_STATE_LOCAL {
+                            //Terminate the responder upon invalid state.
+                            return Err(spdm_status);
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                return Err(SPDM_STATUS_RECEIVE_FAIL);
+            }
         }
     }
     Ok(())
@@ -400,8 +418,7 @@ pub fn handle_exchange_mig_attest_info_req(
         .copy_from_slice(&th1.data[..th1_len]);
 
     //quote dst
-    let quote_dst = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let quote_dst = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])?;
 
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     let res = attestation::verify_quote(quote_dst.as_slice());
@@ -691,18 +708,14 @@ pub fn handle_exchange_mig_info_req(
     let mut reader = Reader::init(responder_context.common.app_context_data_buffer.as_ref());
     let responder_app_context =
         SpdmAppContextData::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let mut exchange_information = exchange_info(&responder_app_context.migration_info, false)
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let mut exchange_information = exchange_info(&responder_app_context.migration_info, false)?;
 
-    let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    set_mig_version(&responder_app_context.migration_info, mig_ver)
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)?;
+    set_mig_version(&responder_app_context.migration_info, mig_ver)?;
     write_msk(
         &responder_app_context.migration_info,
         &remote_information.key,
-    )
-    .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    )?;
     log::info!("Set MSK and report status\n");
     exchange_information.key.clear();
     remote_information.key.clear();
