@@ -3,18 +3,24 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use clap::Parser;
-use migtd_collateral_generator::{generate_collaterals, IntelPcsConfig};
+use migtd_collateral_generator::{generate_collaterals, AzureThimConfig, IntelPcsConfig};
 use std::{path::PathBuf, process::exit};
 
 #[derive(Debug, Clone, Parser)]
 struct Config {
-    /// Service provider: "intel" (default) or other
+    /// Service provider: "intel" (default) or "azure-thim"
     #[clap(long, default_value = "intel")]
     provider: String,
 
-    /// Set to use pre-production server.
+    /// Set to use pre-production server. Only applies to Intel PCS provider.
+    /// Azure THIM always uses production. Production server is used by default.
     #[clap(long)]
     pre_production: bool,
+
+    /// Azure region for THIM service.
+    /// Only applies when provider is "azure-thim". Default: "useast"
+    #[clap(long, default_value = "useast")]
+    azure_region: String,
 
     /// Where to write the generated collaterals
     #[clap(long, short)]
@@ -27,6 +33,10 @@ fn main() {
     let result = match config.provider.to_lowercase().as_str() {
         "intel" => {
             let pcs_config = IntelPcsConfig::new(!config.pre_production);
+            generate_collaterals(&pcs_config, &config.output)
+        }
+        "azure-thim" | "azure" | "thim" => {
+            let pcs_config = AzureThimConfig::new(&config.azure_region);
             generate_collaterals(&pcs_config, &config.output)
         }
         _ => {
