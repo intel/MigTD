@@ -173,6 +173,29 @@ pub enum MigrationResult {
     UnsupportedOperationError = 12,
 }
 
+impl TryFrom<u8> for MigrationResult {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(MigrationResult::Success),
+            1 => Ok(MigrationResult::InvalidParameter),
+            2 => Ok(MigrationResult::Unsupported),
+            3 => Ok(MigrationResult::OutOfResource),
+            4 => Ok(MigrationResult::TdxModuleError),
+            5 => Ok(MigrationResult::NetworkError),
+            6 => Ok(MigrationResult::SecureSessionError),
+            7 => Ok(MigrationResult::MutualAttestationError),
+            8 => Ok(MigrationResult::PolicyUnsatisfiedError),
+            9 => Ok(MigrationResult::InvalidPolicyError),
+            10 => Ok(MigrationResult::VmmCanceled),
+            11 => Ok(MigrationResult::VmmInternalError),
+            12 => Ok(MigrationResult::UnsupportedOperationError),
+            _ => Err(()),
+        }
+    }
+}
+
 #[cfg(any(feature = "virtio-vsock", feature = "vmcall-vsock"))]
 impl From<VsockError> for MigrationResult {
     fn from(_: VsockError) -> Self {

@@ -27,8 +27,7 @@ use alloc::sync::Arc;
 use log::error;
 
 use crate::{
-    config::get_policy, driver::ticks::with_timeout, event_log::get_event_log,
-    migration::session::ExchangeInformation,
+    config::get_policy, event_log::get_event_log, migration::session::ExchangeInformation,
 };
 
 pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(
@@ -345,8 +344,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         .copy_from_slice(&th1.data[..th1_len]);
 
     //quote src
-    let quote_src = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let quote_src = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])?;
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     let res = attestation::verify_quote(quote_src.as_slice());
     //  The session MUST be terminated immediately, if the mutual attestation failure
@@ -622,8 +620,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
     vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
     let vendor_id = VendorIDStruct { len: 4, vendor_id };
 
-    let mut exchange_information =
-        exchange_info(mig_info, false).map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let mut exchange_information = exchange_info(mig_info, false)?;
 
     let mut payload = [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);
@@ -780,10 +777,9 @@ async fn send_and_receive_sdm_exchange_migration_info(
         },
     };
 
-    let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    set_mig_version(mig_info, mig_ver).map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    write_msk(mig_info, &remote_information.key).map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)?;
+    set_mig_version(mig_info, mig_ver)?;
+    write_msk(mig_info, &remote_information.key)?;
     log::info!("Set MSK and report status\n");
     exchange_information.key.clear();
     remote_information.key.clear();

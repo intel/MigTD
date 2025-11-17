@@ -423,6 +423,6 @@ status to the host VMM. Some common error codes and their causes are summarized 
 | 3          | MigTD runs out of memory. |
 | 4          | TDX Module error, mostly caused by mismatched SERVTD_INFO_HASH. |
 | 5          | MigTD fails to establish a communication channel with the host. |
-| 6          | TLS error, common causes include failure to verify the quote sent by the remote MigTD, or the handshake being aborted by the remote MigTD. The handshake is usually aborted by the remote MigTD due to its inability to obtain a quote or failure to meet the remote migration policy, the remote MigTD will report error code 7 or 8 in such cases. |
+| 6          | TLS or SPDM error, common causes include failure to verify the quote sent by the remote MigTD, or the handshake being aborted by the remote MigTD. The handshake is usually aborted by the remote MigTD due to its inability to obtain a quote or failure to meet the remote migration policy, the remote MigTD will report error code 7 or 8 in such cases. |
 | 7          | MigTD is unable to obtain the quote. |
 | 8          | The quote report from the remote MigTD does not meet the requirements of the migration policy. |
