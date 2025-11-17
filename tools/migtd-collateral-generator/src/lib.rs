@@ -83,6 +83,48 @@ impl PcsConfig for IntelPcsConfig {
     }
 }
 
+/// Azure THIM (Trusted Hardware Identity Management) configuration
+///
+/// Azure THIM provides a caching layer for Intel attestation collaterals
+/// but delegates certain requests (FMSPC lists, root CA) back to Intel PCS.
+#[derive(Debug, Clone)]
+pub struct AzureThimConfig {
+    /// Azure region for THIM service
+    region: String,
+    /// Embedded Intel PCS config for fallback operations (always production)
+    intel_config: IntelPcsConfig,
+}
+
+impl AzureThimConfig {
+    /// Create a new Azure THIM configuration for the specified region
+    pub fn new(region: &str) -> Self {
+        Self {
+            region: region.to_string(),
+            intel_config: IntelPcsConfig::new(true), // THIM always uses production Intel endpoints
+        }
+    }
+}
+
+impl PcsConfig for AzureThimConfig {
+    fn get_base_url(&self) -> String {
+        format!("https://{}.thim.azure.net", self.region)
+    }
+
+    fn get_base_url_pck_crl(&self) -> String {
+        format!("https://{}.thim.azure.net", self.region)
+    }
+
+    fn get_base_url_fmspc_list(&self) -> String {
+        // FMSPC lists are always fetched from Intel PCS (Azure THIM doesn't cache them)
+        self.intel_config.get_base_url_fmspc_list()
+    }
+
+    fn get_root_ca_url(&self) -> &'static str {
+        // Root CA is always fetched from Intel (Azure THIM doesn't cache it)
+        self.intel_config.get_root_ca_url()
+    }
+}
+
 /// Generate collaterals using the specified configuration and write to file
 pub fn generate_collaterals(config: &dyn PcsConfig, output_collateral: &PathBuf) -> Result<()> {
     let collaterals = collateral::get_collateral(config)?;

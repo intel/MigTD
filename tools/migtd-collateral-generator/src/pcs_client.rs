@@ -273,6 +273,137 @@ impl Fmspc {
 mod tests {
     use super::*;
 
+    /// Test to check what headers Azure THIM actually returns
+    /// This will help us verify the correct header names for THIM vs Intel PCS
+    ///
+    /// Run with: cargo test test_thim_headers -- --nocapture
+    /// Set AZURE_REGION environment variable or it defaults to "useast"
+    #[test]
+    fn test_thim_headers() {
+        // Get region from environment variable, default to "useast"
+        let region = std::env::var("AZURE_REGION").unwrap_or_else(|_| "useast".to_string());
+
+        println!("=== Testing Azure THIM headers for region: {} ===", region);
+        println!("💡 Tip: Set AZURE_REGION environment variable to test different regions");
+
+        // Test PCK CRL endpoint with both v3 and v4
+        let base_url = format!("https://{}.thim.azure.net", region);
+
+        let mut req_v4 = PcsRequest::new(&base_url, "sgx/certification/v4/pckcrl");
+        req_v4.add_param("ca", "platform");
+        println!("\nTesting PCK CRL endpoint v4: {}", req_v4.as_str());
+        match fetch_data_from_url(req_v4.as_str()) {
+            Ok(response) => {
+                println!("PCK CRL v4 Response code: {}", response.response_code);
+                assert_eq!(
+                    response.response_code, 200,
+                    "PCK CRL v4 should return 200 OK"
+                );
+
+                println!("✅ v4 works for PCK CRL");
+                println!("PCK CRL v4 Headers:");
+
+                let mut found_issuer_chain = false;
+                for (key, value) in &response.header_map {
+                    if key.to_lowercase().contains("issuer") || key.to_lowercase().contains("chain")
+                    {
+                        println!("  {}: {}", key, value);
+                        if key.to_lowercase() == "sgx-pck-crl-issuer-chain" {
+                            found_issuer_chain = true;
+                            assert!(
+                                !value.is_empty(),
+                                "PCK CRL issuer chain should not be empty"
+                            );
+                        }
+                    }
+                }
+                assert!(
+                    found_issuer_chain,
+                    "PCK CRL response should contain sgx-pck-crl-issuer-chain header"
+                );
+            }
+            Err(e) => panic!("PCK CRL v4 request failed: {}", e),
+        }
+
+        // Test QE Identity endpoint
+        let req = PcsRequest::new(&base_url, "tdx/certification/v4/qe/identity");
+        println!("\nTesting QE Identity endpoint: {}", req.as_str());
+        match fetch_data_from_url(req.as_str()) {
+            Ok(response) => {
+                println!("QE Identity Response code: {}", response.response_code);
+                assert_eq!(
+                    response.response_code, 200,
+                    "QE Identity should return 200 OK"
+                );
+
+                println!("QE Identity Headers:");
+                let mut found_issuer_chain = false;
+                for (key, value) in &response.header_map {
+                    if key.to_lowercase().contains("issuer") || key.to_lowercase().contains("chain")
+                    {
+                        println!("  {}: {}", key, value);
+                        if key.to_lowercase() == "sgx-enclave-identity-issuer-chain" {
+                            found_issuer_chain = true;
+                            assert!(
+                                !value.is_empty(),
+                                "QE Identity issuer chain should not be empty"
+                            );
+                        }
+                    }
+                }
+                assert!(
+                    found_issuer_chain,
+                    "QE Identity response should contain sgx-enclave-identity-issuer-chain header"
+                );
+            }
+            Err(e) => panic!("QE Identity request failed: {}", e),
+        }
+
+        // Test TCB info endpoint with a known FMSPC
+        let mut req = PcsRequest::new(&base_url, "tdx/certification/v4/tcb");
+        req.add_param("fmspc", "90C06F000000"); // Common E5 FMSPC
+        println!("\nTesting TCB Info endpoint: {}", req.as_str());
+        match fetch_data_from_url(req.as_str()) {
+            Ok(response) => {
+                println!("TCB Info Response code: {}", response.response_code);
+                // TCB Info might return 404 for some FMSPCs, so we'll allow both 200 and 404
+                assert!(
+                    response.response_code == 200 || response.response_code == 404,
+                    "TCB Info should return 200 OK or 404 Not Found, got: {}",
+                    response.response_code
+                );
+
+                if response.response_code == 200 {
+                    println!("TCB Info Headers:");
+                    let mut found_issuer_chain = false;
+                    for (key, value) in &response.header_map {
+                        if key.to_lowercase().contains("issuer")
+                            || key.to_lowercase().contains("chain")
+                        {
+                            println!("  {}: {}", key, value);
+                            if key.to_lowercase() == "tcb-info-issuer-chain" {
+                                found_issuer_chain = true;
+                                assert!(
+                                    !value.is_empty(),
+                                    "TCB Info issuer chain should not be empty"
+                                );
+                            }
+                        }
+                    }
+                    assert!(
+                        found_issuer_chain,
+                        "TCB Info 200 response should contain tcb-info-issuer-chain header"
+                    );
+                } else {
+                    println!("TCB Info returned 404 (expected for some FMSPCs)");
+                }
+            }
+            Err(e) => panic!("TCB Info request failed: {}", e),
+        }
+
+        println!("✅ All THIM header tests passed!");
+    }
+
     #[test]
     fn test_case_insensitive_header_removal() {
         let mut headers = std::collections::HashMap::new();
