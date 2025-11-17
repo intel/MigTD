@@ -48,8 +48,11 @@ impl Collaterals {
         let root_ca = der_to_pem(&root_ca, "CERTIFICATE");
         let root_ca_crl = der_to_pem(&root_ca_crl, "X509 CRL");
 
-        let pck_crl =
-            String::from_utf8(pck_crl).map_err(|e| anyhow!("Invalid UTF-8 in PCK CRL: {}", e))?;
+        let pck_crl = if !is_pem_format(&pck_crl) {
+            der_to_pem(&pck_crl, "X509 CRL")
+        } else {
+            String::from_utf8(pck_crl).map_err(|e| anyhow!("Invalid UTF-8 in PCK CRL: {}", e))?
+        };
         let qe_identity = String::from_utf8(qe_identity)
             .map_err(|e| anyhow!("Invalid UTF-8 in QE identity: {}", e))?;
 
@@ -80,13 +83,13 @@ impl Collaterals {
     }
 }
 
-pub fn get_collateral(for_production: bool) -> Result<Collaterals> {
-    let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(for_production)?;
+pub fn get_collateral(config: &dyn crate::PcsConfig) -> Result<Collaterals> {
+    let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(config)?;
     let root_ca_crl_url = get_root_ca_crl_url(qe_identity_issuer_chain.as_str())?;
     let root_ca_crl = fetch_data_from_url(&root_ca_crl_url)?.data;
-    let root_ca = fetch_root_ca(for_production)?;
-    let (pck_crl, pck_crl_issuer_chain) = fetch_pck_crl(for_production)?;
-    let platform_tcb_list = get_platform_tcb_list(for_production)?;
+    let root_ca = fetch_root_ca(config)?;
+    let (pck_crl, pck_crl_issuer_chain) = fetch_pck_crl(config)?;
+    let platform_tcb_list = get_platform_tcb_list(config)?;
     let mut collaterals = Collaterals::new(
         root_ca,
         pck_crl_issuer_chain,
@@ -250,4 +253,14 @@ fn base64_encode(input: &[u8]) -> String {
     }
 
     result
+}
+
+// Check if data is in PEM format by looking for PEM header markers
+fn is_pem_format(data: &[u8]) -> bool {
+    if let Ok(s) = std::str::from_utf8(data) {
+        let trimmed = s.trim();
+        trimmed.starts_with("-----BEGIN")
+    } else {
+        false
+    }
 }
