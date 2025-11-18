@@ -1251,6 +1251,8 @@ dependencies = [
  "anyhow",
  "clap",
  "crypto",
+ "env_logger",
+ "log",
  "migtd",
  "serde_json",
  "td-shim-interface",
