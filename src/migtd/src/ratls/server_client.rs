@@ -45,6 +45,7 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
 pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
     let (certs, quote) = gen_cert(&signing_key)?;
@@ -58,7 +59,17 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     let config = TlsConfig::new(certs, signing_key, verify_server_cert, quote)?;
     #[cfg(feature = "policy_v2")]
     let config = TlsConfig::new(certs, signing_key, verify_server_cert, remote_policy)?;
-    config.tls_client(stream).map_err(|e| e.into())
+    config.tls_client(stream).map_err(|e| {
+        #[cfg(feature = "vmcall-raw")]
+        data.extend_from_slice(
+            &format!(
+                "Error: server_client client(): Failure in tls_client() error: {:?}\n",
+                e
+            )
+            .into_bytes(),
+        );
+        e.into()
+    })
 }
 
 fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
