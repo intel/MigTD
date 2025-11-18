@@ -89,6 +89,9 @@ pub struct PolicyEvaluationInfo {
     /// The FMSPC of platform
     pub fmspc: Option<[u8; 6]>,
 
+    /// The isvsvn of the MigTD TCB
+    pub migtd_isvsvn: Option<u16>,
+
     /// The status of the MigTD TCB
     pub migtd_tcb_status: Option<String>,
 
@@ -408,6 +411,18 @@ impl ServtdPolicy {
         value: &PolicyEvaluationInfo,
         relative_reference: &PolicyEvaluationInfo,
     ) -> Result<(), PolicyError> {
+        if let Some(property) = &self.migtd_identity.isvsvn {
+            if !property.evaluate_integer(
+                value
+                    .migtd_isvsvn
+                    .map(|v| v as u32)
+                    .ok_or(PolicyError::UnqualifiedMigTdInfo)?,
+                relative_reference.migtd_isvsvn.map(|v| v as u32),
+            )? {
+                return Err(PolicyError::SvnMismatch);
+            }
+        }
+
         if let Some(property) = &self.migtd_identity.tcb_date {
             if !property.evaluate_string(
                 value
@@ -443,6 +458,7 @@ impl ServtdPolicy {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MigTdIdentityPolicy {
+    pub isvsvn: Option<PolicyProperty>,
     pub tcb_date: Option<PolicyProperty>,
     pub tcb_status_accepted: Option<PolicyProperty>,
 }
@@ -674,6 +690,7 @@ mod test {
             fmspc: Some([0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00]),
             migtd_tcb_status: None,
             migtd_tcb_date: None,
+            migtd_isvsvn: None,
         };
         let relative_ref = PolicyEvaluationInfo::default();
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());

@@ -278,6 +278,7 @@ mod v2 {
             tcb_status: Some(tcb_status.as_str().to_string()),
             tcb_evaluation_number: Some(tcb_evaluation_number),
             fmspc: Some(fmspc),
+            migtd_isvsvn: migtd_svn,
             migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
             migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
         })
