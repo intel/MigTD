@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use core::convert::TryFrom;
+use core::{
+    cmp::Ordering,
+    convert::{TryFrom, TryInto},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{self, value::RawValue};
 
@@ -12,7 +15,7 @@ use crate::{
     CcEvent, Collaterals, EventName, PolicyError, ServtdCollateral, TdIdentity, TdTcbMapping,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TcbStatus {
     UpToDate,
     SWHardeningNeeded,
@@ -35,6 +38,18 @@ impl TcbStatus {
             TcbStatus::Revoked => "Revoked",
         }
     }
+
+    // "UpToDate" == "SWHardeningNeeded" == "OutOfDate" >= "ConfigurationNeeded" ==
+    // "ConfigurationAndSWHardeningNeeded" == "OutOfDateConfigurationNeeded” > "Revoked"
+    fn rank(&self) -> u8 {
+        match self {
+            TcbStatus::UpToDate | TcbStatus::SWHardeningNeeded | TcbStatus::OutOfDate => 2,
+            TcbStatus::ConfigurationNeeded
+            | TcbStatus::ConfigurationAndSWHardeningNeeded
+            | TcbStatus::OutOfDateConfigurationNeeded => 1,
+            TcbStatus::Revoked => 0,
+        }
+    }
 }
 
 impl TryFrom<&str> for TcbStatus {
@@ -50,6 +65,12 @@ impl TryFrom<&str> for TcbStatus {
             "Revoked" => Ok(TcbStatus::Revoked),
             _ => Err(PolicyError::InvalidParameter),
         }
+    }
+}
+
+impl PartialOrd for TcbStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.rank().cmp(&other.rank()))
     }
 }
 
@@ -318,12 +339,16 @@ impl TcbPolicy {
         }
 
         if let Some(tcb_status_policy) = &self.tcb_status_accepted {
-            if !tcb_status_policy.evaluate_string(
+            if !tcb_status_policy.evaluate_tcb_status(
                 value
                     .tcb_status
                     .as_deref()
+                    .and_then(|s| s.try_into().ok())
                     .ok_or(PolicyError::TcbEvaluation)?,
-                relative_reference.tcb_status.as_deref(),
+                relative_reference
+                    .tcb_status
+                    .as_deref()
+                    .and_then(|s| s.try_into().ok()),
             )? {
                 return Err(PolicyError::TcbEvaluation);
             }
@@ -396,12 +421,16 @@ impl ServtdPolicy {
         }
 
         if let Some(property) = &self.migtd_identity.tcb_status_accepted {
-            if !property.evaluate_string(
+            if !property.evaluate_tcb_status(
                 value
                     .migtd_tcb_status
                     .as_deref()
+                    .and_then(|s| s.try_into().ok())
                     .ok_or(PolicyError::UnqualifiedMigTdInfo)?,
-                relative_reference.migtd_tcb_status.as_deref(),
+                relative_reference
+                    .migtd_tcb_status
+                    .as_deref()
+                    .and_then(|s| s.try_into().ok()),
             )? {
                 return Err(PolicyError::SvnMismatch);
             }
@@ -575,6 +604,43 @@ impl PolicyProperty {
             _ => Err(PolicyError::InvalidReference),
         }
     }
+
+    /// Evaluate a TcbStatus property against a reference value
+    fn evaluate_tcb_status(
+        &self,
+        value: TcbStatus,
+        relative_reference: Option<TcbStatus>,
+    ) -> Result<bool, PolicyError> {
+        match &self.reference {
+            Reference::String(reference) => {
+                let reference_value = match reference.as_str() {
+                    "self" | "init" => relative_reference.ok_or(PolicyError::InvalidReference)?,
+                    other => TcbStatus::try_from(other)?,
+                };
+                match self.operation.as_str() {
+                    "equal" => Ok(value == reference_value),
+                    "greater-or-equal" => Ok(value >= reference_value),
+                    _ => Err(PolicyError::InvalidOperation),
+                }
+            }
+            Reference::StringList(reference) => match self.operation.as_str() {
+                "allow-list" => {
+                    if reference.iter().any(|item| item == value.as_str()) {
+                        return Ok(true);
+                    }
+                    Ok(false)
+                }
+                "deny-list" => {
+                    if reference.iter().any(|item| item == value.as_str()) {
+                        return Ok(false);
+                    }
+                    Ok(true)
+                }
+                _ => Err(PolicyError::InvalidOperation),
+            },
+            _ => Err(PolicyError::InvalidReference),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -670,31 +736,34 @@ mod test {
             operation: "allow-list".to_string(),
             reference: Reference::StringList(vec![
                 "UpToDate".to_string(),
-                "SwHardeningNeeded".to_string(),
+                "SWHardeningNeeded".to_string(),
                 "ConfigurationNeeded".to_string(),
             ]),
         };
-        let relative_reference = "null";
+        let relative_reference = TcbStatus::UpToDate;
         assert!(
             tcb_status_policy
-                .evaluate_string("UpToDate", Some(relative_reference))
+                .evaluate_tcb_status(TcbStatus::UpToDate, Some(relative_reference))
                 .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("SwHardeningNeeded", Some(relative_reference))
+                    .evaluate_tcb_status(TcbStatus::SWHardeningNeeded, Some(relative_reference))
                     .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("ConfigurationNeeded", Some(relative_reference))
+                    .evaluate_tcb_status(TcbStatus::ConfigurationNeeded, Some(relative_reference))
                     .unwrap()
         );
         assert!(
             !(tcb_status_policy
-                .evaluate_string("OutOfDate", Some(relative_reference))
+                .evaluate_tcb_status(TcbStatus::OutOfDate, Some(relative_reference))
                 .unwrap()
                 || tcb_status_policy
-                    .evaluate_string("OutOfDateConfigurationNeeded", Some(relative_reference))
+                    .evaluate_tcb_status(
+                        TcbStatus::OutOfDateConfigurationNeeded,
+                        Some(relative_reference)
+                    )
                     .unwrap()
                 || tcb_status_policy
-                    .evaluate_string("Revoked", Some(relative_reference))
+                    .evaluate_tcb_status(TcbStatus::Revoked, Some(relative_reference))
                     .unwrap())
         );
 
@@ -708,24 +777,86 @@ mod test {
         };
         assert!(
             tcb_status_policy
-                .evaluate_string("UpToDate", Some(relative_reference))
+                .evaluate_tcb_status(TcbStatus::UpToDate, Some(relative_reference))
                 .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("SwHardeningNeeded", Some(relative_reference))
+                    .evaluate_tcb_status(TcbStatus::SWHardeningNeeded, Some(relative_reference))
                     .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("ConfigurationNeeded", Some(relative_reference))
+                    .evaluate_tcb_status(TcbStatus::ConfigurationNeeded, Some(relative_reference))
                     .unwrap()
                 && tcb_status_policy
-                    .evaluate_string("OutOfDate", Some(relative_reference))
+                    .evaluate_tcb_status(TcbStatus::OutOfDate, Some(relative_reference))
                     .unwrap()
         );
         assert!(
             !(tcb_status_policy
-                .evaluate_string("OutOfDateConfigurationNeeded", Some(relative_reference))
+                .evaluate_tcb_status(
+                    TcbStatus::OutOfDateConfigurationNeeded,
+                    Some(relative_reference)
+                )
                 .unwrap()
                 || tcb_status_policy
-                    .evaluate_string("Revoked", Some(relative_reference))
+                    .evaluate_tcb_status(TcbStatus::Revoked, Some(relative_reference))
+                    .unwrap())
+        );
+
+        // Test with "greater-or-equal" operation and "OutOfDateConfigurationNeeded" reference
+        let relative_reference = TcbStatus::OutOfDateConfigurationNeeded;
+        let tcb_status_policy = PolicyProperty {
+            operation: "greater-or-equal".to_string(),
+            reference: Reference::String("self".to_string()),
+        };
+        assert!(
+            tcb_status_policy
+                .evaluate_tcb_status(TcbStatus::UpToDate, Some(relative_reference))
+                .unwrap()
+                && tcb_status_policy
+                    .evaluate_tcb_status(TcbStatus::SWHardeningNeeded, Some(relative_reference))
+                    .unwrap()
+                && tcb_status_policy
+                    .evaluate_tcb_status(TcbStatus::ConfigurationNeeded, Some(relative_reference))
+                    .unwrap()
+                && tcb_status_policy
+                    .evaluate_tcb_status(TcbStatus::OutOfDate, Some(relative_reference))
+                    .unwrap()
+                && tcb_status_policy
+                    .evaluate_tcb_status(
+                        TcbStatus::OutOfDateConfigurationNeeded,
+                        Some(relative_reference)
+                    )
+                    .unwrap()
+        );
+        assert!(!tcb_status_policy
+            .evaluate_tcb_status(TcbStatus::Revoked, Some(relative_reference))
+            .unwrap());
+
+        // Test with "equal" operation
+        let tcb_status_policy = PolicyProperty {
+            operation: "equal".to_string(),
+            reference: Reference::String("UpToDate".to_string()),
+        };
+        assert!(tcb_status_policy
+            .evaluate_tcb_status(TcbStatus::UpToDate, Some(relative_reference))
+            .unwrap());
+        assert!(
+            !(tcb_status_policy
+                .evaluate_tcb_status(TcbStatus::Revoked, Some(relative_reference))
+                .unwrap()
+                || tcb_status_policy
+                    .evaluate_tcb_status(TcbStatus::SWHardeningNeeded, Some(relative_reference))
+                    .unwrap()
+                || tcb_status_policy
+                    .evaluate_tcb_status(TcbStatus::ConfigurationNeeded, Some(relative_reference))
+                    .unwrap()
+                || tcb_status_policy
+                    .evaluate_tcb_status(TcbStatus::OutOfDate, Some(relative_reference))
+                    .unwrap()
+                || tcb_status_policy
+                    .evaluate_tcb_status(
+                        TcbStatus::OutOfDateConfigurationNeeded,
+                        Some(relative_reference)
+                    )
                     .unwrap())
         );
     }
