@@ -14,7 +14,6 @@ use core::task::Poll;
 use alloc::format;
 #[cfg(feature = "policy_v2")]
 use alloc::string::String;
-#[cfg(feature = "vmcall-raw")]
 use alloc::vec::Vec;
 use log::info;
 #[cfg(feature = "vmcall-raw")]
@@ -283,6 +282,7 @@ fn handle_pre_mig() {
     loop {
         // Poll the async runtime to execute tasks
         let _ = async_runtime::poll_tasks();
+        let mut data: Vec<u8> = Vec::new();
 
         // The async task waiting for VMM response is always in the queue
         let new_request = PENDING_REQUEST.lock().take();
@@ -291,7 +291,7 @@ fn handle_pre_mig() {
             async_runtime::add_task(async move {
                 #[cfg(not(feature = "vmcall-raw"))]
                 {
-                    let status = exchange_msk(&request)
+                    let status = exchange_msk(&request, &mut data)
                         .await
                         .map(|_| MigrationResult::Success)
                         .unwrap_or_else(|e| e);
@@ -301,10 +301,9 @@ fn handle_pre_mig() {
                 }
                 #[cfg(feature = "vmcall-raw")]
                 {
-                    let mut data: Vec<u8> = Vec::new();
                     match request {
                         WaitForRequestResponse::StartMigration(wfr_info) => {
-                            let status = exchange_msk(&wfr_info)
+                            let status = exchange_msk(&wfr_info, &mut data)
                                 .await
                                 .map(|_| MigrationResult::Success)
                                 .unwrap_or_else(|e| e);

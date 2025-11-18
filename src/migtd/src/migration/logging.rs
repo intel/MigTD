@@ -154,6 +154,10 @@ pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u
         .load(Ordering::SeqCst);
 
     if !logarea_created {
+        data.extend_from_slice(
+            &format!("Error: LogArea has not been successfuly created by create_logarea()\n")
+                .into_bytes(),
+        );
         return Err(MigrationResult::UnsupportedOperationError);
     }
 
@@ -234,6 +238,13 @@ pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u
             &format!("enable_logarea: Invalid MaxLogLevel: {:x}\n", log_max_level).into_bytes(),
             Level::Error,
             request_id,
+        );
+        data.extend_from_slice(
+            &format!(
+                "Error: enable_logarea(): Invalid MaxLogLevel: {:x} requested\n",
+                log_max_level
+            )
+            .into_bytes(),
         );
         return Err(MigrationResult::InvalidParameter);
     }

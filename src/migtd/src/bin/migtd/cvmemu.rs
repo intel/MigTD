@@ -10,6 +10,7 @@
 use std::env;
 use std::process;
 
+use alloc::vec::Vec;
 use migtd;
 use migtd::migration::event;
 use migtd::migration::logging::{create_logarea, enable_logarea};
@@ -439,9 +440,10 @@ fn handle_pre_mig_emu() -> i32 {
                         }
                         WaitForRequestResponse::StartMigration(req) => {
                             log::info!("Processing StartMigration request\n");
+                            let mut data = Vec::new();
 
                             // Call exchange_msk() and log its immediate outcome
-                            let res = exchange_msk(&req).await;
+                            let res = exchange_msk(&req, &mut data).await;
                             match &res {
                                 Ok(_) => log::info!("exchange_msk() returned Ok\n"),
                                 Err(e) => {

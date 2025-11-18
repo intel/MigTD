@@ -475,6 +475,9 @@ pub async fn get_tdreport(
             Level::Debug,
             request_id,
         );
+        data.extend_from_slice(
+            &format!("Error: get_tdreport(): TDG.MR.REPORT failure {:x}\n", ret).into_bytes(),
+        );
         return Err(MigrationResult::TdxModuleError);
     }
 
@@ -490,6 +493,11 @@ pub async fn get_tdreport(
             Level::Debug,
             request_id,
         );
+        data.extend_from_slice(&format!(
+                "Error: get_tdreport(): tdreport incorrect data length - expected {:x} actual {:x}\n",
+                tdreportsize,
+                data.len()
+            ).into_bytes());
         return Err(MigrationResult::InvalidParameter);
     }
     Ok(())
@@ -776,7 +784,9 @@ async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "main")]
-pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
+pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Result<()> {
+    #[cfg(not(feature = "vmcall-raw"))]
+    let _ = data;
     #[cfg(feature = "policy_v2")]
     let mut transport;
     #[cfg(not(feature = "policy_v2"))]
@@ -786,12 +796,18 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     {
         use vmcall_raw::stream::VmcallRaw;
         let mut vmcall_raw_instance = VmcallRaw::new_with_mid(info.mig_info.mig_request_id)
-            .map_err(|_e| MigrationResult::InvalidParameter)?;
+            .map_err(|e| {
+                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to create vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
+                MigrationResult::InvalidParameter
+        })?;
 
         vmcall_raw_instance
             .connect()
             .await
-            .map_err(|_e| MigrationResult::InvalidParameter)?;
+            .map_err(|e| {
+                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to connect vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
+                MigrationResult::InvalidParameter
+            })?;
         transport = vmcall_raw_instance;
     }
 
@@ -849,8 +865,20 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 transport,
                 #[cfg(feature = "policy_v2")]
                 remote_policy,
+                #[cfg(feature = "vmcall-raw")]
+                data,
             )
-            .map_err(|_| MigrationResult::SecureSessionError)?;
+            .map_err(|_| {
+                #[cfg(feature = "vmcall-raw")]
+                data.extend_from_slice(
+                    &format!(
+                        "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
+                        info.mig_info.mig_request_id
+                    )
+                    .into_bytes(),
+                );
+                MigrationResult::SecureSessionError
+            })?;
 
             // MigTD-S send Migration Session Forward key to peer
             with_timeout(
@@ -864,6 +892,16 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             )
             .await??;
             if size < size_of::<ExchangeInformation>() {
+                #[cfg(feature = "vmcall-raw")]
+                data.extend_from_slice(
+                    &format!(
+                        "Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n",
+                        info.mig_info.mig_request_id,
+                        size_of::<ExchangeInformation>(),
+                        size
+                    )
+                    .into_bytes(),
+                );
                 return Err(MigrationResult::NetworkError);
             }
             #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
@@ -874,7 +912,17 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 .transport_mut()
                 .shutdown()
                 .await
-                .map_err(|_e| MigrationResult::InvalidParameter)?;
+                .map_err(|e| {
+                    data.extend_from_slice(
+                        &format!(
+                            "Error: exchange_msk(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n",
+                            info.mig_info.mig_request_id,
+                            e
+                        )
+                        .into_bytes(),
+                    );
+                    MigrationResult::InvalidParameter
+                })?;
         } else {
             // TLS server
             let mut ratls_server = ratls::server(
@@ -882,7 +930,17 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 #[cfg(feature = "policy_v2")]
                 remote_policy,
             )
-            .map_err(|_| MigrationResult::SecureSessionError)?;
+            .map_err(|_| {
+                #[cfg(feature = "vmcall-raw")]
+                data.extend_from_slice(
+                    &format!(
+                        "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
+                        info.mig_info.mig_request_id
+                    )
+                    .into_bytes(),
+                );
+                MigrationResult::SecureSessionError
+            })?;
 
             with_timeout(
                 TLS_TIMEOUT,
@@ -895,6 +953,8 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             )
             .await??;
             if size < size_of::<ExchangeInformation>() {
+                #[cfg(feature = "vmcall-raw")]
+                data.extend_from_slice(&format!("Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size).into_bytes());
                 return Err(MigrationResult::NetworkError);
             }
             #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
@@ -905,7 +965,10 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 .transport_mut()
                 .shutdown()
                 .await
-                .map_err(|_e| MigrationResult::InvalidParameter)?;
+                .map_err(|e| {
+                    data.extend_from_slice(&format!("Error: exchange_msk(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
+                    MigrationResult::InvalidParameter
+                })?;
         }
 
         let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)?;
