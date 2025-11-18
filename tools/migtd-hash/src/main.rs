@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use clap::Parser;
+use log::debug;
 use migtd_hash::{
     build_td_info, calculate_servtd_hash, calculate_servtd_info_hash, SERVTD_TYPE_MIGTD,
 };
@@ -45,17 +46,38 @@ struct Config {
     /// Output in TD Info in JSON format
     #[clap(long)]
     pub output_td_info: Option<PathBuf>,
+    /// Enable verbose logging
+    #[clap(short, long)]
+    pub verbose: bool,
 }
 
 fn main() {
     let config = Config::parse();
+
+    // Initialize logger based on verbose flag
+    if config.verbose {
+        env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Debug)
+            .init();
+    } else {
+        env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Off)
+            .init();
+    }
+
+    debug!("Starting migtd-hash tool");
+    debug!("Image: {}", config.image);
+    debug!("Manifest: {}", config.manifest);
     let imagename = config.image.clone();
     let mut igvmformat = false;
 
+    debug!("Opening image file: {}", config.image);
     let image = File::open(config.image).unwrap_or_else(|e| {
         eprintln!("Failed to open MigTD image: {}", e);
         exit(1);
     });
+
+    debug!("Reading manifest file: {}", config.manifest);
     let manifest = fs::read(config.manifest).unwrap_or_else(|e| {
         eprintln!("Failed to open manifest file: {}", e);
         exit(1);
@@ -68,10 +90,15 @@ fn main() {
 
     if imagename.contains(".igvm") {
         igvmformat = true;
+        debug!("Detected IGVM format");
+    } else {
+        debug!("Detected BIN format");
     }
 
     let servtd_attr = config.servtd_attr.unwrap_or(0);
+    debug!("ServTD attributes: {:#x}", servtd_attr);
 
+    debug!("Building TD info structure...");
     let td_info = build_td_info(
         &manifest,
         image,
@@ -85,7 +112,50 @@ fn main() {
         exit(1);
     });
 
+    debug!("td_info: {:?}", td_info);
+    debug!(
+        "MRTD: {}",
+        td_info
+            .mrtd
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+    debug!(
+        "RTMR0: {}",
+        td_info
+            .rtmr0
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+    debug!(
+        "RTMR1: {}",
+        td_info
+            .rtmr1
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+    debug!(
+        "RTMR2: {}",
+        td_info
+            .rtmr2
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+    debug!(
+        "RTMR3: {}",
+        td_info
+            .rtmr3
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+
     if let Some(output_td_info) = config.output_td_info {
+        debug!("Writing TD Info to: {:?}", output_td_info);
         let td_info_json = json!({
             "mrtd": td_info.mrtd.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
             "rtmr0": td_info.rtmr0.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
@@ -104,23 +174,43 @@ fn main() {
         })
     }
 
+    debug!("Calculating servtd_info_hash...");
     let servtd_info_hash = calculate_servtd_info_hash(td_info).unwrap_or_else(|e| {
         eprintln!("Failed to calculate hash: {:?}", e);
         exit(1);
     });
+    debug!(
+        "servtd_info_hash: {}",
+        servtd_info_hash
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
+
+    debug!("Calculating servtd_hash...");
     let servtd_hash = calculate_servtd_hash(&servtd_info_hash, SERVTD_TYPE_MIGTD, servtd_attr)
         .unwrap_or_else(|e| {
             eprintln!("Failed to calculate hash: {:?}", e);
             exit(1);
         });
+    debug!(
+        "servtd_hash: {}",
+        servtd_hash
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
+    );
 
     let (hash, key) = if config.calc_servtd_hash {
+        debug!("Using servtd_hash (final hash)");
         (servtd_hash, SERVTD_HASH_KEY)
     } else {
+        debug!("Using servtd_info_hash");
         (servtd_info_hash, SERVTD_INFO_HASH_KEY)
     };
 
     if let Some(output_file) = config.output_file {
+        debug!("Writing hash to file: {:?}", output_file);
         if config.json {
             let json = json!({
                 key: hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
@@ -136,6 +226,7 @@ fn main() {
             })
         }
     } else {
+        debug!("Hash calculation complete");
         if config.json {
             let json = json!({
                 key: hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(),

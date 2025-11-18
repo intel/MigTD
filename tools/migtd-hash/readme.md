@@ -27,6 +27,15 @@ popd
   ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --servtd-attr 0 --calc-servtd-hash
   ```
 
+- Generate migtd SERVTD_INFO_HASH with debug infomation:
+  ```
+  ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --verbose
+  ```
+
+  - Generate migtd SERVTD_HASH with debug infomation:
+  ```
+  ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --servtd-attr 0 --calc-servtd-hash --verbose
+  ```
 ### Note
 
 For a `TDVF_SECTION` with `Attributes` set to `0x00000001` (indicating `PAGE.ADD + MR.EXTEND`), the measurement process is performed on a page-by-page basis for the entire section. For each individual page within that section, a `TDCALL[TDH.MEM.PAGE.ADD]` is executed, followed immediately by a `TDCALL[TDH.MR.EXTEND]`:
