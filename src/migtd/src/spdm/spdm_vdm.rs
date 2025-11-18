@@ -267,7 +267,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
 
     let res = response.spdm_encode(&mut responder_context.common, &mut writer);
     if res.is_err() {
-        writer.clear();
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
         let used = writer.used();
         return (
@@ -283,7 +282,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             let vdm_pub_key_src_hash = match digest_sha384(req_bytes) {
                 Ok(hash) => hash,
                 Err(_) => {
-                    writer.clear();
                     responder_context.write_spdm_error(
                         SpdmErrorCode::SpdmErrorUnspecified,
                         0,
@@ -295,7 +293,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             let vdm_pub_key_dst_hash = match digest_sha384(writer.used_slice()) {
                 Ok(hash) => hash,
                 Err(_) => {
-                    writer.clear();
                     responder_context.write_spdm_error(
                         SpdmErrorCode::SpdmErrorUnspecified,
                         0,
@@ -308,7 +305,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             let res =
                 transcript_before_key_exchange.append_message(vdm_pub_key_src_hash.as_slice());
             if res.is_none() {
-                writer.clear();
                 responder_context.write_spdm_error(
                     SpdmErrorCode::SpdmErrorUnspecified,
                     0,
@@ -319,7 +315,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             let res =
                 transcript_before_key_exchange.append_message(vdm_pub_key_dst_hash.as_slice());
             if res.is_none() {
-                writer.clear();
                 responder_context.write_spdm_error(
                     SpdmErrorCode::SpdmErrorUnspecified,
                     0,
@@ -336,7 +331,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             let vdm_attest_info_src_hash = match digest_sha384(req_bytes) {
                 Ok(hash) => hash,
                 Err(_) => {
-                    writer.clear();
                     responder_context.write_spdm_error(
                         SpdmErrorCode::SpdmErrorUnspecified,
                         0,
@@ -348,7 +342,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             let vdm_attest_info_dst_hash = match digest_sha384(writer.used_slice()) {
                 Ok(hash) => hash,
                 Err(_) => {
-                    writer.clear();
                     responder_context.write_spdm_error(
                         SpdmErrorCode::SpdmErrorUnspecified,
                         0,
@@ -360,7 +353,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             let mut transcript_before_finish = ManagedVdmBuffer::default();
             let res = transcript_before_finish.append_message(vdm_attest_info_src_hash.as_slice());
             if res.is_none() {
-                writer.clear();
                 responder_context.write_spdm_error(
                     SpdmErrorCode::SpdmErrorUnspecified,
                     0,
@@ -370,7 +362,6 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             }
             let res = transcript_before_finish.append_message(vdm_attest_info_dst_hash.as_slice());
             if res.is_none() {
-                writer.clear();
                 responder_context.write_spdm_error(
                     SpdmErrorCode::SpdmErrorUnspecified,
                     0,
