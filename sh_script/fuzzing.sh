@@ -5,6 +5,7 @@ fuzz_folder=(
     "src/devices/vsock"
     "src/devices/virtio"
     "src/devices/virtio_serial"
+    "src/devices/vmcall_raw"
     "src/policy"
     "src/migtd"
 )
