@@ -5,6 +5,8 @@
 use crate::alloc::string::ToString;
 #[cfg(feature = "vmcall-raw")]
 use crate::driver::crash::update_guest_crash_reg_report;
+#[cfg(feature = "vmcall-raw")]
+use alloc::format;
 
 #[cfg(feature = "vmcall-raw")]
 pub fn vmcall_raw_device_init() {

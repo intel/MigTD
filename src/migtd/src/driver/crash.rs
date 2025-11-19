@@ -20,7 +20,6 @@ const MSR_CRASH_P4: u32 = 0x40000104;
 const MSR_CRASH_CTL: u32 = 0x40000105;
 static GUEST_CRASH_MSR_SUPPORTED: AtomicBool = AtomicBool::new(false);
 const PAGE_SIZE: usize = 0x1_000;
-use alloc::format;
 
 pub fn guest_crash_reg_supported() -> bool {
     GUEST_CRASH_MSR_SUPPORTED.load(Ordering::SeqCst)

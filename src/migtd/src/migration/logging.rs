@@ -9,12 +9,8 @@ use crate::migration::MigrationResult;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::vec::Vec;
-#[cfg(test)]
-use core::sync::atomic::Ordering;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use lazy_static::lazy_static;
-use log::Level;
-#[cfg(test)]
 use log::Level;
 #[cfg(not(test))]
 use raw_cpuid::CpuId;
