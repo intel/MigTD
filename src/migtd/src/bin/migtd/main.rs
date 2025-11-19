@@ -139,6 +139,23 @@ fn basic_info() {
     info!("MigTD Version - {}\n", MIGTD_VERSION);
 }
 
+#[cfg(not(feature = "policy_v2"))]
+fn do_measurements() {
+    // Get the event log recorded by firmware
+    let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
+
+    if cfg!(feature = "test_disable_ra_and_accept_all") {
+        measure_test_feature(event_log);
+        return;
+    }
+    // Get migration td policy from CFV and measure it into RMTR
+    get_policy_and_measure(event_log);
+
+    // Get root certificate from CFV and measure it into RMTR
+    get_ca_and_measure(event_log);
+}
+
+#[cfg(feature = "policy_v2")]
 fn do_measurements() {
     // Get the event log recorded by firmware
     let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
@@ -148,15 +165,10 @@ fn do_measurements() {
         return;
     }
 
-    #[cfg(feature = "policy_v2")]
     get_policy_issuer_chain_and_measure(event_log);
 
     // Get migration td policy from CFV and measure it into RMTR
     get_policy_and_measure(event_log);
-
-    // Get root certificate from CFV and measure it into RMTR
-    #[cfg(not(feature = "policy_v2"))]
-    get_ca_and_measure(event_log);
 }
 
 fn measure_test_feature(event_log: &mut [u8]) {
@@ -171,18 +183,32 @@ fn measure_test_feature(event_log: &mut [u8]) {
     .expect("Failed to log migtd test feature");
 }
 
+#[cfg(not(feature = "policy_v2"))]
 fn get_policy_and_measure(event_log: &mut [u8]) {
     // Read migration policy from CFV
     let policy = config::get_policy().expect("Fail to get policy from CFV\n");
 
-    #[cfg(feature = "policy_v2")]
+    let event_data = policy;
+
+    // Measure and extend the migration policy to RTMR
+    event_log::write_tagged_event_log(
+        event_log,
+        MR_INDEX_POLICY,
+        policy,
+        TAGGED_EVENT_ID_POLICY,
+        event_data,
+    )
+    .expect("Failed to log migration policy");
+}
+
+#[cfg(feature = "policy_v2")]
+fn get_policy_and_measure(event_log: &mut [u8]) {
+    // Read migration policy from CFV
+    let policy = config::get_policy().expect("Fail to get policy from CFV\n");
+
     let version = initialize_policy();
 
-    #[cfg(feature = "policy_v2")]
     let event_data = version.as_bytes();
-
-    #[cfg(not(feature = "policy_v2"))]
-    let event_data = policy;
 
     // Measure and extend the migration policy to RTMR
     event_log::write_tagged_event_log(
