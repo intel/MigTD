@@ -13,6 +13,7 @@ mod server_client;
 #[cfg(feature = "main")]
 pub use server_client::*;
 
+#[derive(Debug)]
 pub enum RatlsError {
     GetQuote,
     VerifyQuote,

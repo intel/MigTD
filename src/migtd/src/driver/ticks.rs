@@ -12,6 +12,7 @@ use core::{
 static SYS_TICK: AtomicU64 = AtomicU64::new(0);
 const INTERVAL: u32 = 1;
 
+#[derive(Debug)]
 pub struct TimeoutError;
 
 pub fn init_sys_tick() {
