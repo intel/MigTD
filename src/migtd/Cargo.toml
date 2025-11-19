@@ -46,6 +46,7 @@ x86_64 = { version = "0.14", default-features = false, features = ["instructions
 zerocopy = { version = "0.7", features = ["derive"] }
 bitfield-struct = "0.11"
 raw-cpuid = "11.6.0"
+sha2 = { version = "0.10.2", default-features = false, optional = true }
 
 # AzCVMEmu optional deps (grouped)
 tdx-tdcall-emu = { path = "../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }
@@ -70,7 +71,7 @@ ring = { version = "0.17.14" }
 default = ["virtio-vsock"]
 cet-shstk = ["td-payload/cet-shstk"]
 coverage = ["minicov"]
-main = ["attestation", "policy/log"]
+main = ["attestation", "policy/log", "sha2"]
 policy_v2 = ["policy/policy_v2", "attestation/attest-lib-ext", "td-shim-interface-emu?/policy_v2"]
 stack-guard = ["td-payload/stack-guard"]
 virtio-vsock = ["vsock/virtio-vsock"]
