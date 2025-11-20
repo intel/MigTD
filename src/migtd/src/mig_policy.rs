@@ -58,7 +58,7 @@ mod v2 {
     use alloc::{string::String, string::ToString, vec::Vec};
     use attestation::verify_quote_with_collaterals;
     use chrono::DateTime;
-    use crypto::pem_cert_to_der;
+    use crypto::{crl::get_crl_number, pem_cert_to_der};
     use lazy_static::lazy_static;
     use policy::*;
     use spin::Once;
@@ -272,6 +272,10 @@ mod v2 {
             .get_engine_svn_by_report(&report_value);
 
         let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
+        let pck_crl_num = get_crl_number(collaterals.pck_crl.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+        let root_ca_crl_num = get_crl_number(collaterals.root_ca_crl.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
 
         Ok(PolicyEvaluationInfo {
             tcb_date: Some(tcb_date.to_string()),
@@ -281,6 +285,8 @@ mod v2 {
             migtd_isvsvn: migtd_svn,
             migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
             migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+            pck_crl_num: Some(pck_crl_num),
+            root_ca_crl_num: Some(root_ca_crl_num),
         })
     }
 
