@@ -32,6 +32,11 @@ popd
   ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --verbose
   ```
 
+  - Calculate migtd SERVTD_INFO_HASH and update tcb_mapping.json (For policy v2)
+  ```
+  ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --update-tcb-mapping <tcb_mapping.json> --policy-v2 --verbose
+  ```
+
   - Generate migtd SERVTD_HASH with debug infomation:
   ```
   ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --servtd-attr 0 --calc-servtd-hash --verbose
