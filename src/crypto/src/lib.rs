@@ -21,6 +21,7 @@ cfg_if::cfg_if! {
     }
 }
 
+pub mod crl;
 pub mod x509;
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -79,6 +80,9 @@ pub enum Error {
 
     /// Unsupported signature algorithm
     UnsupportedAlgorithm,
+
+    /// CRL number extension missing
+    CrlNumberNotFound,
 
     /// Unexpected error that should not happen
     Unexpected,
