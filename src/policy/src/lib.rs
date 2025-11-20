@@ -44,6 +44,7 @@ pub enum PolicyError {
     InvalidQuote,
     SvnMismatch,
     TcbEvaluation,
+    CrlEvaluation,
     HashCalculation,
     QuoteVerification,
     QuoteGeneration,

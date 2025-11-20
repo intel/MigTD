@@ -97,6 +97,12 @@ pub struct PolicyEvaluationInfo {
 
     /// The date of the MigTD TCB in ISO-8601 format, e.g. "2023-06-19T00:00:00Z"
     pub migtd_tcb_date: Option<String>,
+
+    /// The minimal crl_num of pck_crl
+    pub pck_crl_num: Option<u32>,
+
+    /// The minimal crl_num of root_ca_crl
+    pub root_ca_crl_num: Option<u32>,
 }
 
 pub struct VerifiedPolicy<'a> {
@@ -295,6 +301,7 @@ enum PolicyTypes {
 struct GlobalPolicy {
     tcb: Option<TcbPolicy>,
     platform: Option<PlatformPolicy>,
+    crl: Option<CrlPolicy>,
 }
 
 impl GlobalPolicy {
@@ -309,6 +316,10 @@ impl GlobalPolicy {
 
         if let Some(platform_policy) = &self.platform {
             platform_policy.evaluate(value, relative_reference)?;
+        }
+
+        if let Some(crl_policy) = &self.crl {
+            crl_policy.evaluate(value, relative_reference)?;
         }
 
         Ok(())
@@ -392,6 +403,37 @@ impl PlatformPolicy {
                 .map(|s| bytes_to_hex_string(s));
             if !property.evaluate_string(&bytes_to_hex_string(fmspc), relative.as_deref())? {
                 return Err(PolicyError::TcbEvaluation);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrlPolicy {
+    pck_crl_num: Option<PolicyProperty>,
+    root_ca_crl_num: Option<PolicyProperty>,
+}
+
+impl CrlPolicy {
+    fn evaluate(
+        &self,
+        value: &PolicyEvaluationInfo,
+        relative_reference: &PolicyEvaluationInfo,
+    ) -> Result<(), PolicyError> {
+        if let Some(property) = &self.pck_crl_num {
+            let pck_crl_num = value.pck_crl_num.ok_or(PolicyError::CrlEvaluation)?;
+            if !property.evaluate_integer(pck_crl_num, relative_reference.pck_crl_num)? {
+                return Err(PolicyError::CrlEvaluation);
+            }
+        }
+
+        if let Some(property) = &self.root_ca_crl_num {
+            let root_ca_crl_num = value.root_ca_crl_num.ok_or(PolicyError::CrlEvaluation)?;
+            if !property.evaluate_integer(root_ca_crl_num, relative_reference.root_ca_crl_num)? {
+                return Err(PolicyError::CrlEvaluation);
             }
         }
 
@@ -692,6 +734,8 @@ mod test {
             migtd_tcb_status: None,
             migtd_tcb_date: None,
             migtd_isvsvn: None,
+            pck_crl_num: None,
+            root_ca_crl_num: None,
         };
         let relative_ref = PolicyEvaluationInfo::default();
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());
