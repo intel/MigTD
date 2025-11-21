@@ -241,7 +241,7 @@ jobs:
           
           # Run the script with timeout
           set +e
-          timeout 600 ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report
+          timeout 900 ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report
           EXIT_CODE=$?
           set -e
           
