@@ -13,6 +13,7 @@ use async_io::{AsyncRead, AsyncWrite};
 use core::sync::atomic::AtomicBool;
 #[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
 use core::sync::atomic::Ordering;
+use core::time::Duration;
 use core::{future::poll_fn, mem::size_of, task::Poll};
 #[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
 use event::VMCALL_SERVICE_FLAG;
@@ -847,12 +848,16 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
 
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
-    let remote_policy = Box::pin(pre_session_data_exchange(&mut transport)).await?;
+    const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    #[cfg(feature = "policy_v2")]
+    let remote_policy = Box::pin(with_timeout(
+        PRE_SESSION_TIMEOUT,
+        pre_session_data_exchange(&mut transport),
+    ))
+    .await??;
 
     #[cfg(not(feature = "spdm_attestation"))]
     {
-        use core::time::Duration;
-
         const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
         let mut remote_information = ExchangeInformation::default();
@@ -987,35 +992,38 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
     }
 
     #[cfg(feature = "spdm_attestation")]
-    if info.is_src() {
-        let mut spdm_requester =
-            spdm::spdm_requester(transport).map_err(|_| MigrationResult::SecureSessionError)?;
-        with_timeout(
-            spdm::SPDM_TIMEOUT,
-            spdm::spdm_requester_transfer_msk(
-                &mut spdm_requester,
-                &info.mig_info,
-                #[cfg(feature = "policy_v2")]
-                remote_policy,
-            ),
-        )
-        .await??;
-        log::info!("MSK exchange completed\n");
-    } else {
-        let mut spdm_responder =
-            spdm::spdm_responder(transport).map_err(|_| MigrationResult::SecureSessionError)?;
+    {
+        const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+        if info.is_src() {
+            let mut spdm_requester =
+                spdm::spdm_requester(transport).map_err(|_| MigrationResult::SecureSessionError)?;
+            with_timeout(
+                SPDM_TIMEOUT,
+                spdm::spdm_requester_transfer_msk(
+                    &mut spdm_requester,
+                    &info.mig_info,
+                    #[cfg(feature = "policy_v2")]
+                    remote_policy,
+                ),
+            )
+            .await??;
+            log::info!("MSK exchange completed\n");
+        } else {
+            let mut spdm_responder =
+                spdm::spdm_responder(transport).map_err(|_| MigrationResult::SecureSessionError)?;
 
-        with_timeout(
-            spdm::SPDM_TIMEOUT,
-            spdm::spdm_responder_transfer_msk(
-                &mut spdm_responder,
-                &info.mig_info,
-                #[cfg(feature = "policy_v2")]
-                remote_policy,
-            ),
-        )
-        .await??;
-        log::info!("MSK exchange completed\n");
+            with_timeout(
+                SPDM_TIMEOUT,
+                spdm::spdm_responder_transfer_msk(
+                    &mut spdm_responder,
+                    &info.mig_info,
+                    #[cfg(feature = "policy_v2")]
+                    remote_policy,
+                ),
+            )
+            .await??;
+            log::info!("MSK exchange completed\n");
+        }
     }
 
     Ok(())
