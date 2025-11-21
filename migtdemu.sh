@@ -24,6 +24,7 @@ SKIP_RA=false
 USE_MOCK_REPORT=false
 EXTRA_FEATURES=""
 USE_POLICY_V2=false
+MOCK_QUOTE_FILE=""  # Optional mock quote file path
 DEFAULT_RUST_BACKTRACE="1"
 # Default RUST_LOG: verbose in debug, info in release; can be overridden by env
 DEFAULT_RUST_LOG_DEBUG="debug"
@@ -55,6 +56,7 @@ show_usage() {
     echo "  --policy-v2                  Enable policy v2 support (requires --policy-file and --policy-issuer-chain-file to be specified)"
     echo "  --skip-ra                    Skip remote attestation (uses mock TD reports/quotes for non-TDX environments)"
     echo "  --mock-report                Use mock report data for RA and policy v2 (non-TDX, but full attestation flow)"
+    echo "  --mock-quote-file FILE       Path to mock quote file (used with --mock-report, defaults to output_data_v4.bin)"
     echo "  --both                       Start destination first, then source (same host)"
     echo "  --no-sudo                    Run without sudo (useful for local testing)"
     echo "  --features FEATURES          Add extra cargo features (comma-separated, e.g., 'spdm_attestation,feature2')"
@@ -92,6 +94,7 @@ show_usage() {
     echo "  $0 --skip-ra --both                  # Run both source and destination with skip RA mode"
     echo "  $0 --mock-report --role source       # Build with mock report mode (full attestation with mock data)"
     echo "  $0 --mock-report --both              # Run both source and destination with mock report mode"
+    echo "  $0 --mock-report --mock-quote-file ./config/AzCVMEmu/az_migtd_quote.blob --both  # Use custom mock quote file"
     echo "  $0 --features spdm_attestation       # Build with extra SPDM attestation feature"
     echo "  \$0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both     # Run both with policy v2 in debug mode"
     echo "  \$0 --log-level debug --role source   # Run with debug log level"
@@ -248,6 +251,10 @@ while [[ $# -gt 0 ]]; do
             USE_MOCK_REPORT=true
             shift
             ;;
+        --mock-quote-file)
+            MOCK_QUOTE_FILE="$2"
+            shift 2
+            ;;
         --both)
             RUN_BOTH=true
             shift
@@ -283,6 +290,18 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Automatically enable mock-report mode when mock-quote-file is specified
+if [[ -n "$MOCK_QUOTE_FILE" && "$USE_MOCK_REPORT" != true ]]; then
+    echo -e "${YELLOW}Note: --mock-quote-file specified, automatically enabling --mock-report${NC}"
+    USE_MOCK_REPORT=true
+fi
+
+# Convert MOCK_QUOTE_FILE to absolute path if it's relative
+if [[ -n "$MOCK_QUOTE_FILE" && "$MOCK_QUOTE_FILE" != /* ]]; then
+    MOCK_QUOTE_FILE="$(pwd)/$MOCK_QUOTE_FILE"
+    echo -e "${YELLOW}Note: Converted relative path to absolute: $MOCK_QUOTE_FILE${NC}"
+fi
 
 # Validate that --skip-ra and --mock-report are mutually exclusive
 if [[ "$SKIP_RA" == true && "$USE_MOCK_REPORT" == true ]]; then
@@ -386,7 +405,7 @@ maybe_force_sudo_due_to_tpm
 # Build taskset command based on NUM_CPUS setting
 build_taskset_cmd() {
     local cpu_spec="$1"
-    
+
     # Convert number to range 0-(n-1)
     if [[ "$cpu_spec" -eq 1 ]]; then
         echo "taskset -c 0"
@@ -481,6 +500,9 @@ echo "  CPU affinity: $NUM_CPUS (using: $TASKSET_CMD)"
 echo "  Policy file: $POLICY_FILE"
 echo "  Root CA file: $ROOT_CA_FILE"
 echo "  Policy Issuer Chain file: $POLICY_ISSUER_CHAIN_FILE"
+if [[ -n "$MOCK_QUOTE_FILE" ]]; then
+    echo "  Mock Quote file: $MOCK_QUOTE_FILE"
+fi
 echo "  Use sudo: $USE_SUDO"
 
 echo
@@ -508,14 +530,20 @@ fi
 if [[ "$RUN_BOTH" == true ]]; then
     echo -e "${BLUE}Starting destination in background...${NC}"
     DEST_ARGS=("--role" "destination" "--request-id" "$REQUEST_ID")
+
+    # Build environment variable list for destination
+    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    if [[ -n "$TSS2_TCTI_AUTO" ]]; then
+        DEST_ENV_VARS+=("TSS2_TCTI=$TSS2_TCTI_AUTO")
+    fi
+    if [[ -n "$MOCK_QUOTE_FILE" ]]; then
+        DEST_ENV_VARS+=("MOCK_QUOTE_FILE=$MOCK_QUOTE_FILE")
+    fi
+
     # Start destination and redirect output
     (
         set -x
-        if [[ -n "$TSS2_TCTI_AUTO" ]]; then
-            run_cmd "MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_destination.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG" "TSS2_TCTI=$TSS2_TCTI_AUTO" -- "$MIGTD_BINARY" "${DEST_ARGS[@]}"
-        else
-            run_cmd "MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_destination.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG" -- "$MIGTD_BINARY" "${DEST_ARGS[@]}"
-        fi
+        run_cmd "${DEST_ENV_VARS[@]}" -- "$MIGTD_BINARY" "${DEST_ARGS[@]}"
     ) > dest.out.log 2>&1 &
     DEST_PID=$!
     echo -e "${GREEN}Destination started with PID ${DEST_PID}. Logs: dest.out.log${NC}"
@@ -539,25 +567,24 @@ if [[ "$RUN_BOTH" == true ]]; then
         "--dest-ip" "$DEST_IP"
         "--dest-port" "$DEST_PORT"
     )
-    if [[ "$USE_SUDO" == true ]]; then SUDO_STR="sudo "; else SUDO_STR=""; fi
-    echo -e "${YELLOW}Command: ${SUDO_STR}MIGTD_POLICY_FILE=$POLICY_FILE MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE $MIGTD_BINARY ${SRC_ARGS[*]}${NC}"
-    echo
-    # Run source in foreground
-    if [[ "$USE_SUDO" == true ]]; then SUDO_STR="sudo "; else SUDO_STR=""; fi
+
+    # Build environment variable list for source
+    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
     if [[ -n "$TSS2_TCTI_AUTO" ]]; then
-        echo -e "${YELLOW}Command: ${SUDO_STR}MIGTD_POLICY_FILE=$POLICY_FILE MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE RUST_BACKTRACE=$RUST_BACKTRACE RUST_LOG=$RUST_LOG TSS2_TCTI=$TSS2_TCTI_AUTO $MIGTD_BINARY ${SRC_ARGS[*]}${NC}"
-    else
-        echo -e "${YELLOW}Command: ${SUDO_STR}MIGTD_POLICY_FILE=$POLICY_FILE MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE RUST_BACKTRACE=$RUST_BACKTRACE RUST_LOG=$RUST_LOG $MIGTD_BINARY ${SRC_ARGS[*]}${NC}"
+        SRC_ENV_VARS+=("TSS2_TCTI=$TSS2_TCTI_AUTO")
     fi
+    if [[ -n "$MOCK_QUOTE_FILE" ]]; then
+        SRC_ENV_VARS+=("MOCK_QUOTE_FILE=$MOCK_QUOTE_FILE")
+    fi
+
+    # Display command
+    if [[ "$USE_SUDO" == true ]]; then SUDO_STR="sudo "; else SUDO_STR=""; fi
+    echo -e "${YELLOW}Command: ${SUDO_STR}${SRC_ENV_VARS[*]} $MIGTD_BINARY ${SRC_ARGS[*]}${NC}"
     echo
+
     # Run source in foreground; on failure, show last logs and exit non-zero
-    if [[ -n "$TSS2_TCTI_AUTO" ]]; then
-        run_cmd "MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_source.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG" "TSS2_TCTI=$TSS2_TCTI_AUTO" -- "$MIGTD_BINARY" "${SRC_ARGS[@]}"
-        SRC_EXIT_CODE=$?
-    else
-        run_cmd "MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_source.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG" -- "$MIGTD_BINARY" "${SRC_ARGS[@]}"
-        SRC_EXIT_CODE=$?
-    fi
+    run_cmd "${SRC_ENV_VARS[@]}" -- "$MIGTD_BINARY" "${SRC_ARGS[@]}"
+    SRC_EXIT_CODE=$?
     echo -e "${BLUE}Source migtd exit code: $SRC_EXIT_CODE${NC}"
 
     # Check destination exit code before stopping it
@@ -588,21 +615,26 @@ else
     if [[ "$ROLE" == "source" ]]; then
         MIGTD_ARGS+=("--dest-ip" "$DEST_IP" "--dest-port" "$DEST_PORT")
     fi
+
     echo -e "${BLUE}Starting MigTD in $ROLE mode...${NC}"
+
+    # Build environment variable list
+    ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    if [[ -n "$TSS2_TCTI_AUTO" ]]; then
+        ENV_VARS+=("TSS2_TCTI=$TSS2_TCTI_AUTO")
+    fi
+    if [[ -n "$MOCK_QUOTE_FILE" ]]; then
+        ENV_VARS+=("MOCK_QUOTE_FILE=$MOCK_QUOTE_FILE")
+    fi
+
+    # Display command
     if [[ "$USE_SUDO" == true ]]; then SUDO_STR="sudo "; else SUDO_STR=""; fi
-    if [[ -n "$TSS2_TCTI_AUTO" ]]; then
-        echo -e "${YELLOW}Command: ${SUDO_STR}MIGTD_POLICY_FILE=$POLICY_FILE MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE RUST_BACKTRACE=$RUST_BACKTRACE RUST_LOG=$RUST_LOG TSS2_TCTI=$TSS2_TCTI_AUTO $MIGTD_BINARY ${MIGTD_ARGS[*]}${NC}"
-    else
-        echo -e "${YELLOW}Command: ${SUDO_STR}MIGTD_POLICY_FILE=$POLICY_FILE MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE RUST_BACKTRACE=$RUST_BACKTRACE RUST_LOG=$RUST_LOG $MIGTD_BINARY ${MIGTD_ARGS[*]}${NC}"
-    fi
+    echo -e "${YELLOW}Command: ${SUDO_STR}${ENV_VARS[*]} $MIGTD_BINARY ${MIGTD_ARGS[*]}${NC}"
     echo
-    if [[ -n "$TSS2_TCTI_AUTO" ]]; then
-        run_cmd "MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_${ROLE}.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG" "TSS2_TCTI=$TSS2_TCTI_AUTO" -- "$MIGTD_BINARY" "${MIGTD_ARGS[@]}"
-        EXIT_CODE=$?
-    else
-        run_cmd "MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_${ROLE}.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG" -- "$MIGTD_BINARY" "${MIGTD_ARGS[@]}"
-        EXIT_CODE=$?
-    fi
+
+    # Run command
+    run_cmd "${ENV_VARS[@]}" -- "$MIGTD_BINARY" "${MIGTD_ARGS[@]}"
+    EXIT_CODE=$?
     echo -e "${BLUE}MigTD exit code: $EXIT_CODE${NC}"
     exit $EXIT_CODE
 fi
