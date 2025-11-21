@@ -543,6 +543,9 @@ impl PolicyProperty {
         relative_reference: Option<&[u32]>,
     ) -> Result<bool, PolicyError> {
         let integer_list_op = |values: &[u32], reference: &[u32]| {
+            if values.len() != reference.len() {
+                return Ok(false);
+            }
             match self.operation.as_str() {
                 "array-equal" => {
                     for (i, val) in values.iter().enumerate() {
@@ -566,12 +569,7 @@ impl PolicyProperty {
         };
 
         match &self.reference {
-            Reference::IntegerList(reference) => {
-                if values.len() != reference.len() {
-                    return Ok(false);
-                }
-                integer_list_op(values, &reference)
-            }
+            Reference::IntegerList(reference) => integer_list_op(values, &reference),
             Reference::String(reference) => {
                 if reference != "self" && reference != "init" {
                     return Err(PolicyError::InvalidReference);
