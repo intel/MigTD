@@ -163,6 +163,18 @@ pub struct Measurements {
     pub rtmr3: Option<String>,
 }
 
+impl Measurements {
+    fn to_ascii_uppercase(&self) -> Self {
+        Measurements {
+            mrtd: self.mrtd.to_ascii_uppercase(),
+            rtmr0: self.rtmr0.to_ascii_uppercase(),
+            rtmr1: self.rtmr1.to_ascii_uppercase(),
+            rtmr2: self.rtmr2.as_ref().map(|v| v.to_ascii_uppercase()),
+            rtmr3: self.rtmr3.as_ref().map(|v| v.to_ascii_uppercase()),
+        }
+    }
+}
+
 impl TdTcbMapping {
     pub fn get_engine_svn_by_report(&self, report: &Report) -> Option<u16> {
         let measurements = Measurements {
@@ -206,6 +218,10 @@ impl TdTcbMapping {
 
     #[inline]
     fn compare_measurements(pattern: &Measurements, target: &Measurements) -> bool {
+        // Convert both to uppercase for case-insensitive comparison
+        let pattern = pattern.to_ascii_uppercase();
+        let target = target.to_ascii_uppercase();
+
         if pattern.mrtd != target.mrtd
             || pattern.rtmr0 != target.rtmr0
             || pattern.rtmr1 != target.rtmr1
@@ -265,7 +281,12 @@ mod test {
         assert!(engine
             .get_engine_svn_by_measurements(&td_measurements)
             .is_none());
-        td_measurements.mrtd = mrtd.clone();
+
+        td_measurements.mrtd = mrtd.to_ascii_lowercase();
+        assert_eq!(
+            engine.get_engine_svn_by_measurements(&td_measurements),
+            Some(1)
+        );
 
         td_measurements.rtmr3 = None;
         assert!(engine
