@@ -55,7 +55,7 @@ jobs:
       - name: Run rust-clippy for result collection
         run:
           cargo clippy 
-          --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt
+          --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt,spdm_attestation
           --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
         continue-on-error: true
 
@@ -66,7 +66,7 @@ jobs:
           wait-for-processing: true
       
       - name: Run rust-clippy
-        run: cargo clippy --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt
+        run: cargo clippy --features stack-guard,virtio-vsock,virtio-serial,vmcall-interrupt,spdm_attestation
 
   rustfmt:
     name: Format
