@@ -131,6 +131,8 @@ cargo image --no-default-features --features vmcall-raw,stack-guard,main,test_di
 
 Please refer to [policy_v2.md](doc/policy_v2.md) for policy v2 generation and image setup.
 
+Issuer chains for the policy, TCB mapping, and TD identity support only X.509 v3 certificates signed with ECDSA-P384 with SHA384 algorithm.
+
 ### Build for Azure CVM Emulation (AzCVMEmu)
 
 To build MigTD as a standard Rust app that can run in Azure TDX CVM environment, for development and testing purpose:
