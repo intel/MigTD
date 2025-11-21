@@ -237,8 +237,6 @@ fn verify_signature_with_algorithm(
     signature: &[u8],
     signature_algorithm: &x509::AlgorithmIdentifier,
 ) -> Result<()> {
-    // ECDSA with SHA-256: 1.2.840.10045.4.3.2
-    const ECDSA_WITH_SHA256: &[u32] = &[1, 2, 840, 10045, 4, 3, 2];
     // ECDSA with SHA-384: 1.2.840.10045.4.3.3
     const ECDSA_WITH_SHA384: &[u32] = &[1, 2, 840, 10045, 4, 3, 3];
 
@@ -246,14 +244,8 @@ fn verify_signature_with_algorithm(
     let algorithm_oid = &signature_algorithm.algorithm;
     let oid_arcs: Vec<u32> = algorithm_oid.arcs().collect();
 
+    // Only ECDSA-P384 with SHA384 signature is supported
     match oid_arcs.as_slice() {
-        ECDSA_WITH_SHA256 => ecdsa::ecdsa_verify_with_algorithm(
-            public_key,
-            message,
-            signature,
-            &ecdsa::ECDSA_P256_SHA256_ASN1,
-        )
-        .map_err(|_| Error::SignatureVerification),
         ECDSA_WITH_SHA384 => ecdsa::ecdsa_verify_with_algorithm(
             public_key,
             message,
