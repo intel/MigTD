@@ -513,16 +513,19 @@ impl PolicyProperty {
                 _ => return Err(PolicyError::InvalidOperation),
             },
             Reference::String(reference) => {
-                if reference != "self" && reference != "init" {
-                    return Err(PolicyError::InvalidReference);
-                }
-                let relative_reference = relative_reference.ok_or(PolicyError::InvalidReference)?;
-                match self.operation.as_str() {
-                    "equal" => Ok(value == relative_reference),
-                    "greater-or-equal" => Ok(value >= relative_reference),
-                    "in-range" => is_in_range(&value, &reference),
-                    "in-time-range" => is_in_range(&value, &reference),
-                    _ => Err(PolicyError::InvalidOperation),
+                if reference == "self" || reference == "init" {
+                    let relative_reference =
+                        relative_reference.ok_or(PolicyError::InvalidReference)?;
+                    match self.operation.as_str() {
+                        "equal" => Ok(value == relative_reference),
+                        "greater-or-equal" => Ok(value >= relative_reference),
+                        _ => Err(PolicyError::InvalidOperation),
+                    }
+                } else {
+                    match self.operation.as_str() {
+                        "in-range" | "in-time-range" => is_in_range(&value, &reference),
+                        _ => Err(PolicyError::InvalidOperation),
+                    }
                 }
             }
             Reference::IntegerList(items) => match self.operation.as_str() {
