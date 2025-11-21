@@ -46,7 +46,7 @@ pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i3
 
     let _ = tdvmcall_get_quote(shared.as_mut_bytes()).map_err(|e| {
         log::error!("tdvmcall_get_quote failed with error: {:?}\n", e);
-        return AttestLibError::QuoteFailure as i32;
+        AttestLibError::QuoteFailure as i32
     });
 
     if let Err(err) = wait_for_quote_completion(notify_registered, shared.as_bytes()) {
@@ -69,15 +69,15 @@ fn set_vmm_notification() -> bool {
         NOTIFY_VECTOR as usize,
         InterruptCallback::new(vmm_notification),
     )
-    .map_err(|e| {
+    .map_err(|_e| {
         log::error!("Fail to setup interrupt callback for VMM notify\n");
-        return false;
+        false
     });
 
     // Setup event notifier
     _ = tdx_tdcall::tdx::tdvmcall_setup_event_notify(NOTIFY_VECTOR as u64).map_err(|e| {
         log::error!("Fail to setup event notify for VMM: {:?}\n", e);
-        return false;
+        false
     });
 
     true
