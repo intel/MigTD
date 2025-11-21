@@ -23,41 +23,67 @@ use verify::*;
 
 type Result<T> = core::result::Result<T, RatlsError>;
 
-pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
-    stream: T,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
-) -> Result<SecureChannel<T>> {
+#[cfg(not(feature = "policy_v2"))]
+pub fn server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
     let (certs, quote) = gen_cert(&signing_key)?;
     let certs = vec![certs];
 
-    #[cfg(feature = "policy_v2")]
-    let _ = &quote; // mark as intentionally unused
+    // Server verifies certificate of client
+    let config = TlsConfig::new(certs, signing_key, verify_client_cert, quote)?;
+
+    config.tls_server(stream).map_err(|e| e.into())
+}
+
+#[cfg(feature = "policy_v2")]
+pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
+    stream: T,
+    remote_policy: Vec<u8>,
+) -> Result<SecureChannel<T>> {
+    let signing_key = EcdsaPk::new()?;
+    let (certs, _quote) = gen_cert(&signing_key)?;
+    let certs = vec![certs];
 
     // Server verifies certificate of client
-    #[cfg(not(feature = "policy_v2"))]
-    let config = TlsConfig::new(certs, signing_key, verify_client_cert, quote)?;
-    #[cfg(feature = "policy_v2")]
     let config = TlsConfig::new(certs, signing_key, verify_client_cert, remote_policy)?;
     config.tls_server(stream).map_err(|e| e.into())
 }
 
+#[cfg(not(feature = "policy_v2"))]
 pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
     #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new()?;
     let (certs, quote) = gen_cert(&signing_key)?;
     let certs = vec![certs];
 
-    #[cfg(feature = "policy_v2")]
-    let _ = &quote; // mark as intentionally unused
+    // Client verifies certificate of server
+    let config = TlsConfig::new(certs, signing_key, verify_server_cert, quote)?;
+    config.tls_client(stream).map_err(|e| {
+        #[cfg(feature = "vmcall-raw")]
+        data.extend_from_slice(
+            &format!(
+                "Error: server_client client(): Failure in tls_client() error: {:?}\n",
+                e
+            )
+            .into_bytes(),
+        );
+        e.into()
+    })
+}
+
+#[cfg(feature = "policy_v2")]
+pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
+    stream: T,
+    remote_policy: Vec<u8>,
+    #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
+) -> Result<SecureChannel<T>> {
+    let signing_key = EcdsaPk::new()?;
+    let (certs, _quote) = gen_cert(&signing_key)?;
+    let certs = vec![certs];
 
     // Client verifies certificate of server
-    #[cfg(not(feature = "policy_v2"))]
-    let config = TlsConfig::new(certs, signing_key, verify_server_cert, quote)?;
-    #[cfg(feature = "policy_v2")]
     let config = TlsConfig::new(certs, signing_key, verify_server_cert, remote_policy)?;
     config.tls_client(stream).map_err(|e| {
         #[cfg(feature = "vmcall-raw")]
