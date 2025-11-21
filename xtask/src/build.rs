@@ -278,7 +278,7 @@ impl BuildArgs {
 
         let cmd = if self.policy_v2 {
             cmd.args(&[
-                "B3C1DCFE-6BEF-449F-A183-63A84EA1E0B4",
+                "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
                 self.policy_issuer_chain()?.to_str().unwrap(),
             ])
         } else {
