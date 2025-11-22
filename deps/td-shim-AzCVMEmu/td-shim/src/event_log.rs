@@ -323,7 +323,7 @@ pub fn event_log_slice(_ccel: &MockCcel) -> &'static mut [u8] {
             log.event_log_slice()
         } else {
             // This shouldn't happen if properly initialized
-            slice::from_raw_parts_mut(ptr::null_mut(), 0)
+            &mut []
         }
     }
 }
