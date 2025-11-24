@@ -82,6 +82,57 @@ impl PartialEq for TcbStatus {
 
 impl Eq for TcbStatus {}
 
+#[derive(Clone, Copy, Debug)]
+pub enum ServtdTcbStatus {
+    UpToDate,
+    OutOfDate,
+    Revoked,
+}
+
+impl ServtdTcbStatus {
+    pub fn as_str(&self) -> &str {
+        match self {
+            ServtdTcbStatus::UpToDate => "UpToDate",
+            ServtdTcbStatus::OutOfDate => "OutOfDate",
+            ServtdTcbStatus::Revoked => "Revoked",
+        }
+    }
+
+    // "UpToDate" == "OutOfDate" > "Revoked"
+    fn rank(&self) -> u8 {
+        match self {
+            ServtdTcbStatus::UpToDate | ServtdTcbStatus::OutOfDate => 2,
+            ServtdTcbStatus::Revoked => 0,
+        }
+    }
+}
+
+impl TryFrom<&str> for ServtdTcbStatus {
+    type Error = PolicyError;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "UpToDate" => Ok(ServtdTcbStatus::UpToDate),
+            "OutOfDate" => Ok(ServtdTcbStatus::OutOfDate),
+            "Revoked" => Ok(ServtdTcbStatus::Revoked),
+            _ => Err(PolicyError::InvalidParameter),
+        }
+    }
+}
+
+impl PartialOrd for ServtdTcbStatus {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.rank().cmp(&other.rank()))
+    }
+}
+
+impl PartialEq for ServtdTcbStatus {
+    fn eq(&self, other: &Self) -> bool {
+        self.rank() == other.rank()
+    }
+}
+
+impl Eq for ServtdTcbStatus {}
+
 /// Contains all required data to be evaluated against a policy
 #[derive(Debug, Clone, Default)]
 pub struct PolicyEvaluationInfo {
@@ -486,7 +537,7 @@ impl ServtdPolicy {
         }
 
         if let Some(property) = &self.migtd_identity.tcb_status_accepted {
-            if !property.evaluate_tcb_status(
+            if !property.evaluate_servtd_tcb_status(
                 value
                     .migtd_tcb_status
                     .as_deref()
@@ -741,6 +792,32 @@ impl PolicyProperty {
             }
             _ => Err(PolicyError::InvalidReference),
         }
+    }
+
+    /// Evaluate a ServtdTcbStatus property against a reference value
+    fn evaluate_servtd_tcb_status(
+        &self,
+        value: ServtdTcbStatus,
+        _relative_reference: Option<ServtdTcbStatus>,
+    ) -> Result<bool, PolicyError> {
+        // "UpToDate" is always allowed.
+        // "OutOfDate" is always allowed, because time stamp is not trusted.
+        const ALWAYS_ALLOW: &[ServtdTcbStatus] =
+            &[ServtdTcbStatus::UpToDate, ServtdTcbStatus::OutOfDate];
+        // "Revoked" is always denied.
+        const ALWAYS_DENY: &[ServtdTcbStatus] = &[ServtdTcbStatus::Revoked];
+
+        if ALWAYS_DENY.contains(&value) {
+            return Ok(false);
+        }
+
+        if ALWAYS_ALLOW.contains(&value) {
+            return Ok(true);
+        }
+
+        // Every status already falls into either the always-allow or always-deny
+        // set.
+        Ok(false)
     }
 }
 
