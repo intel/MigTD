@@ -370,7 +370,7 @@ impl TcbPolicy {
 
         if let Some(tcb_date_policy) = &self.tcb_date {
             if !tcb_date_policy.evaluate_string(
-                &value
+                value
                     .tcb_date
                     .as_deref()
                     .ok_or(PolicyError::TcbEvaluation)?,
@@ -552,7 +552,7 @@ impl PolicyProperty {
             Reference::Integer(reference) => match self.operation.as_str() {
                 "equal" => Ok(value == *reference),
                 "greater-or-equal" => Ok(value >= *reference),
-                _ => return Err(PolicyError::InvalidOperation),
+                _ => Err(PolicyError::InvalidOperation),
             },
             Reference::String(reference) => {
                 if reference == "self" || reference == "init" {
@@ -565,7 +565,7 @@ impl PolicyProperty {
                     }
                 } else {
                     match self.operation.as_str() {
-                        "in-range" | "in-time-range" => is_in_range(&value, &reference),
+                        "in-range" | "in-time-range" => is_in_range(&value, reference),
                         _ => Err(PolicyError::InvalidOperation),
                     }
                 }
@@ -606,12 +606,12 @@ impl PolicyProperty {
                     }
                     Ok(true)
                 }
-                _ => return Err(PolicyError::InvalidOperation),
+                _ => Err(PolicyError::InvalidOperation),
             }
         };
 
         match &self.reference {
-            Reference::IntegerList(reference) => integer_list_op(values, &reference),
+            Reference::IntegerList(reference) => integer_list_op(values, reference),
             Reference::String(reference) => {
                 if reference != "self" && reference != "init" {
                     return Err(PolicyError::InvalidReference);
