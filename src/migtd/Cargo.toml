@@ -100,6 +100,7 @@ AzCVMEmu = [
 	"tokio",
 ]
 igvm-attest = ["attestation/igvm-attest"]
+enable-vmm-logger = []
 
 [patch.crates-io]
 sys_time = { path = "src/std-support/sys_time" }

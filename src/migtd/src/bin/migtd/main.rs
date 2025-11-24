@@ -98,12 +98,15 @@ fn main() {
 }
 
 pub fn runtime_main() {
+    #[cfg(not(feature = "enable-vmm-logger"))]
     let _ = td_logger::init();
 
     // Create LogArea per vCPU
     #[cfg(feature = "vmcall-raw")]
     {
         let _ = create_logarea();
+        #[cfg(feature = "enable-vmm-logger")]
+        let _ = init_vmm_logger();
     }
 
     // Dump basic information of MigTD
