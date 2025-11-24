@@ -83,12 +83,9 @@ impl TdIdentity {
     }
 
     pub fn get_tcb_level_by_svn(&self, svn: u16) -> Option<&TcbLevel> {
-        for level in &self.tcb_levels {
-            if level.tcb.isvsvn == svn {
-                return Some(level);
-            }
-        }
-        None
+        self.tcb_levels
+            .iter()
+            .find(|&level| level.tcb.isvsvn == svn)
     }
 }
 
@@ -232,7 +229,7 @@ impl TdTcbMapping {
         // Optional RTMR2 / RTMR3:
         // If pattern provides a value -> target must also provide and match.
         // If pattern is None -> treated as wildcard (ignore target value).
-        if let Some(_) = pattern.rtmr2 {
+        if pattern.rtmr2.is_some() {
             match (&pattern.rtmr2, &target.rtmr2) {
                 (Some(p), Some(t)) if p != t => return false,
                 (Some(_), None) => return false,
@@ -240,7 +237,7 @@ impl TdTcbMapping {
             }
         }
 
-        if let Some(_) = pattern.rtmr3 {
+        if pattern.rtmr3.is_some() {
             match (&pattern.rtmr3, &target.rtmr3) {
                 (Some(p), Some(t)) if p != t => return false,
                 (Some(_), None) => return false,

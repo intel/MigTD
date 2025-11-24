@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use crate::{CcEvent, EventName, PolicyError};
+use crate::{CcEvent, EventName, PolicyError, Report, REPORT_DATA_SIZE};
 use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 
 mod servtd_collateral;
@@ -11,6 +11,18 @@ mod collaterals;
 pub use collaterals::*;
 mod policy;
 pub use policy::*;
+
+impl<'a> Report<'a> {
+    pub fn new(report: &'a [u8]) -> Result<Self, PolicyError> {
+        if report.len() != REPORT_DATA_SIZE {
+            return Err(PolicyError::InvalidParameter);
+        }
+
+        Ok(Report {
+            migtd_info: Self::setup_migtd_info(report)?,
+        })
+    }
+}
 
 // Verify the hash of a specific event in the event log
 fn verify_event_hash(
@@ -36,7 +48,7 @@ fn verify_event_hash(
         crypto::hash::digest_sha384(data_to_hash).map_err(|_| PolicyError::HashCalculation)?;
 
     // Compare the calculated digest with the expected digest
-    Ok(&expected_hash == event_digest)
+    Ok(expected_hash == event_digest)
 }
 
 /// Convert a hex string to bytes without using external crates
@@ -67,7 +79,7 @@ fn hex_string_to_bytes(hex: &str) -> Result<Vec<u8>, PolicyError> {
 }
 
 fn bytes_to_hex_string(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02X}", b)).collect()
+    bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
 #[cfg(test)]
