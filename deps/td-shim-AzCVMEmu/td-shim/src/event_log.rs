@@ -53,9 +53,6 @@ impl MockCcel {
 
 // Mock ACPI tables function
 pub fn get_acpi_tables() -> Option<&'static [&'static [u8]]> {
-    use core::mem::size_of;
-    use zerocopy::AsBytes;
-
     // Initialize the event log to get the CCEL
     init_event_log();
 
