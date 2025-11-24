@@ -210,6 +210,7 @@ USE_MOCK_REPORT=false
 MOCK_QUOTE_FILE=""
 FETCH_COLLATERALS=false
 AZURE_REGION="useast"
+EXTRA_FEATURES=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -239,6 +240,10 @@ while [[ $# -gt 0 ]]; do
             AZURE_REGION="$2"
             shift 2
             ;;
+        --extra-features)
+            EXTRA_FEATURES="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo
@@ -250,6 +255,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --fetch-collaterals          Fetch fresh collaterals from Azure THIM before generating policy"
             echo "  --azure-region REGION        Azure region for THIM (useast, westus, northeurope)"
             echo "                               (default: useast, applies with --fetch-collaterals)"
+            echo "  --extra-features FEATURES    Extra cargo features to add (e.g., 'igvm-attest')"
             echo "  -h, --help                   Show this help message"
             echo
             echo "Examples:"
@@ -261,6 +267,10 @@ while [[ $# -gt 0 ]]; do
             echo
             echo "  # Mock report mode with custom quote file:"
             echo "  $0 --mock-quote-file ./config/AzCVMEmu/az_migtd_quote.blob"
+            echo
+            echo "  # With igvm-attest feature:"
+            echo "  $0 --mock-report --extra-features igvm-attest"
+            echo
             echo "  # Fetch fresh collaterals from Azure THIM and generate policy:"
             echo "  $0 --fetch-collaterals --azure-region useast"
             echo
@@ -627,6 +637,11 @@ if [ "$USE_MOCK_REPORT" = true ]; then
     if [[ -n "$MOCK_QUOTE_FILE" ]]; then
         TEST_CMD="$TEST_CMD --mock-quote-file $MOCK_QUOTE_FILE"
     fi
+fi
+
+# Add extra features if specified
+if [[ -n "$EXTRA_FEATURES" ]]; then
+    TEST_CMD="$TEST_CMD --features $EXTRA_FEATURES"
 fi
 
 if [ -z "$SKIP_TEST" ]; then

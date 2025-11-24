@@ -27,6 +27,16 @@ This mode uses real Azure IMDS attestation and allows testing policy rules for p
 cargo build --no-default-features --features AzCVMEmu,test_mock_report
 ```
 
+**With IGVM attestation** (uses servtd_get_quote for quote generation):
+```bash
+cargo build --no-default-features --features AzCVMEmu,igvm-attest
+```
+
+**With IGVM attestation and mock report**:
+```bash
+cargo build --no-default-features --features AzCVMEmu,igvm-attest,test_mock_report
+```
+
 **Skip RA build** (development/testing - no TDX/Azure CVM required, bypasses attestation - on any Linux machine):
 ```bash
 cargo build --no-default-features --features AzCVMEmu,test_disable_ra_and_accept_all
@@ -71,6 +81,10 @@ The easiest way to run MigTD in AzCVMEmu mode is using the provided `migtdemu.sh
 ./migtdemu.sh --mock-report --role source
 ./migtdemu.sh --mock-report --both
 
+# IGVM attestation mode (uses servtd_get_quote)
+./migtdemu.sh --igvm-attest --role source
+./migtdemu.sh --igvm-attest --mock-report --both
+
 # Skip RA mode (no attestation - on any Linux machine)
 ./migtdemu.sh --skip-ra --role source
 ./migtdemu.sh --skip-ra --both
@@ -82,6 +96,7 @@ The easiest way to run MigTD in AzCVMEmu mode is using the provided `migtdemu.sh
 Script capabilities at a glance:
 - Builds MigTD with `--no-default-features --features AzCVMEmu` in the selected mode (debug/release).
 - With `--mock-report` flag: Builds with `--features "AzCVMEmu,test_mock_report"` for mock TD reports/quotes with full attestation flow (works on any Linux machine).
+- With `--igvm-attest` flag: Builds with `--features "AzCVMEmu,igvm-attest"` to use servtd_get_quote for quote generation (compatible with mock-report).
 - With `--skip-ra` flag: Builds with `--features "AzCVMEmu,test_disable_ra_and_accept_all"` to bypass attestation entirely (works on any Linux machine).
 - Validates and sets required env vars: `MIGTD_POLICY_FILE` and `MIGTD_ROOT_CA_FILE`.
 - Auto-sets `RUST_BACKTRACE` (1) and `RUST_LOG` (debug in debug builds, info in release) unless already set.
@@ -100,6 +115,7 @@ Supported options:
 - `--policy-issuer-chain-file FILE` policy issuer chain file path (required with --policy-v2)
 - `--policy-v2`                    enable policy v2 support
 - `--features FEATURES`            add extra cargo features (comma-separated, e.g., 'spdm_attestation')
+- `--igvm-attest`                  enable IGVM attestation feature (uses servtd_get_quote)
 - `--debug | --release`            build mode (default: release)
 - `--mock-report`                  use mock TD reports/quotes with full attestation flow (on any Linux machine)
 - `--skip-ra`                      skip remote attestation entirely (on any Linux machine)
@@ -172,4 +188,3 @@ Direct run examples (no script):
 - `--dest-ip, -d IP`: Set destination IP address for connection (default: 127.0.0.1)
 - `--dest-port, -t PORT`: Set destination port for connection (default: 8001)
 - `--help, -h`: Show help message
-
