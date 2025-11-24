@@ -516,7 +516,7 @@ impl fmt::Display for Error {
             Repr::Os(code) => {
                 // let detail = sys::os::error_string(code);
                 let detail = "system error";
-                write!(fmt, "{} (os error {})", detail, code)
+                write!(fmt, "{detail} (os error {code})")
             }
             Repr::Custom(ref c) => c.error.fmt(fmt),
             Repr::Simple(kind) => write!(fmt, "{}", kind.as_str()),

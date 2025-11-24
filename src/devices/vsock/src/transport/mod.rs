@@ -49,7 +49,7 @@ impl Display for VsockTransportError {
             VsockTransportError::DmaAllocation => write!(f, "DmaAllocation"),
             VsockTransportError::Timeout => write!(f, "Timeout"),
             #[cfg(feature = "virtio-vsock")]
-            VsockTransportError::Virtio(e) => write!(f, "Virtio: {}", e),
+            VsockTransportError::Virtio(e) => write!(f, "Virtio: {e}"),
             #[cfg(feature = "vmcall-vsock")]
             VsockTransportError::Vmcall(_) => write!(f, "Vmcall"),
             VsockTransportError::Interrupt => write!(f, "Interrupt"),

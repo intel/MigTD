@@ -75,13 +75,13 @@ impl Display for VirtioSerialError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             VirtioSerialError::Initialization => write!(f, "Initialization"),
-            VirtioSerialError::Virtio(e) => write!(f, "Virtio: {}", e),
+            VirtioSerialError::Virtio(e) => write!(f, "Virtio: {e}"),
             VirtioSerialError::InvalidParameter => write!(f, "InvalidParameter"),
             VirtioSerialError::OutOfResource => write!(f, "OutOfResource"),
             VirtioSerialError::Device => write!(f, "Device"),
             VirtioSerialError::Timeout => write!(f, "Timeout"),
-            VirtioSerialError::PortNotAvailable(e) => write!(f, "PortNotAvailable: 0x{:x}", e),
-            VirtioSerialError::PortAlreadyUsed(e) => write!(f, "PortAlreadyUsed: 0x{:x}", e),
+            VirtioSerialError::PortNotAvailable(e) => write!(f, "PortNotAvailable: 0x{e:x}"),
+            VirtioSerialError::PortAlreadyUsed(e) => write!(f, "PortAlreadyUsed: 0x{e:x}"),
             VirtioSerialError::Interrupt => write!(f, "Interrupt"),
             VirtioSerialError::NotReady => write!(f, "NotReady"),
         }

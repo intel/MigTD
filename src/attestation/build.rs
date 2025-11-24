@@ -50,7 +50,7 @@ fn main() {
         &lib_path
     );
 
-    println!("cargo:rustc-link-search=native={}", search_dir);
+    println!("cargo:rustc-link-search=native={search_dir}");
 
     // Use different linking approach based on feature
     #[cfg(feature = "AzCVMEmu")]

@@ -68,7 +68,7 @@ impl Display for VirtioError {
             VirtioError::IoError => write!(f, "IoError"),
             VirtioError::BadRing => write!(f, "BadRing"),
             VirtioError::SetDeviceNotification => write!(f, "SetDeviceNotification"),
-            VirtioError::InvalidOffset(e) => write!(f, "InvalidOffset: {}", e),
+            VirtioError::InvalidOffset(e) => write!(f, "InvalidOffset: {e}"),
             VirtioError::InvalidDescriptorIndex => write!(f, "InvalidDescriptorIndex"),
             VirtioError::InvalidRingIndex => write!(f, "InvalidRingIndex"),
             VirtioError::InvalidDescriptor => write!(f, "InvalidDescriptor"),

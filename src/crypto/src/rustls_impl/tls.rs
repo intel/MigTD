@@ -267,8 +267,7 @@ impl ServerCertVerifier for Verifier {
         if let Err(e) = (self.cb)(end_entity.as_ref(), &self.data) {
             match e {
                 Error::TlsVerifyPeerCert(e) => Err(rustls::Error::General(format!(
-                    "{}({})",
-                    TLS_CUSTOM_CALLBACK_ERROR, e
+                    "{TLS_CUSTOM_CALLBACK_ERROR}({e})"
                 ))),
                 _ => Err(rustls::Error::General("Unexpected".to_string())),
             }
@@ -322,8 +321,7 @@ impl ClientCertVerifier for Verifier {
         if let Err(e) = (self.cb)(end_entity.as_ref(), &self.data) {
             match e {
                 Error::TlsVerifyPeerCert(e) => Err(rustls::Error::General(format!(
-                    "{}({})",
-                    TLS_CUSTOM_CALLBACK_ERROR, e
+                    "{TLS_CUSTOM_CALLBACK_ERROR}({e})"
                 ))),
                 _ => Err(rustls::Error::General("Unexpected".to_string())),
             }
