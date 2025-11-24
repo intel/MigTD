@@ -63,7 +63,7 @@ impl<'a> VmcallServiceCommand<'a> {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ServiceMigWaitForReqCommand {
     pub version: u8,
     pub command: u8,
@@ -76,7 +76,7 @@ impl ServiceMigWaitForReqCommand {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ServiceMigReportStatusCommand {
     pub version: u8,
     pub command: u8,
@@ -153,7 +153,7 @@ impl<'a> VmcallServiceResponse<'a> {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, FromZeroes, FromBytes, AsBytes)]
 pub struct ServiceQueryResponse {
     pub version: u8,
@@ -163,7 +163,7 @@ pub struct ServiceQueryResponse {
     pub guid: [u8; 16],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(FromZeroes, FromBytes, AsBytes)]
 #[cfg(not(feature = "vmcall-raw"))]
 pub struct ServiceMigWaitForReqResponse {
@@ -186,7 +186,7 @@ pub struct ServiceMigWaitForReqResponse {
     pub binding_handle: u64,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(FromZeroes, FromBytes, AsBytes)]
 pub struct ServiceMigWaitForReqShutdown {
     pub version: u8,
@@ -194,7 +194,7 @@ pub struct ServiceMigWaitForReqShutdown {
     pub reserved: [u8; 2],
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(FromZeroes, FromBytes, AsBytes)]
 pub struct ServiceMigReportStatusResponse {
     pub version: u8,

@@ -51,7 +51,7 @@ impl Display for VsockError {
         match self {
             VsockError::Initialization => write!(f, "Initialization"),
             VsockError::DeviceNotAvailable => write!(f, "DeviceNotAvailable"),
-            VsockError::Transport(e) => write!(f, "Transport: {}", e),
+            VsockError::Transport(e) => write!(f, "Transport: {e}"),
             VsockError::Truncated => write!(f, "Truncated"),
             VsockError::Malformed => write!(f, "Malformed"),
             VsockError::Illegal => write!(f, "Illegal"),

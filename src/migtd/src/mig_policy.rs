@@ -101,7 +101,7 @@ mod v2 {
                 let quote = attestation::get_quote(tdx_report.as_bytes())
                     .map_err(|_| PolicyError::QuoteGeneration)?;
                 let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
-                setup_evaluation_data(fmspc, &suppl_data, &policy, policy.get_collaterals())
+                setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
             })
             .map(|_| ())
     }
@@ -109,7 +109,7 @@ mod v2 {
     pub fn get_local_tcb_evaluation_info() -> Result<PolicyEvaluationInfo, PolicyError> {
         LOCAL_TCB_INFO
             .get()
-            .map(|info| info.clone())
+            .cloned()
             .ok_or(PolicyError::InvalidParameter)
     }
 
@@ -209,7 +209,7 @@ mod v2 {
             .map_err(|_| PolicyError::QuoteVerification)?;
 
         // 2. Verify the event log integrity
-        let _ = verify_event_log(
+        verify_event_log(
             event_log,
             suppl_data
                 .get(..REPORT_DATA_SIZE)
@@ -243,10 +243,10 @@ mod v2 {
         quote: &[u8],
         collaterals: &Collaterals,
     ) -> Result<([u8; 6], Vec<u8>), PolicyError> {
-        let fmspc = get_fmspc_from_quote(&quote)?;
+        let fmspc = get_fmspc_from_quote(quote)?;
         let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
         let collateral_cstr = convert_collateral_to_cstring(&collateral)?;
-        let suppl_data = verify_quote_with_collaterals(&quote, collateral_cstr)
+        let suppl_data = verify_quote_with_collaterals(quote, collateral_cstr)
             .map_err(|_| PolicyError::QuoteVerification)?;
 
         Ok((fmspc, suppl_data))
@@ -258,7 +258,7 @@ mod v2 {
         policy: &VerifiedPolicy,
         collaterals: &Collaterals,
     ) -> Result<PolicyEvaluationInfo, PolicyError> {
-        let (tcb_date, tcb_status) = get_tcb_date_and_status_from_suppl_data(&suppl_data)?;
+        let (tcb_date, tcb_status) = get_tcb_date_and_status_from_suppl_data(suppl_data)?;
         let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
         let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral)?;
         let report_value = Report::new(

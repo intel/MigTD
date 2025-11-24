@@ -57,6 +57,7 @@ pub extern "C" fn _start(hob: u64, payload: u64) -> ! {
 
     const PT_SIZE: usize = 0x8_0000;
     const SHARED_MEMORY_SIZE: usize = 0x1C_0000;
+    #[cfg(feature = "cet-shstk")]
     const SHADOW_STACK_SIZE: usize = 0x10000;
 
     extern "C" {

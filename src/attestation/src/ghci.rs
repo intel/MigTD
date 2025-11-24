@@ -76,10 +76,9 @@ fn set_vmm_notification() -> bool {
     }
 
     // Setup event notifier
-    _ = tdx_tdcall::tdx::tdvmcall_setup_event_notify(NOTIFY_VECTOR as u64).map_err(|e| {
+    if let Err(e) = tdx_tdcall::tdx::tdvmcall_setup_event_notify(NOTIFY_VECTOR as u64) {
         log::error!("Fail to setup event notify for VMM: {:?}\n", e);
-        false
-    });
+    }
 
     true
 }

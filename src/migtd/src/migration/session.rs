@@ -92,20 +92,11 @@ lazy_static! {
     pub static ref REQUESTS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
 }
 
+#[derive(Default)]
 pub struct ExchangeInformation {
     pub min_ver: u16,
     pub max_ver: u16,
     pub key: MigrationSessionKey,
-}
-
-impl Default for ExchangeInformation {
-    fn default() -> Self {
-        Self {
-            key: MigrationSessionKey::new(),
-            min_ver: 0,
-            max_ver: 0,
-        }
-    }
 }
 
 #[cfg(not(feature = "spdm_attestation"))]
