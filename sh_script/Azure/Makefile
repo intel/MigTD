@@ -28,12 +28,12 @@ help:
 	@echo "  build-igvm-get-quote-all        - Build IGVM with v2 policy which will call getquote durining initialization."
 
 pre-build:
-	@if ! command -v rustc >/dev/null 2>&1 || ! rustc --version | grep -q "1.83.0"; then \
-		echo "Installing Rust 1.83.0..."; \
-		curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.83.0; \
+	@if ! command -v rustc >/dev/null 2>&1 || ! rustc --version | grep -q "1.88.0"; then \
+		echo "Installing Rust 1.88.0..."; \
+		curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.88.0; \
 		. ~/.cargo/env; \
 	else \
-		echo "Rust 1.83.0 already installed"; \
+		echo "Rust 1.88.0 already installed"; \
 	fi
 	@if ! rustup target list --installed | grep -q "x86_64-unknown-none"; then \
 		echo "Adding x86_64-unknown-none target..."; \
