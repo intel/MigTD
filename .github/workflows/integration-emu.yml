@@ -21,10 +21,34 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
-    name: Build and Test MigTD in Emulation Mode
+  emulation-tests:
+    name: ${{ matrix.test-name }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test-name: "Build and Test (Skip RA)"
+            test-type: "skip-ra"
+            install-jq: 'false'
+            timeout-seconds: 300
+            test-command: "./migtdemu.sh --skip-ra --both --no-sudo --log-level info"
+            artifact-name: "skip-ra-test-logs"
+            
+          - test-name: "Policy v2 with Mock Report"
+            test-type: "policy-v2"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report"
+            artifact-name: "policy-v2-test-logs"
+            
+          - test-name: "Policy v2 with Mock Report and IGVM Attest"
+            test-type: "policy-v2-igvm"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report --extra-features igvm-attest"
+            artifact-name: "policy-v2-igvm-test-logs"
 
     steps:
       - name: Checkout sources
@@ -36,13 +60,16 @@ jobs:
         uses: ./.github/actions/setup-build-environment
         with:
           install-tpm-tools: 'true'
+          install-jq: ${{ matrix.install-jq }}
 
-      - name: Build MigTD with test features for emulation
+      - name: Build MigTD for skip-ra test
+        if: matrix.test-type == 'skip-ra'
         run: |
           echo "Building MigTD with AzCVMEmu and test features for emulation testing..."
           cargo build --release --features "AzCVMEmu,test_disable_ra_and_accept_all" --no-default-features
 
-      - name: Verify emulation script and binary
+      - name: Verify emulation script
+        if: matrix.test-type == 'skip-ra'
         run: |
           if [[ ! -f "./migtdemu.sh" ]]; then
             echo "Error: migtdemu.sh not found"
@@ -54,156 +81,30 @@ jobs:
             echo "Error: migtd binary not found after build"
             exit 1
           fi
-          
           echo "Emulation script and binary are ready"
 
-      - name: Run MigTD emulation tests
-        id: emulation_test
+      - name: Prepare policy v2 script
+        if: matrix.test-type == 'policy-v2' || matrix.test-type == 'policy-v2-igvm'
+        run: chmod +x ./sh_script/build_AzCVMEmu_policy_and_test.sh
+
+      - name: Run test
+        id: test_run
         run: |
-          echo "Running MigTD emulation tests with both source and destination..."
-          echo "This will start destination, then source, and test the migration flow"
-          echo "Command: ./migtdemu.sh --skip-ra --both --no-sudo --log-level info"
+          echo "Running: ${{ matrix.test-name }}"
+          echo "Command: ${{ matrix.test-command }}"
           
-          # Run the test with timeout and capture exit code
           set +e
-          timeout 300 ./migtdemu.sh --skip-ra --both --no-sudo --log-level info
+          timeout ${{ matrix.timeout-seconds }} ${{ matrix.test-command }}
           EXIT_CODE=$?
           set -e
           
           echo "Test completed with exit code: $EXIT_CODE"
           
           if [[ $EXIT_CODE -eq 0 ]]; then
-            echo "✅ Emulation test completed successfully"
+            echo "✅ Test completed successfully"
             echo "test_status=success" >> $GITHUB_OUTPUT
           elif [[ $EXIT_CODE -eq 124 ]]; then
-            echo "❌ Emulation test timed out after 300 seconds"
-            echo "test_status=timeout" >> $GITHUB_OUTPUT
-            exit 1
-          else
-            echo "❌ Emulation test failed with exit code $EXIT_CODE"
-            echo "test_status=failed" >> $GITHUB_OUTPUT
-            exit $EXIT_CODE
-          fi
-
-      - name: Check test outputs and logs
-        if: always()
-        run: |
-          echo "=== Test Execution Summary ==="
-          echo "Test status: ${{ steps.emulation_test.outputs.test_status || 'unknown' }}"
-          
-          if [[ -f "dest.out.log" ]]; then
-            DEST_LOG_SIZE=$(wc -l < dest.out.log)
-            echo "Destination log found: $DEST_LOG_SIZE lines"
-            
-            echo ""
-            echo "=== Last 50 lines of destination log ==="
-            tail -n 50 dest.out.log
-            
-            echo ""
-            echo "=== First 20 lines of destination log ==="
-            head -n 20 dest.out.log
-          else
-            echo "No destination log file found"
-          fi
-          
-          # Check for any process dumps or error files
-          if ls core* 1> /dev/null 2>&1; then
-            echo ""
-            echo "=== Core dumps found ==="
-            ls -la core*
-          fi
-          
-          # Show summary of what was tested
-          echo ""
-          echo "=== Test Summary ==="
-          echo "- Built MigTD with AzCVMEmu and test_disable_ra_and_accept_all features"
-          echo "- Ran emulation test with both source and destination instances"
-          echo "- Skip RA mode enabled (mock attestation, no TPM/Azure CVM required)"
-
-      - name: Upload test artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
-        with:
-          name: migtd-test-logs-${{ github.run_id }}
-          path: |
-            dest.out.log
-            *.log
-            core*
-            target/release/migtd
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Report final status
-        if: always()
-        run: |
-          case "${{ steps.emulation_test.outputs.test_status }}" in
-            "success")
-              echo "🎉 MigTD PR tests passed successfully!"
-              echo "✅ Build completed"
-              echo "✅ Emulation tests passed"
-              echo "The PR is ready for code review."
-              ;;
-            "timeout")
-              echo "⏰ MigTD tests timed out"
-              echo "✅ Build completed"
-              echo "❌ Tests timed out after 5 minutes"
-              echo "Check logs for hanging processes or infinite loops."
-              ;;
-            "failed"|*)
-              echo "❌ MigTD tests failed"
-              echo "✅ Build completed"
-              echo "❌ Emulation tests failed"
-              echo "Check the test logs above and uploaded artifacts for debugging details."
-              ;;
-          esac
-
-  policy-v2-mock-report-test:
-    name: Policy v2 with Mock Report End-to-End Test
-    runs-on: ubuntu-22.04
-    timeout-minutes: 60
-
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-        with:
-          submodules: recursive
-
-      - name: Setup build environment
-        uses: ./.github/actions/setup-build-environment
-        with:
-          install-tpm-tools: 'true'
-          install-jq: 'true'
-
-      - name: Run policy v2 generation and test script
-        id: policy_v2_test
-        run: |
-          echo "=== Running Policy v2 Mock Report Test Script ==="
-          echo "This script will:"
-          echo "  1. Build all required tools (azcvm-extract-report, json-signer, etc.)"
-          echo "  2. Generate mock report data"
-          echo "  3. Update policy templates with mock measurements"
-          echo "  4. Generate certificates and sign policy components"
-          echo "  5. Create and sign final policy v2"
-          echo "  6. Build MigTD with mock report feature"
-          echo "  7. Run end-to-end test with both source and destination"
-          echo ""
-          
-          chmod +x ./sh_script/build_AzCVMEmu_policy_and_test.sh
-          
-          # Run the script with timeout
-          set +e
-          timeout 900 ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report
-          EXIT_CODE=$?
-          set -e
-          
-          echo ""
-          echo "Script completed with exit code: $EXIT_CODE"
-          
-          if [[ $EXIT_CODE -eq 0 ]]; then
-            echo "✅ Policy v2 with mock report test completed successfully"
-            echo "test_status=success" >> $GITHUB_OUTPUT
-          elif [[ $EXIT_CODE -eq 124 ]]; then
-            echo "❌ Test timed out after 10 minutes"
+            echo "❌ Test timed out after ${{ matrix.timeout-seconds }} seconds"
             echo "test_status=timeout" >> $GITHUB_OUTPUT
             exit 1
           else
@@ -216,7 +117,8 @@ jobs:
         if: always()
         run: |
           echo "=== Test Execution Summary ==="
-          echo "Test status: ${{ steps.policy_v2_test.outputs.test_status || 'unknown' }}"
+          echo "Test: ${{ matrix.test-name }}"
+          echo "Status: ${{ steps.test_run.outputs.test_status || 'unknown' }}"
           
           if [[ -f "dest.out.log" ]]; then
             DEST_LOG_SIZE=$(wc -l < dest.out.log)
@@ -233,25 +135,37 @@ jobs:
             echo "No destination log file found"
           fi
           
-          # Check if policy files were generated
-          if [[ -f "config/AzCVMEmu/policy_v2_signed.json" ]]; then
-            POLICY_SIZE=$(wc -c < config/AzCVMEmu/policy_v2_signed.json)
-            echo ""
-            echo "Policy file generated: ${POLICY_SIZE} bytes"
+          # Check policy files for policy v2 tests
+          if [[ "${{ matrix.test-type }}" == "policy-v2" || "${{ matrix.test-type }}" == "policy-v2-igvm" ]]; then
+            if [[ -f "config/AzCVMEmu/policy_v2_signed.json" ]]; then
+              POLICY_SIZE=$(wc -c < config/AzCVMEmu/policy_v2_signed.json)
+              echo ""
+              echo "Policy file generated: ${POLICY_SIZE} bytes"
+            fi
+            
+            if [[ -f "config/AzCVMEmu/policy_issuer_chain.pem" ]]; then
+              echo "Certificate chain file generated"
+            fi
           fi
           
-          if [[ -f "config/AzCVMEmu/policy_issuer_chain.pem" ]]; then
-            echo "Certificate chain file generated"
+          # Check for core dumps (skip-ra test)
+          if [[ "${{ matrix.test-type }}" == "skip-ra" ]]; then
+            if ls core* 1> /dev/null 2>&1; then
+              echo ""
+              echo "=== Core dumps found ==="
+              ls -la core*
+            fi
           fi
 
       - name: Upload test artifacts on failure
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
-          name: policy-v2-test-logs-${{ github.run_id }}
+          name: ${{ matrix.artifact-name }}-${{ github.run_id }}
           path: |
             dest.out.log
             *.log
+            core*
             config/AzCVMEmu/policy_v2_signed.json
             config/AzCVMEmu/policy_issuer_chain.pem
             target/release/migtd
@@ -261,27 +175,17 @@ jobs:
       - name: Report final status
         if: always()
         run: |
-          case "${{ steps.policy_v2_test.outputs.test_status }}" in
+          echo "=== ${{ matrix.test-name }} ==="
+          case "${{ steps.test_run.outputs.test_status }}" in
             "success")
-              echo "🎉 Policy v2 mock report test passed successfully!"
-              echo "✅ All 13 steps of policy generation completed"
-              echo "✅ Mock report data generated"
-              echo "✅ Policy v2 signed and validated"
-              echo "✅ End-to-end migration test passed"
-              echo "The PR is ready for code review."
+              echo "🎉 Test passed successfully!"
               ;;
             "timeout")
-              echo "⏰ Policy v2 test timed out"
-              echo "❌ Tests timed out after 10 minutes"
+              echo "⏰ Test timed out after ${{ matrix.timeout-seconds }} seconds"
               echo "Check logs for hanging processes or infinite loops."
               ;;
             "failed"|*)
-              echo "❌ Policy v2 test failed"
+              echo "❌ Test failed"
               echo "Check the test logs above and uploaded artifacts for debugging details."
-              echo "The script performs all 13 steps:"
-              echo "  1-4: Build tools and generate mock measurements"
-              echo "  5-7: Generate certificates and sign components"
-              echo "  8-10: Generate collateral and merge policy"
-              echo "  11-13: Copy files and run integration test"
               ;;
           esac
