@@ -33,7 +33,7 @@ use zerocopy::AsBytes;
 type Result<T> = core::result::Result<T, MigrationResult>;
 
 #[cfg(feature = "vmcall-raw")]
-use super::logging::entrylog;
+use super::logging::{entrylog, set_current_request_id};
 use super::{data::*, *};
 use crate::driver::ticks::with_timeout;
 #[cfg(not(feature = "spdm_attestation"))]
@@ -265,6 +265,7 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 Poll::Pending
             } else {
                 REQUESTS.lock().insert(mig_request_id);
+                set_current_request_id(mig_request_id);
                 Poll::Ready(Ok(WaitForRequestResponse::StartMigration(wfr_info)))
             }
         } else if operation == DataStatusOperation::GetReportData as u8 {

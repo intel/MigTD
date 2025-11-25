@@ -23,6 +23,7 @@ use zerocopy::{transmute_ref, AsBytes, FromBytes, FromZeroes};
 const PAGE_SIZE: usize = 0x1_000;
 #[cfg(not(test))]
 const TDCALL_STATUS_SUCCESS: u64 = 0;
+use log::{LevelFilter, Metadata, Record, SetLoggerError};
 
 type Result<T> = core::result::Result<T, MigrationResult>;
 
@@ -469,6 +470,50 @@ pub fn entrylog(msg: &Vec<u8>, loglevel: Level, request_id: u64) {
             }
         }
     }
+}
+
+lazy_static! {
+    static ref CURRENT_REQUEST_ID: AtomicU64 = AtomicU64::new(0);
+}
+
+/// Set the current request ID for logging context
+pub fn set_current_request_id(request_id: u64) {
+    CURRENT_REQUEST_ID.store(request_id, Ordering::SeqCst);
+}
+
+/// Custom logger that routes log messages to structured logging
+pub struct VmmLoggerBackend;
+
+impl log::Log for VmmLoggerBackend {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        let log_max_level = LOGGING_INFORMATION.maxloglevel.load(Ordering::SeqCst);
+        let log_level = loglevel_to_u8(metadata.level());
+
+        // Enable if logging is configured and level is appropriate
+        log_level <= log_max_level
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            let msg = format!("{}\n", record.args());
+            let request_id = CURRENT_REQUEST_ID.load(Ordering::SeqCst);
+            entrylog(&msg.into_bytes(), record.level(), request_id);
+
+            // Also output to debug console for development (skip in test mode to avoid issues)
+            #[cfg(not(test))]
+            td_logger::dbg_write_string(&format!("{} - {}\n", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+/// Logger backend for the log crate
+static VM_LOGGER_BACKEND: VmmLoggerBackend = VmmLoggerBackend;
+
+/// Initialize the VMM logger as the global logger
+pub fn init_vmm_logger() -> core::result::Result<(), SetLoggerError> {
+    log::set_logger(&VM_LOGGER_BACKEND).map(|()| log::set_max_level(LevelFilter::Trace))
 }
 
 #[cfg(test)]
@@ -1009,6 +1054,82 @@ mod test {
         logareavector_2.clear();
         unsafe {
             let _ = Box::from_raw(data_buffer_ptr_2 as *mut [u8; PAGE_SIZE]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_log_info() {
+        // cargo test --package migtd --lib migration::logging::test::test_log_info -- --nocapture
+
+        // Reset the global state for testing
+        LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
+        LOGGING_INFORMATION
+            .logarea_created
+            .store(false, Ordering::SeqCst);
+        LOGGING_INFORMATION
+            .logarea_initialized
+            .store(false, Ordering::SeqCst);
+        LOGGING_INFORMATION.logentry_id.store(0, Ordering::SeqCst);
+        LOGGING_INFORMATION.maxloglevel.store(0, Ordering::SeqCst);
+
+        let mut data: Vec<u8> = Vec::new();
+        let log_max_level: u8 = 5;
+
+        // Create and enable log area
+        let result = create_logarea();
+        assert!(result.is_ok());
+
+        let result = init_vmm_logger();
+        assert!(result.is_ok());
+
+        let result = enable_logarea(log_max_level, 0, &mut data).await;
+        assert!(result.is_ok());
+
+        // Set request ID before logging
+        set_current_request_id(12345);
+
+        // call log::info macro
+        log::info!("Test message");
+
+        // Validate buffer structure
+        let mut logareavector = LOGAREAPTR.lock();
+        let data_buffer_ptr = logareavector[0];
+        let data_buffer =
+            unsafe { core::slice::from_raw_parts(data_buffer_ptr as *const u8, PAGE_SIZE) };
+
+        // Check buffer header
+        let header_bytes = &data_buffer[0..size_of::<LogAreaBufferHeader>()];
+        let header: &LogAreaBufferHeader =
+            unsafe { &*(header_bytes.as_ptr() as *const LogAreaBufferHeader) };
+        let signature = header.signature;
+        let vcpuindex = header.vcpuindex;
+        let reserved = header.reserved;
+        let startoffset = header.startoffset;
+        let endoffset = header.endoffset;
+
+        assert_eq!(signature, LOGAREA_SIGNATURE);
+        assert_eq!(vcpuindex, 0);
+        assert_eq!(reserved, 0);
+        assert!(startoffset == size_of::<LogAreaBufferHeader>() as u64);
+        assert!(endoffset > startoffset);
+
+        // Check that there's a valid log entry
+        let entry_bytes =
+            &data_buffer[startoffset as usize..startoffset as usize + size_of::<LogEntryHeader>()];
+        let entry: &LogEntryHeader = unsafe { &*(entry_bytes.as_ptr() as *const LogEntryHeader) };
+        let log_entry_id = entry.log_entry_id;
+        let mig_request_id = entry.mig_request_id;
+        let loglevel = entry.loglevel;
+        let length = entry.length;
+
+        assert_eq!(log_entry_id, 1);
+        assert_eq!(mig_request_id, 12345);
+        assert_eq!(loglevel, loglevel_to_u8(Level::Info));
+        assert_eq!(length, "Test message\n".len() as u32);
+
+        logareavector.clear();
+        unsafe {
+            let _ = Box::from_raw(data_buffer_ptr as *mut [u8; PAGE_SIZE]);
         }
     }
 }
