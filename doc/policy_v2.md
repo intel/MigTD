@@ -92,6 +92,46 @@ During startup:
 - Policy integrity is verified with issuer chain and measured by RTMR and event log (`RawPolicyData::verify` in [src/policy/src/v2/policy.rs](../src/policy/src/v2/policy.rs)).
 - Collaterals are used for quote verification and TCB evaluation.
 
+## 5. Build Final MigTD Image with policy which contain updated TCD mapping
+### Generate new key pair for policy signing
+```
+bash sh_script/key_gen.sh
+```
+
+### build migtd with existing policy
+```
+cargo clean
+cargo image --policy-v2 \
+ --policy config/templates/policy_v2_signed.json \
+ --policy-issuer-chain key/migtd_issuer_chain.pem
+```
+
+### Build migtd-hash tool
+```
+pushd tools/migtd-hash
+cargo build
+popd
+```
+
+### Generate new measurement with updated TCB mapping
+```
+./target/debug/migtd-hash --manifest config/servtd_info.json \
+ --image target/release/migtd.bin \
+ --policy-v2 \
+ --update-tcb-mapping config/templates/tcb_mapping.json
+```
+
+### Resign policy with generated keys
+```
+bash sh_script/build_policy_v2.sh [preprod/prod]
+```
+### Rebuild migtd with new policy
+```
+cargo image --policy-v2 \
+ --policy config/templates/policy_v2_signed.json \
+ --policy-issuer-chain key/migtd_issuer_chain.pem
+```
+
 ## Summary Flow
 
 1. Platform collaterals -> `collateral_*.json`
