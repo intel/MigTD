@@ -911,6 +911,13 @@ mod test {
     }
 
     #[test]
+    fn test_servtd_tcb_status_comparison() {
+        assert!(ServtdTcbStatus::UpToDate == ServtdTcbStatus::OutOfDate);
+        assert!(ServtdTcbStatus::UpToDate > ServtdTcbStatus::Revoked);
+        assert!(ServtdTcbStatus::OutOfDate > ServtdTcbStatus::Revoked);
+    }
+
+    #[test]
     fn test_tcb_status_comparison() {
         assert!(TcbStatus::UpToDate == TcbStatus::OutOfDate);
         assert!(TcbStatus::UpToDate == TcbStatus::SWHardeningNeeded);
@@ -1086,6 +1093,51 @@ mod test {
                 TcbStatus::ConfigurationAndSWHardeningNeeded,
             ],
             &[TcbStatus::Revoked],
+        );
+    }
+
+    #[test]
+    fn test_policy_servtd_tcb_status() {
+        let assert_servtd_tcb_status_allowed =
+            |policy: PolicyProperty,
+             relative_reference: ServtdTcbStatus,
+             allow_list: &[ServtdTcbStatus],
+             deny_list: &[ServtdTcbStatus]| {
+                for value in allow_list {
+                    assert!(policy
+                        .evaluate_servtd_tcb_status(*value, Some(relative_reference))
+                        .unwrap());
+                }
+                for value in deny_list {
+                    assert!(!policy
+                        .evaluate_servtd_tcb_status(*value, Some(relative_reference))
+                        .unwrap());
+                }
+            };
+        let relative_reference = ServtdTcbStatus::UpToDate;
+
+        // Test with an empty "allow-list"
+        let tcb_status_policy = PolicyProperty {
+            operation: "allow-list".to_string(),
+            reference: Reference::StringList(vec![]),
+        };
+        assert_servtd_tcb_status_allowed(
+            tcb_status_policy,
+            relative_reference,
+            &[ServtdTcbStatus::UpToDate, ServtdTcbStatus::OutOfDate],
+            &[ServtdTcbStatus::Revoked],
+        );
+
+        // Test with an "allow-list" operation and "Revoked" reference
+        let tcb_status_policy = PolicyProperty {
+            operation: "allow-list".to_string(),
+            reference: Reference::StringList(vec!["Revoked".to_string()]),
+        };
+        assert_servtd_tcb_status_allowed(
+            tcb_status_policy,
+            relative_reference,
+            &[ServtdTcbStatus::UpToDate, ServtdTcbStatus::OutOfDate],
+            &[ServtdTcbStatus::Revoked],
         );
     }
 
