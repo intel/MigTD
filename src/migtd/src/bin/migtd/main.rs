@@ -141,7 +141,15 @@ fn basic_info() {
 #[cfg(not(feature = "policy_v2"))]
 fn do_measurements() {
     // Get the event log recorded by firmware
-    let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
+    let event_log = match event_log::get_event_log_mut() {
+        Some(log) => log,
+        None => {
+            log::error!(
+                "Failed to get the event log - firmware did not allocate event log buffer\n"
+            );
+            panic!("Failed to get the event log");
+        }
+    };
 
     if cfg!(feature = "test_disable_ra_and_accept_all") {
         measure_test_feature(event_log);
@@ -158,7 +166,15 @@ fn do_measurements() {
 #[cfg(feature = "policy_v2")]
 fn do_measurements() {
     // Get the event log recorded by firmware
-    let event_log = event_log::get_event_log_mut().expect("Failed to get the event log");
+    let event_log = match event_log::get_event_log_mut() {
+        Some(log) => log,
+        None => {
+            log::error!(
+                "Failed to get the event log - firmware did not allocate event log buffer\n"
+            );
+            panic!("Failed to get the event log");
+        }
+    };
 
     if cfg!(feature = "test_disable_ra_and_accept_all") {
         measure_test_feature(event_log);
@@ -173,102 +189,163 @@ fn do_measurements() {
 
 fn measure_test_feature(event_log: &mut [u8]) {
     // Measure and extend the migtd test feature to RTMR
-    event_log::write_tagged_event_log(
+    let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_TEST_FEATURE,
         TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
         TAGGED_EVENT_ID_TEST,
         TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     )
-    .expect("Failed to log migtd test feature");
+    .map_err(|e| {
+        log::error!("Failed to log migtd test feature: {:?}\n", e);
+        panic!("Failed to log migtd test feature");
+    });
 }
 
 #[cfg(not(feature = "policy_v2"))]
 fn get_policy_and_measure(event_log: &mut [u8]) {
     // Read migration policy from CFV
-    let policy = config::get_policy().expect("Fail to get policy from CFV\n");
+    let policy = match config::get_policy() {
+        Some(policy) => policy,
+        None => {
+            log::error!("Fail to get policy from CFV\n");
+            panic!("Fail to get policy from CFV");
+        }
+    };
 
     let event_data = policy;
 
     // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(
+    let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY,
         policy,
         TAGGED_EVENT_ID_POLICY,
         event_data,
     )
-    .expect("Failed to log migration policy");
+    .map_err(|e| {
+        log::error!("Failed to log migration policy: {:?}\n", e);
+        panic!("Failed to log migration policy");
+    });
 }
 
 #[cfg(feature = "policy_v2")]
 fn get_policy_and_measure(event_log: &mut [u8]) {
     // Read migration policy from CFV
-    let policy = config::get_policy().expect("Fail to get policy from CFV\n");
+    let policy = match config::get_policy() {
+        Some(policy) => policy,
+        None => {
+            log::error!("Fail to get policy from CFV\n");
+            panic!("Fail to get policy from CFV");
+        }
+    };
 
     let version = initialize_policy();
 
     let event_data = version.as_bytes();
 
     // Measure and extend the migration policy to RTMR
-    event_log::write_tagged_event_log(
+    let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY,
         policy,
         TAGGED_EVENT_ID_POLICY,
         event_data,
     )
-    .expect("Failed to log migration policy");
+    .map_err(|e| {
+        log::error!("Failed to log migration policy: {:?}\n", e);
+        panic!("Failed to log migration policy");
+    });
 }
 
 #[cfg(feature = "policy_v2")]
 fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
     // Read policy issuer chain from CFV
-    let policy_issuer_chain =
-        config::get_policy_issuer_chain().expect("Fail to get policy issuer chain from CFV\n");
+    let policy_issuer_chain = match config::get_policy_issuer_chain() {
+        Some(policy_issuer_chain) => policy_issuer_chain,
+        None => {
+            log::error!("Fail to get policy issuer chain from CFV\n");
+            panic!("Fail to get policy issuer chain from CFV");
+        }
+    };
 
     // Measure and extend the policy issuer chain to RTMR
-    event_log::write_tagged_event_log(
+    let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
         policy_issuer_chain,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
         policy_issuer_chain,
     )
-    .expect("Failed to log policy issuer chain");
+    .map_err(|e| {
+        log::error!("Failed to log policy issuer chain: {:?}\n", e);
+        panic!("Failed to log policy issuer chain");
+    });
 }
 
 #[cfg(not(feature = "policy_v2"))]
 fn get_ca_and_measure(event_log: &mut [u8]) {
-    let root_ca = config::get_root_ca().expect("Fail to get root certificate from CFV\n");
+    let root_ca = match config::get_root_ca() {
+        Some(policy_issuer_chain) => policy_issuer_chain,
+        None => {
+            log::error!("Fail to get root certificate chain from CFV\n");
+            panic!("Fail to get root certificate chain from CFV");
+        }
+    };
 
     // Measure and extend the root certificate to RTMR
-    event_log::write_tagged_event_log(
+    let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_ROOT_CA,
         root_ca,
         TAGGED_EVENT_ID_ROOT_CA,
         root_ca,
     )
-    .expect("Failed to log SGX root CA\n");
+    .map_err(|e| {
+        log::error!("Failed to log SGX root CA: {:?}\n", e);
+        panic!("Failed to log SGX root CA");
+    });
 
-    attestation::root_ca::set_ca(root_ca).expect("Invalid root certificate\n");
+    match attestation::root_ca::set_ca(root_ca) {
+        Ok(_) => (),
+        Err(e) => {
+            log::error!("Invalid root certificate: {:?}\n", e);
+            panic!("Invalid root certificate");
+        }
+    }
 }
 
 #[cfg(feature = "policy_v2")]
 fn initialize_policy() -> String {
     use migtd::mig_policy;
 
-    let policy = config::get_policy().expect("Fail to get policy from CFV\n");
-    let policy_issuer_chain =
-        config::get_policy_issuer_chain().expect("Fail to get policy issuer chain from CFV\n");
+    let policy = match config::get_policy() {
+        Some(policy) => policy,
+        None => {
+            log::error!("Fail to get policy from CFV\n");
+            panic!("Fail to get policy from CFV");
+        }
+    };
+    let policy_issuer_chain = match config::get_policy_issuer_chain() {
+        Some(chain) => chain,
+        None => {
+            log::error!("Fail to get policy issuer chain from CFV\n");
+            panic!("Fail to get policy issuer chain from CFV");
+        }
+    };
     // Initialize and verify the migration policy
-    let version = mig_policy::init_policy(policy, policy_issuer_chain)
-        .expect("Failed to initialize migration policy");
-    // Initialize and verify the migration policy
-    mig_policy::init_tcb_info().expect("Failed to initialize migration policy");
+    let version = mig_policy::init_policy(policy, policy_issuer_chain).map_err(|e| {
+        log::error!("Failed to initialize migration policy: {:?}\n", e);
+        panic!("Failed to initialize migration policy");
+    });
 
-    version
+    // Initialize and verify the migration policy
+    let _ = mig_policy::init_tcb_info().map_err(|e| {
+        log::error!("Failed to initialize migration TCB info: {:?}\n", e);
+        panic!("Failed to initialize migration TCB info");
+    });
+
+    version.expect("Failed to initialize migration policy")
 }
 
 fn handle_pre_mig() {
@@ -323,7 +400,14 @@ fn handle_pre_mig() {
                         .map(|_| MigrationResult::Success)
                         .unwrap_or_else(|e| e);
 
-                    let _ = report_status(status as u8, request.mig_info.mig_request_id);
+                    let _ =
+                        report_status(status as u8, request.mig_info.mig_request_id).map_err(|e| {
+                            log::error!(
+                                "Failed to report status for mig_request_id {}: {:?}\n",
+                                request.mig_info.mig_request_id,
+                                e
+                            );
+                        });
                     REQUESTS.lock().remove(&request.mig_info.mig_request_id);
                 }
                 #[cfg(feature = "vmcall-raw")]
@@ -340,6 +424,7 @@ fn handle_pre_mig() {
                                     Level::Trace,
                                     wfr_info.mig_info.mig_request_id,
                                 );
+                                log::trace!("Successfully completed key exchange for wfr_info.mig_info.mig_request_id = {}\n", wfr_info.mig_info.mig_request_id);
                             } else {
                                 entrylog(
                                     &format!(
@@ -350,18 +435,27 @@ fn handle_pre_mig() {
                                     Level::Error,
                                     wfr_info.mig_info.mig_request_id,
                                 );
+                                log::error!("Failure during key exchange for wfr_info.mig_info.mig_request_id = {}, status code: {:x}\n", wfr_info.mig_info.mig_request_id, status.clone() as u8);
                             }
                             let _ = report_status(
                                 status as u8,
                                 wfr_info.mig_info.mig_request_id,
                                 &data,
                             )
-                            .await;
+                            .await
+                            .map_err(|e| {
+                                log::error!(
+                                    "Failed to report status for StartMigration mig_request_id {}: {:?}\n",
+                                    wfr_info.mig_info.mig_request_id,
+                                    e
+                                );
+                            });
                             entrylog(
                                 &format!("ReportStatus for key exchange completed\n").into_bytes(),
                                 Level::Trace,
                                 wfr_info.mig_info.mig_request_id,
                             );
+                            log::trace!("ReportStatus for key exchange completed for wfr_info.mig_info.mig_request_id = {}\n", wfr_info.mig_info.mig_request_id);
                             REQUESTS.lock().remove(&wfr_info.mig_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
@@ -379,6 +473,7 @@ fn handle_pre_mig() {
                                     Level::Trace,
                                     wfr_info.mig_request_id,
                                 );
+                                log::trace!("Successfully completed get TDREPORT for wfr_info.mig_request_id = {}\n", wfr_info.mig_request_id);
                             } else {
                                 entrylog(
                                     &format!(
@@ -389,6 +484,7 @@ fn handle_pre_mig() {
                                     Level::Error,
                                     wfr_info.mig_request_id,
                                 );
+                                log::error!("Failure during get TDREPORT for wfr_info.mig_request_id = {}, status code: {:x}\n", wfr_info.mig_request_id, status.clone() as u8);
                             }
                             let _ =
                                 report_status(status as u8, wfr_info.mig_request_id, &data).await;
@@ -397,6 +493,7 @@ fn handle_pre_mig() {
                                 Level::Trace,
                                 wfr_info.mig_request_id,
                             );
+                            log::trace!("ReportStatus for get TDREPORT completed for wfr_info.mig_request_id = {}\n", wfr_info.mig_request_id);
                             REQUESTS.lock().remove(&wfr_info.mig_request_id);
                         }
                         WaitForRequestResponse::EnableLogArea(wfr_info) => {
@@ -415,6 +512,7 @@ fn handle_pre_mig() {
                                     Level::Trace,
                                     wfr_info.mig_request_id,
                                 );
+                                log::trace!("Successfully completed Enable LogArea for wfr_info.mig_request_id = {}\n", wfr_info.mig_request_id);
                             } else {
                                 entrylog(
                                     &format!(
@@ -425,15 +523,25 @@ fn handle_pre_mig() {
                                     Level::Error,
                                     wfr_info.mig_request_id,
                                 );
+                                log::error!("Failure during Enable LogArea for wfr_info.mig_request_id = {}, status code: {:x}\n", wfr_info.mig_request_id, status.clone() as u8);
                             }
                             let _ =
-                                report_status(status as u8, wfr_info.mig_request_id, &data).await;
+                                report_status(status as u8, wfr_info.mig_request_id, &data)
+                                .await
+                                .map_err(|e| {
+                                    log::error!(
+                                        "Failed to report status for Enable LogArea mig_request_id {}: {:?}\n",
+                                        wfr_info.mig_request_id,
+                                        e
+                                    );
+                                });
                             entrylog(
                                 &format!("ReportStatus for Enable LogArea completed\n")
                                     .into_bytes(),
                                 Level::Trace,
                                 wfr_info.mig_request_id,
                             );
+                            log::trace!("ReportStatus for Enable LogArea completed for wfr_info.mig_request_id = {}\n", wfr_info.mig_request_id);
                             REQUESTS.lock().remove(&wfr_info.mig_request_id);
                         }
                     }
