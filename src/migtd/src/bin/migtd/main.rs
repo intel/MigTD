@@ -15,9 +15,9 @@ use alloc::format;
 #[cfg(feature = "policy_v2")]
 use alloc::string::String;
 use alloc::vec::Vec;
-use log::info;
 #[cfg(feature = "vmcall-raw")]
 use log::{debug, Level};
+use log::{info, LevelFilter};
 use migtd::event_log::*;
 #[cfg(not(feature = "vmcall-raw"))]
 use migtd::migration::data::MigrationInformation;
@@ -98,7 +98,9 @@ fn main() {
 }
 
 pub fn runtime_main() {
-    let _ = td_logger::init();
+    // Initialize logging with level filter. The actual log level is determined by
+    // compile-time feature flags.
+    let _ = td_logger::init(LevelFilter::Trace);
 
     // Create LogArea per vCPU
     #[cfg(feature = "vmcall-raw")]
