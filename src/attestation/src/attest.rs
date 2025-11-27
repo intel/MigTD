@@ -92,7 +92,7 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
                 &mut quote_size as *mut u32,
             );
             if result != AttestLibError::Success {
-                log::error!("get_quote_inner failed with error: {:?}", result);
+                log::error!("get_quote_inner failed with error: {:?}\n", result);
                 return Err(Error::GetQuote);
             }
         }
@@ -119,14 +119,14 @@ pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
             &mut report_verify_size as *mut u32,
         );
         if result != AttestLibError::Success {
-            log::error!("verify_quote_integrity failed with error: {:?}", result);
+            log::error!("verify_quote_integrity failed with error: {:?}\n", result);
             return Err(Error::VerifyQuote);
         }
     }
 
     if report_verify_size as usize != TD_VERIFIED_REPORT_SIZE {
         log::error!(
-            "Invalid report size: expected {}, got {}",
+            "Invalid report size: expected {}, got {}\n",
             TD_VERIFIED_REPORT_SIZE,
             report_verify_size
         );
@@ -161,7 +161,10 @@ pub fn verify_quote_with_collaterals(
             &mut report_verify_size as *mut u32,
         );
         if result != AttestLibError::Success {
-            log::error!("verify_quote_integrity_ex failed with error: {:?}", result);
+            log::error!(
+                "verify_quote_integrity_ex failed with error: {:?}\n",
+                result
+            );
             return Err(Error::VerifyQuote);
         }
     }
