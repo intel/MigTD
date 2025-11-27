@@ -130,6 +130,7 @@ pub fn pem_to_der_from_slice(pem_data: &[u8]) -> Result<Vec<u8>> {
         Some((Item::Pkcs8Key(key), _)) => Ok(key.secret_pkcs8_der().to_vec()),
         Some((Item::Pkcs1Key(key), _)) => Ok(key.secret_pkcs1_der().to_vec()),
         Some((Item::Sec1Key(key), _)) => Ok(key.secret_sec1_der().to_vec()),
+        Some((Item::SubjectPublicKeyInfo(spki), _)) => Ok(spki.to_vec()),
         _ => Err(Error::DecodePemCert),
     }
 }
