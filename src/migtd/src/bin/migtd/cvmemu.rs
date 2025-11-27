@@ -94,7 +94,7 @@ fn initialize_emulation() {
     let result = {
         let policy_issuer_chain_file_path = env::var("MIGTD_POLICY_ISSUER_CHAIN_FILE")
             .map_err(|_| {
-                log::error!("Policy v2 requires a policy issuer chain file but MIGTD_POLICY_ISSUER_CHAIN_FILE was not set");
+                log::error!("Policy v2 requires a policy issuer chain file but MIGTD_POLICY_ISSUER_CHAIN_FILE was not set\n");
             })
             .unwrap_or_else(|_| process::exit(1));
 

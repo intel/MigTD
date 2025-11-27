@@ -113,18 +113,18 @@ impl ExchangeInformation {
 pub fn query() -> Result<()> {
     // Allocate one shared page for command and response buffer
     let mut cmd_mem = SharedMemory::new(1).ok_or({
-        log::error!("query: Failed to allocate command shared memory");
+        log::error!("query: Failed to allocate command shared memory\n");
         MigrationResult::OutOfResource
     })?;
     let mut rsp_mem = SharedMemory::new(1).ok_or({
-        log::error!("query: Failed to allocate response shared memory");
+        log::error!("query: Failed to allocate response shared memory\n");
         MigrationResult::OutOfResource
     })?;
 
     // Set Migration query command buffer
     let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
         .ok_or({
-            log::error!("query: Failed to create VmcallServiceCommand");
+            log::error!("query: Failed to create VmcallServiceCommand\n");
             MigrationResult::InvalidParameter
         })?;
     let query = ServiceMigWaitForReqCommand {
@@ -133,17 +133,17 @@ pub fn query() -> Result<()> {
         reserved: [0; 2],
     };
     cmd.write(query.as_bytes()).map_err(|e| {
-        log::error!("query: Failed to write query to command buffer");
+        log::error!("query: Failed to write query to command buffer\n");
         e
     })?;
     cmd.write(VMCALL_SERVICE_MIGTD_GUID.as_bytes())
         .map_err(|e| {
-            log::error!("query: Failed to write MIGTD GUID to command buffer");
+            log::error!("query: Failed to write MIGTD GUID to command buffer\n");
             e
         })?;
     let _ =
         VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID).ok_or({
-            log::error!("query: Failed to create VmcallServiceResponse");
+            log::error!("query: Failed to create VmcallServiceResponse\n");
             MigrationResult::InvalidParameter
         })?;
 
@@ -159,7 +159,7 @@ pub fn query() -> Result<()> {
     }
     #[cfg(not(feature = "vmcall-interrupt"))]
     tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0).map_err(|e| {
-        log::error!("query: tdvmcall_service failure {:?}", e);
+        log::error!("query: tdvmcall_service failure {:?}\n", e);
         e
     })?;
 
@@ -449,7 +449,7 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
         // Check the GUID of the reponse
         if rsp.read_guid() != VMCALL_SERVICE_MIGTD_GUID.as_bytes() {
             log::error!(
-                "wait_for_request: GUID mismatch in response rsp.read_guid() = {:?}",
+                "wait_for_request: GUID mismatch in response rsp.read_guid() = {:?}\n",
                 rsp.read_guid()
             );
             return Poll::Ready(Err(MigrationResult::InvalidParameter));
@@ -459,7 +459,7 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
             .ok_or(MigrationResult::InvalidParameter)?;
         if wfr.command != MIG_COMMAND_WAIT {
             log::error!(
-                "wait_for_request: command mismatch in response wfr.command = {:?}",
+                "wait_for_request: command mismatch in response wfr.command = {:?}\n",
                 wfr.command
             );
             return Poll::Ready(Err(MigrationResult::InvalidParameter));
@@ -488,18 +488,18 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
 pub fn shutdown() -> Result<()> {
     // Allocate shared page for command and response buffer
     let mut cmd_mem = SharedMemory::new(1).ok_or({
-        log::error!("shutdown: Failed to allocate command shared memory");
+        log::error!("shutdown: Failed to allocate command shared memory\n");
         MigrationResult::OutOfResource
     })?;
     let mut rsp_mem = SharedMemory::new(1).ok_or({
-        log::error!("shutdown: Failed to allocate response shared memory");
+        log::error!("shutdown: Failed to allocate response shared memory\n");
         MigrationResult::OutOfResource
     })?;
 
     // Set Command
     let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
         .ok_or({
-            log::error!("shutdown: Invalid parameter for VmcallServiceCommand");
+            log::error!("shutdown: Invalid parameter for VmcallServiceCommand\n");
             MigrationResult::InvalidParameter
         })?;
 
@@ -509,11 +509,11 @@ pub fn shutdown() -> Result<()> {
         reserved: [0; 2],
     };
     cmd.write(sd.as_bytes()).map_err(|e| {
-        log::error!("shutdown: Failed to write shutdown command to command buffer");
+        log::error!("shutdown: Failed to write shutdown command to command buffer\n");
         e
     })?;
     tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0).map_err(|e| {
-        log::error!("shutdown: tdvmcall_service failed: {:?}", e);
+        log::error!("shutdown: tdvmcall_service failed: {:?}\n", e);
         e
     })?;
     Ok(())
@@ -590,7 +590,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
     };
     let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
     let mut data_buffer = SharedMemory::new(1).ok_or({
-        log::error!("report_status: Failed to allocate shared memory for data buffer");
+        log::error!("report_status: Failed to allocate shared memory for data buffer\n");
         MigrationResult::OutOfResource
     })?;
 
@@ -821,7 +821,7 @@ async fn send_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
     let mut sent = 0;
     while sent < data.len() {
         let n = transport.write(&data[sent..]).await.map_err(|e| {
-            log::error!("send_pre_session_data: Network error: {:?}", e);
+            log::error!("send_pre_session_data: Network error: {:?}\n", e);
             MigrationResult::NetworkError
         })?;
         sent += n;
@@ -837,7 +837,7 @@ async fn receive_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
     let mut recvd = 0;
     while recvd < data.len() {
         let n = transport.read(&mut data[recvd..]).await.map_err(|e| {
-            log::error!("receive_pre_session_data: Network error: {:?}", e);
+            log::error!("receive_pre_session_data: Network error: {:?}\n", e);
             MigrationResult::NetworkError
         })?;
         recvd += n;
@@ -859,14 +859,14 @@ async fn send_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
     send_pre_session_data(transport, header.as_bytes())
         .await
         .map_err(|e| {
-            log::error!("send_pre_session_data header: Network error: {:?}", e);
+            log::error!("send_pre_session_data header: Network error: {:?}\n", e);
             e
         })?;
     send_pre_session_data(transport, pre_session_data)
         .await
         .map_err(|e| {
             log::error!(
-                "send_pre_session_data pre_session_data: Network error: {:?}",
+                "send_pre_session_data pre_session_data: Network error: {:?}\n",
                 e
             );
             e
@@ -881,7 +881,7 @@ async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
     receive_pre_session_data(transport, &mut header_buffer)
         .await
         .map_err(|e| {
-            log::error!("receive_pre_session_data header: Network error: {:?}", e);
+            log::error!("receive_pre_session_data header: Network error: {:?}\n", e);
             e
         })?;
 
@@ -899,7 +899,7 @@ async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
     receive_pre_session_data(transport, &mut pre_session_data_payload)
         .await
         .map_err(|e| {
-            log::error!("receive_pre_session_data payload: Network error: {:?}", e);
+            log::error!("receive_pre_session_data payload: Network error: {:?}\n", e);
             e
         })?;
 
@@ -919,7 +919,7 @@ async fn send_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
     send_pre_session_data(transport, header.as_bytes())
         .await
         .map_err(|e| {
-            log::error!("send_start_session_packet: Network error: {:?}", e);
+            log::error!("send_start_session_packet: Network error: {:?}\n", e);
             e
         })
 }
@@ -932,7 +932,7 @@ async fn receive_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
     receive_pre_session_data(transport, &mut header_buffer)
         .await
         .map_err(|e| {
-            log::error!("receive_start_session_packet: Network error: {:?}", e);
+            log::error!("receive_start_session_packet: Network error: {:?}\n", e);
             e
         })?;
 
@@ -964,7 +964,7 @@ async fn send_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(transport: &mut T)
     send_pre_session_data(transport, header.as_bytes())
         .await
         .map_err(|e| {
-            log::error!("send_hello_packet: Network error: {:?}", e);
+            log::error!("send_hello_packet: Network error: {:?}\n", e);
             e
         })?;
 
@@ -972,7 +972,7 @@ async fn send_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(transport: &mut T)
     send_pre_session_data(transport, payload.as_bytes())
         .await
         .map_err(|e| {
-            log::error!("send_hello_packet: Network error: {:?}", e);
+            log::error!("send_hello_packet: Network error: {:?}\n", e);
             e
         })
 }
@@ -985,7 +985,7 @@ async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
     receive_pre_session_data(transport, &mut header_buffer)
         .await
         .map_err(|e| {
-            log::error!("receive_hello_packet: Network error: {:?}", e);
+            log::error!("receive_hello_packet: Network error: {:?}\n", e);
             e
         })?;
 
@@ -1009,7 +1009,7 @@ async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
     receive_pre_session_data(transport, &mut hello_payload)
         .await
         .map_err(|e| {
-            log::error!("receive_hello_packet payload: Network error: {:?}", e);
+            log::error!("receive_hello_packet payload: Network error: {:?}\n", e);
             e
         })?;
 
@@ -1027,11 +1027,14 @@ async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
 ) -> Result<u16> {
     send_hello_packet(transport).await.map_err(|e| {
-        log::error!("exchange_hello_packet: send_hello_packet error: {:?}", e);
+        log::error!("exchange_hello_packet: send_hello_packet error: {:?}\n", e);
         e
     })?;
     let remote = receive_hello_packet(transport).await.map_err(|e| {
-        log::error!("exchange_hello_packet: receive_hello_packet error: {:?}", e);
+        log::error!(
+            "exchange_hello_packet: receive_hello_packet error: {:?}\n",
+            e
+        );
         e
     })?;
 
@@ -1048,7 +1051,7 @@ async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
 
     let version = exchange_hello_packet(transport).await.map_err(|e| {
         log::error!(
-            "pre_session_data_exchange: exchange_hello_packet error: {:?}",
+            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
             e
         );
         e
@@ -1058,14 +1061,14 @@ async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
     let policy = config::get_policy()
         .ok_or(MigrationResult::InvalidParameter)
         .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}", e);
+            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
             e
         })?;
     send_pre_session_data_packet(policy, transport)
         .await
         .map_err(|e| {
             log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}",
+                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
                 e
             );
             e
@@ -1074,7 +1077,7 @@ async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
         .await
         .map_err(|e| {
             log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}",
+                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
                 e
             );
             e
@@ -1082,14 +1085,14 @@ async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
 
     send_start_session_packet(transport).await.map_err(|e| {
         log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}",
+            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
             e
         );
         e
     })?;
     receive_start_session_packet(transport).await.map_err(|e| {
         log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}",
+            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
             e
         );
         e
@@ -1113,7 +1116,7 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
         let mut vmcall_raw_instance = VmcallRaw::new_with_mid(info.mig_info.mig_request_id)
             .map_err(|e| {
                 data.extend_from_slice(&format!("Error: exchange_msk(): Failed to create vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to create vmcall_raw_instance with Migration ID: {} errorcode: {:?}", info.mig_info.mig_request_id, e);
+                log::error!("exchange_msk: Failed to create vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
                 MigrationResult::InvalidParameter
         })?;
 
@@ -1122,7 +1125,7 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             .await
             .map_err(|e| {
                 data.extend_from_slice(&format!("Error: exchange_msk(): Failed to connect vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to connect vmcall_raw_instance with Migration ID: {} errorcode: {:?}", info.mig_info.mig_request_id, e);
+                log::error!("exchange_msk: Failed to connect vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
                 MigrationResult::InvalidParameter
             })?;
         transport = vmcall_raw_instance;
@@ -1173,13 +1176,13 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
     .await
     .map_err(|e| {
         log::error!(
-            "exchange_msk: pre_session_data_exchange timeout error: {:?}",
+            "exchange_msk: pre_session_data_exchange timeout error: {:?}\n",
             e
         );
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: pre_session_data_exchange error: {:?}", e);
+        log::error!("exchange_msk: pre_session_data_exchange error: {:?}\n", e);
         e
     })?;
 
@@ -1190,7 +1193,7 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
         let mut remote_information = ExchangeInformation::default();
         let mut exchange_information =
             exchange_info(&info.mig_info, info.is_src()).map_err(|e| {
-                log::error!("exchange_msk: exchange_info error: {:?}", e);
+                log::error!("exchange_msk: exchange_info error: {:?}\n", e);
                 e
             })?;
 
@@ -1214,7 +1217,7 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
                     .into_bytes(),
                 );
                 log::error!(
-                    "exchange_msk(): Failed in ratls transport. Migration ID: {}",
+                    "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
                     info.mig_info.mig_request_id
                 );
                 MigrationResult::SecureSessionError
@@ -1227,11 +1230,11 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             )
             .await
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.write timeout error: {:?}", e);
+                log::error!("exchange_msk: ratls_client.write timeout error: {:?}\n", e);
                 e
             })?
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.write error: {:?}", e);
+                log::error!("exchange_msk: ratls_client.write error: {:?}\n", e);
                 e
             })?;
             let size = with_timeout(
@@ -1240,11 +1243,11 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             )
             .await
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.read timeout error: {:?}", e);
+                log::error!("exchange_msk: ratls_client.read timeout error: {:?}\n", e);
                 e
             })?
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.read error: {:?}", e);
+                log::error!("exchange_msk: ratls_client.read error: {:?}\n", e);
                 e
             })?;
             if size < size_of::<ExchangeInformation>() {
@@ -1258,13 +1261,13 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
                     )
                     .into_bytes(),
                 );
-                log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
+                log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
                 return Err(MigrationResult::NetworkError);
             }
             #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
             ratls_client.transport_mut().shutdown().await.map_err(|e| {
                 log::error!(
-                    "exchange_msk: ratls_client.transport_mut().shutdown() error: {:?}",
+                    "exchange_msk: ratls_client.transport_mut().shutdown() error: {:?}\n",
                     e
                 );
                 e
@@ -1308,7 +1311,7 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
                     .into_bytes(),
                 );
                 log::error!(
-                    "exchange_msk(): Failed in ratls transport. Migration ID: {}",
+                    "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
                     info.mig_info.mig_request_id
                 );
                 MigrationResult::SecureSessionError
@@ -1320,11 +1323,11 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             )
             .await
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.write timeout error: {:?}", e);
+                log::error!("exchange_msk: ratls_server.write timeout error: {:?}\n", e);
                 e
             })?
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.write error: {:?}", e);
+                log::error!("exchange_msk: ratls_server.write error: {:?}\n", e);
                 e
             })?;
             let size = with_timeout(
@@ -1333,17 +1336,17 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             )
             .await
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.read timeout error: {:?}", e);
+                log::error!("exchange_msk: ratls_server.read timeout error: {:?}\n", e);
                 e
             })?
             .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.read error: {:?}", e);
+                log::error!("exchange_msk: ratls_server.read error: {:?}\n", e);
                 e
             })?;
             if size < size_of::<ExchangeInformation>() {
                 #[cfg(feature = "vmcall-raw")]
                 data.extend_from_slice(&format!("Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size).into_bytes());
-                log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
+                log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
                 return Err(MigrationResult::NetworkError);
             }
             #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
@@ -1356,22 +1359,22 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
                 .await
                 .map_err(|e| {
                     data.extend_from_slice(&format!("Error: exchange_msk(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                    log::error!("exchange_msk: Failed to transport in vmcall_raw_instance with Migration ID: {} errorcode: {}", info.mig_info.mig_request_id, e);
+                    log::error!("exchange_msk: Failed to transport in vmcall_raw_instance with Migration ID: {} errorcode: {}\n", info.mig_info.mig_request_id, e);
                     MigrationResult::InvalidParameter
                 })?;
         }
 
         let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)
             .map_err(|e| {
-                log::error!("exchange_msk: cal_mig_version error: {:?}", e);
+                log::error!("exchange_msk: cal_mig_version error: {:?}\n", e);
                 e
             })?;
         set_mig_version(&info.mig_info, mig_ver).map_err(|e| {
-            log::error!("exchange_msk: set_mig_version error: {:?}", e);
+            log::error!("exchange_msk: set_mig_version error: {:?}\n", e);
             e
         })?;
         write_msk(&info.mig_info, &remote_information.key).map_err(|e| {
-            log::error!("exchange_msk: write_msk error: {:?}", e);
+            log::error!("exchange_msk: write_msk error: {:?}\n", e);
             e
         })?;
 
@@ -1395,7 +1398,7 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
         if info.is_src() {
             let mut spdm_requester = spdm::spdm_requester(transport).map_err(|_e| {
                 log::error!(
-                    "exchange_msk(): Failed in spdm_requester transport. Migration ID: {}",
+                    "exchange_msk(): Failed in spdm_requester transport. Migration ID: {}\n",
                     info.mig_info.mig_request_id
                 );
                 MigrationResult::SecureSessionError
@@ -1412,20 +1415,20 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             .await
             .map_err(|e| {
                 log::error!(
-                    "exchange_msk: spdm_requester_transfer_msk timeout error: {:?}",
+                    "exchange_msk: spdm_requester_transfer_msk timeout error: {:?}\n",
                     e
                 );
                 e
             })?
             .map_err(|e| {
-                log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}", e);
+                log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
                 e
             })?;
             log::info!("MSK exchange completed\n");
         } else {
             let mut spdm_responder = spdm::spdm_responder(transport).map_err(|_e| {
                 log::error!(
-                    "exchange_msk(): Failed in spdm_responder transport. Migration ID: {}",
+                    "exchange_msk(): Failed in spdm_responder transport. Migration ID: {}\n",
                     info.mig_info.mig_request_id
                 );
                 MigrationResult::SecureSessionError
@@ -1443,13 +1446,13 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             .await
             .map_err(|e| {
                 log::error!(
-                    "exchange_msk: spdm_responder_transfer_msk timeout error: {:?}",
+                    "exchange_msk: spdm_responder_transfer_msk timeout error: {:?}\n",
                     e
                 );
                 e
             })?
             .map_err(|e| {
-                log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}", e);
+                log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
                 e
             })?;
             log::info!("MSK exchange completed\n");
@@ -1466,7 +1469,7 @@ pub fn exchange_info(
     let mut exchange_info = ExchangeInformation::default();
     read_msk(mig_info, &mut exchange_info.key).map_err(|e| {
         log::error!(
-            "exchange_info: read_msk failed with error: {:?} for mig_info.binding_handle = {}",
+            "exchange_info: read_msk failed with error: {:?} for mig_info.binding_handle = {}\n",
             e,
             mig_info.binding_handle
         );
@@ -1481,7 +1484,7 @@ pub fn exchange_info(
     let min_version = tdcall_sys_rd(field_min)
         .map_err(|e| {
             log::error!(
-                "exchange_info: tdcall_sys_rd failed with error: {:?} for field_min = {}",
+                "exchange_info: tdcall_sys_rd failed with error: {:?} for field_min = {}\n",
                 e,
                 field_min
             );
@@ -1491,7 +1494,7 @@ pub fn exchange_info(
     let max_version = tdcall_sys_rd(field_max)
         .map_err(|e| {
             log::error!(
-                "exchange_info: tdcall_sys_rd failed with error: {:?} for field_max = {}",
+                "exchange_info: tdcall_sys_rd failed with error: {:?} for field_max = {}\n",
                 e,
                 field_max
             );
@@ -1500,7 +1503,7 @@ pub fn exchange_info(
         .1;
     if min_version > u16::MAX as u64 || max_version > u16::MAX as u64 {
         log::error!(
-            "exchange_info: Migration version out of range. is_src = {}, min_version = {}, max_version = {}",
+            "exchange_info: Migration version out of range. is_src = {}, min_version = {}, max_version = {}\n",
             is_src,
             min_version,
             max_version
@@ -1520,7 +1523,7 @@ fn read_msk(mig_info: &MigtdMigrationInformation, msk: &mut MigrationSessionKey)
             TDCS_FIELD_MIG_ENC_KEY + idx as u64,
             &mig_info.target_td_uuid,
         ).map_err(|e|{
-            log::error!("read_msk: tdcall_servtd_rd failed with error: {:?} for mig_info.binding_handle = {}, idx = {}", e, mig_info.binding_handle, idx);
+            log::error!("read_msk: tdcall_servtd_rd failed with error: {:?} for mig_info.binding_handle = {}, idx = {}\n", e, mig_info.binding_handle, idx);
             e
         })?;
         msk.fields[idx] = ret.content;
@@ -1537,7 +1540,7 @@ pub fn write_msk(mig_info: &MigtdMigrationInformation, msk: &MigrationSessionKey
             &mig_info.target_td_uuid,
         )
         .map_err(|e| {
-            log::error!("write_msk: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, idx = {}, value = {}", e, mig_info.binding_handle, idx, msk.fields[idx]);
+            log::error!("write_msk: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, idx = {}, value = {}\n", e, mig_info.binding_handle, idx, msk.fields[idx]);
             MigrationResult::TdxModuleError
         })?;
     }
@@ -1561,7 +1564,7 @@ pub fn tdcall_sys_rd(field_identifier: u64) -> core::result::Result<(u64, u64), 
 
     if ret != TDCALL_STATUS_SUCCESS {
         log::error!(
-            "tdcall_sys_rd failed with error: {:?} for field_identifier = {}",
+            "tdcall_sys_rd failed with error: {:?} for field_identifier = {}\n",
             ret,
             field_identifier
         );
@@ -1598,7 +1601,7 @@ pub fn cal_mig_version(
         || max_import < min_export
     {
         log::error!(
-            "cal_mig_version: No compatible migration version found. is_src = {}, local_info = {:?}, remote_info = {:?}",
+            "cal_mig_version: No compatible migration version found. is_src = {}, local_info = {:?}, remote_info = {:?}\n",
             is_src,
             local_info.min_ver..=local_info.max_ver,
             remote_info.min_ver..=remote_info.max_ver,
@@ -1616,7 +1619,7 @@ pub fn set_mig_version(mig_info: &MigtdMigrationInformation, mig_ver: u16) -> Re
         mig_ver as u64,
         &mig_info.target_td_uuid,
     ).map_err(|e|{
-        log::error!("set_mig_version: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, mig_ver = {}", e, mig_info.binding_handle, mig_ver);
+        log::error!("set_mig_version: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, mig_ver = {}\n", e, mig_info.binding_handle, mig_ver);
         e
     })?;
     Ok(())

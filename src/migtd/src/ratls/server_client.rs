@@ -26,23 +26,23 @@ type Result<T> = core::result::Result<T, RatlsError>;
 #[cfg(not(feature = "policy_v2"))]
 pub fn server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
-        log::error!("server EcdsaPk::new() failed with error {:?}", e);
+        log::error!("server EcdsaPk::new() failed with error {:?}\n", e);
         e
     })?;
     let (certs, quote) = gen_cert(&signing_key).map_err(|e| {
-        log::error!("server gen_cert() failed with error {:?}", e);
+        log::error!("server gen_cert() failed with error {:?}\n", e);
         e
     })?;
     let certs = vec![certs];
 
     // Server verifies certificate of client
     let config = TlsConfig::new(certs, signing_key, verify_client_cert, quote).map_err(|e| {
-        log::error!("server TlsConfig::new() failed with error {:?}", e);
+        log::error!("server TlsConfig::new() failed with error {:?}\n", e);
         e
     })?;
 
     config.tls_server(stream).map_err(|e| {
-        log::error!("server tls_server() failed with error {:?}", e);
+        log::error!("server tls_server() failed with error {:?}\n", e);
         e.into()
     })
 }
@@ -53,11 +53,14 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
     remote_policy: Vec<u8>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
-        log::error!("server policy_v2 EcdsaPk::new() failed with error {:?}", e);
+        log::error!(
+            "server policy_v2 EcdsaPk::new() failed with error {:?}\n",
+            e
+        );
         e
     })?;
     let (certs, _quote) = gen_cert(&signing_key).map_err(|e| {
-        log::error!("server policy_v2 gen_cert() failed with error {:?}", e);
+        log::error!("server policy_v2 gen_cert() failed with error {:?}\n", e);
         e
     })?;
     let certs = vec![certs];
@@ -66,13 +69,13 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
     let config =
         TlsConfig::new(certs, signing_key, verify_client_cert, remote_policy).map_err(|e| {
             log::error!(
-                "server policy_v2 TlsConfig::new() failed with error {:?}",
+                "server policy_v2 TlsConfig::new() failed with error {:?}\n",
                 e
             );
             e
         })?;
     config.tls_server(stream).map_err(|e| {
-        log::error!("server policy_v2 tls_server() failed with error {:?}", e);
+        log::error!("server policy_v2 tls_server() failed with error {:?}\n", e);
         e.into()
     })
 }
@@ -83,18 +86,18 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
-        log::error!("client EcdsaPk::new() failed with error {:?}", e);
+        log::error!("client EcdsaPk::new() failed with error {:?}\n", e);
         e
     })?;
     let (certs, quote) = gen_cert(&signing_key).map_err(|e| {
-        log::error!("client gen_cert() failed with error {:?}", e);
+        log::error!("client gen_cert() failed with error {:?}\n", e);
         e
     })?;
     let certs = vec![certs];
 
     // Client verifies certificate of server
     let config = TlsConfig::new(certs, signing_key, verify_server_cert, quote).map_err(|e| {
-        log::error!("client TlsConfig::new() failed with error {:?}", e);
+        log::error!("client TlsConfig::new() failed with error {:?}\n", e);
         e
     })?;
     config.tls_client(stream).map_err(|e| {
@@ -107,7 +110,7 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
             .into_bytes(),
         );
         log::error!(
-            "server_client client(): Failure in tls_client() error: {:?}",
+            "server_client client(): Failure in tls_client() error: {:?}\n",
             e
         );
         e.into()
@@ -121,11 +124,14 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
-        log::error!("client policy_v2 EcdsaPk::new() failed with error {:?}", e);
+        log::error!(
+            "client policy_v2 EcdsaPk::new() failed with error {:?}\n",
+            e
+        );
         e
     })?;
     let (certs, _quote) = gen_cert(&signing_key).map_err(|e| {
-        log::error!("client policy_v2 gen_cert() failed with error {:?}", e);
+        log::error!("client policy_v2 gen_cert() failed with error {:?}\n", e);
         e
     })?;
     let certs = vec![certs];
@@ -134,7 +140,7 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     let config =
         TlsConfig::new(certs, signing_key, verify_server_cert, remote_policy).map_err(|e| {
             log::error!(
-                "client policy_v2 TlsConfig::new() failed with error {:?}",
+                "client policy_v2 TlsConfig::new() failed with error {:?}\n",
                 e
             );
             e
@@ -148,7 +154,7 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
             )
             .into_bytes(),
         );
-        log::error!("client policy_v2 tls_client() failed with error {:?}", e);
+        log::error!("client policy_v2 tls_client() failed with error {:?}\n", e);
         e.into()
     })
 }
@@ -164,13 +170,13 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
     let eku = vec![SERVER_AUTH, CLIENT_AUTH, MIGTD_EXTENDED_KEY_USAGE]
         .to_der()
         .map_err(|e| {
-            log::error!("gen_cert to_der failed with error {:?}.", e);
+            log::error!("gen_cert to_der failed with error {:?}\n", e);
             e
         })?;
 
     let pub_key = signing_key.public_key().map_err(|e| {
         log::error!(
-            "gen_cert igning_key.public_key() failed with error {:?}.",
+            "gen_cert signing_key.public_key() failed with error {:?}\n",
             e
         );
         e
@@ -182,61 +188,64 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
     let key_usage = BitStringRef::from_bytes(&[0x80])
         .map_err(|e| {
             log::error!(
-                "gen_cert BitStringRef::from_bytes() failed with error {:?}",
+                "gen_cert BitStringRef::from_bytes() failed with error {:?}\n",
                 e
             );
             e
         })?
         .to_der()
         .map_err(|e| {
-            log::error!("gen_cert BitStringRef::to_der() failed with error {:?}", e);
+            log::error!(
+                "gen_cert BitStringRef::to_der() failed with error {:?}\n",
+                e
+            );
             e
         })?;
     let quote = gen_quote(&pub_key).map_err(|e| {
-        log::error!("gen_cert gen_quote() failed with error {:?}", e);
+        log::error!("gen_cert gen_quote() failed with error {:?}\n", e);
         e
     })?;
     let event_log = get_event_log().ok_or({
-        log::error!("gen_cert get_event_log() failed with error RatlsError::InvalidEventlog.");
+        log::error!("gen_cert get_event_log() failed with error RatlsError::InvalidEventlog.\n");
         RatlsError::InvalidEventlog
     })?;
     #[cfg(feature = "policy_v2")]
     let policy_hash = {
         let policy = get_policy().ok_or({
             log::error!(
-                "gen_cert client policy_v2 Failed to get migration policy for policy hash."
+                "gen_cert client policy_v2 Failed to get migration policy for policy hash.\n"
             );
             RatlsError::InvalidPolicy
         })?;
         digest_sha384(policy)
     }
     .map_err(|e| {
-        log::error!("gen_cert digest_sha384() failed with error {:?}", e);
+        log::error!("gen_cert digest_sha384() failed with error {:?}\n", e);
         e
     })?;
 
     let x509_builder = CertificateBuilder::new(sig_alg, algorithm, &pub_key)
         .map_err(|e| {
-            log::error!("gen_cert CertificateBuilder::new failed with error {:?}", e);
+            log::error!("gen_cert CertificateBuilder::new failed with error {:?}\n", e);
             e
         })?
         // 1970-01-01T00:00:00Z
         .set_not_before(core::time::Duration::new(0, 0))
         .map_err(|e| {
-            log::error!("gen_cert set_not_before failed with error {:?}", e);
+            log::error!("gen_cert set_not_before failed with error {:?}\n", e);
             e
         })?
         // 9999-12-31T23:59:59Z
         .set_not_after(core::time::Duration::new(253402300799, 0))
         .map_err(|e| {
-            log::error!("gen_cert set_not_after failed with error {:?}", e);
+            log::error!("gen_cert set_not_after failed with error {:?}\n", e);
             e
         })?
         .add_extension(
             Extension::new(KEY_USAGE_EXTENSION, Some(true), Some(key_usage.as_slice())).map_err(
                 |e| {
                     log::error!(
-                        "gen_cert Extension::new for KEY_USAGE_EXTENSION failed with error {:?}",
+                        "gen_cert Extension::new for KEY_USAGE_EXTENSION failed with error {:?}\n",
                         e
                     );
                     e
@@ -245,7 +254,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         )
         .map_err(|e| {
             log::error!(
-                "gen_cert add_extension for KEY_USAGE_EXTENSION failed with error {:?}",
+                "gen_cert add_extension for KEY_USAGE_EXTENSION failed with error {:?}\n",
                 e
             );
             e
@@ -253,7 +262,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         .add_extension(
             Extension::new(EXTENDED_KEY_USAGE, Some(false), Some(eku.as_slice())).map_err(|e| {
                 log::error!(
-                    "gen_cert Extension::new for EXTENDED_KEY_USAGE failed with error {:?}",
+                    "gen_cert Extension::new for EXTENDED_KEY_USAGE failed with error {:?}\n",
                     e
                 );
                 e
@@ -261,7 +270,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         )
         .map_err(|e| {
             log::error!(
-                "gen_cert add_extension for EXTENDED_KEY_USAGE failed with error {:?}",
+                "gen_cert add_extension for EXTENDED_KEY_USAGE failed with error {:?}\n",
                 e
             );
             e
@@ -274,7 +283,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
             )
             .map_err(|e| {
                 log::error!(
-                    "gen_cert Extension::new for EXTNID_MIGTD_QUOTE_REPORT failed with error {:?}",
+                    "gen_cert Extension::new for EXTNID_MIGTD_QUOTE_REPORT failed with error {:?}\n",
                     e
                 );
                 e
@@ -282,7 +291,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         )
         .map_err(|e| {
             log::error!(
-                "gen_cert add_extension for EXTNID_MIGTD_QUOTE_REPORT failed with error {:?}",
+                "gen_cert add_extension for EXTNID_MIGTD_QUOTE_REPORT failed with error {:?}\n",
                 e
             );
             e
@@ -290,7 +299,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         .add_extension(
             Extension::new(EXTNID_MIGTD_EVENT_LOG, Some(false), Some(event_log)).map_err(|e| {
                 log::error!(
-                    "gen_cert Extension::new for EXTNID_MIGTD_EVENT_LOG failed with error {:?}",
+                    "gen_cert Extension::new for EXTNID_MIGTD_EVENT_LOG failed with error {:?}\n",
                     e
                 );
                 e
@@ -298,7 +307,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         )
         .map_err(|e| {
             log::error!(
-                "gen_cert add_extension for EXTNID_MIGTD_EVENT_LOG failed with error {:?}",
+                "gen_cert add_extension for EXTNID_MIGTD_EVENT_LOG failed with error {:?}\n",
                 e
             );
             e
@@ -311,7 +320,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
             Extension::new(EXTNID_MIGTD_POLICY_HASH, Some(false), Some(&policy_hash)).map_err(
                 |e| {
                     log::error!(
-                        "gen_cert policy_v2 add_extension failed with error {:?}.",
+                        "gen_cert policy_v2 add_extension failed with error {:?}.\n",
                         e
                     );
                     e
@@ -320,7 +329,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         )
         .map_err(|e| {
             log::error!(
-                "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.",
+                "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.\n",
                 e
             );
             e
@@ -329,18 +338,18 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut x509_certificate = x509_builder.build();
     let tbs = x509_certificate.tbs_certificate.to_der().map_err(|e| {
         log::error!(
-            "gen_cert x509_certificate.tbs_certificate.to_der failed with error {:?}.",
+            "gen_cert x509_certificate.tbs_certificate.to_der failed with error {:?}.\n",
             e
         );
         e
     })?;
     let signature = signing_key.sign(&tbs).map_err(|e| {
-        log::error!("gen_cert signing_key.sign failed with error {:?}.", e);
+        log::error!("gen_cert signing_key.sign failed with error {:?}.\n", e);
         e
     })?;
     x509_certificate.set_signature(&signature).map_err(|e| {
         log::error!(
-            "gen_cert x509_certificate.set_signature failed with error {:?}.",
+            "gen_cert x509_certificate.set_signature failed with error {:?}.\n",
             e
         );
         e
@@ -349,7 +358,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
     Ok((
         x509_certificate.to_der().map_err(|e| {
             log::error!(
-                "gen_cert x509_certificate.to_der failed with error {:?}.",
+                "gen_cert x509_certificate.to_der failed with error {:?}.\n",
                 e
             );
             e
@@ -360,7 +369,7 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
 
 fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     let hash = digest_sha384(public_key).map_err(|e| {
-        log::error!("Failed to compute SHA384 digest: {:?}", e);
+        log::error!("Failed to compute SHA384 digest: {:?}\n", e);
         e
     })?;
 
@@ -368,12 +377,12 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     let mut additional_data = [0u8; 64];
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
     let td_report = tdx_tdcall::tdreport::tdcall_report(&additional_data).map_err(|e| {
-        log::error!("Failed to get TD report via tdcall. Error: {:?}", e);
+        log::error!("Failed to get TD report via tdcall. Error: {:?}\n", e);
         e
     })?;
 
     attestation::get_quote(td_report.as_bytes()).map_err(|e| {
-        log::error!("Failed to get quote from TD report. Error: {:?}", e);
+        log::error!("Failed to get quote from TD report. Error: {:?}\n", e);
         RatlsError::GetQuote
     })
 }
@@ -403,36 +412,36 @@ mod verify {
         quote_local: &[u8],
     ) -> core::result::Result<(), CryptoError> {
         let verified_report_local = attestation::verify_quote(quote_local).map_err(|e| {
-            log::error!("Mutual attestation error {:?}.", e);
+            log::error!("Mutual attestation error {:?}.\n", e);
             CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string())
         })?;
         let cert = Certificate::from_der(cert).map_err(|e| {
-            log::error!("Failed to parse certificate from DER. Error: {:?}", e);
+            log::error!("Failed to parse certificate from DER. Error: {:?}\n", e);
             CryptoError::ParseCertificate
         })?;
         let extensions = cert.tbs_certificate.extensions.as_ref().ok_or({
-            log::error!("Failed to get certificate extensions.");
+            log::error!("Failed to get certificate extensions.\n");
             CryptoError::ParseCertificate
         })?;
 
         // Check if extensions contain `MIGTD_EXTENDED_KEY_USAGE`
         check_migtd_eku(extensions).map_err(|e| {
-            log::error!("Failed to check MIGTD EKU: {:?}", e);
+            log::error!("Failed to check MIGTD EKU: {:?}\n", e);
             e
         })?;
         // Parse out quote report and event log from certificate extensions
         let quote_report = find_extension(extensions, &EXTNID_MIGTD_QUOTE_REPORT).ok_or({
-            log::error!("Failed to find quote report extension.");
+            log::error!("Failed to find quote report extension.\n");
             CryptoError::ParseCertificate
         })?;
         let event_log = find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG).ok_or({
-            log::error!("Failed to find event log extension.");
+            log::error!("Failed to find event log extension.\n");
             CryptoError::ParseCertificate
         })?;
 
         if let Ok(verified_report_peer) = attestation::verify_quote(quote_report) {
             verify_signature(&cert, verified_report_peer.as_slice()).map_err(|e| {
-                log::error!("Failed to verify signature: {:?}", e);
+                log::error!("Failed to verify signature: {:?}\n", e);
                 e
             })?;
 
@@ -451,16 +460,16 @@ mod verify {
 
             policy_check_result.map_err(|e| match e {
                 PolicyError::InvalidPolicy => {
-                    log::error!("Invalid migration policy.");
+                    log::error!("Invalid migration policy.\n");
                     CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string())
                 }
                 _ => {
-                    log::error!("Migration policy unsatisfied.");
+                    log::error!("Migration policy unsatisfied.\n");
                     CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string())
                 }
             })
         } else {
-            log::error!("Mutual attestation error.");
+            log::error!("Mutual attestation error.\n");
             Err(CryptoError::TlsVerifyPeerCert(
                 MUTUAL_ATTESTATION_ERROR.to_string(),
             ))
@@ -474,38 +483,38 @@ mod verify {
         policy: &[u8],
     ) -> core::result::Result<(), CryptoError> {
         let cert = Certificate::from_der(cert).map_err(|_| {
-            log::error!("Failed to parse certificate from DER.");
+            log::error!("Failed to parse certificate from DER.\n");
             CryptoError::ParseCertificate
         })?;
 
         let extensions = cert.tbs_certificate.extensions.as_ref().ok_or({
-            log::error!("Failed to get certificate extensions.");
+            log::error!("Failed to get certificate extensions.\n");
             CryptoError::ParseCertificate
         })?;
 
         // Check if extensions contain `MIGTD_EXTENDED_KEY_USAGE`
         check_migtd_eku(extensions).map_err(|e| {
-            log::error!("Failed to check MIGTD EKU: {:?}", e);
+            log::error!("Failed to check MIGTD EKU: {:?}\n", e);
             e
         })?;
         // Parse out quote, event log and policy from certificate extensions
         let quote_report = find_extension(extensions, &EXTNID_MIGTD_QUOTE_REPORT).ok_or({
-            log::error!("Failed to find quote report extension.");
+            log::error!("Failed to find quote report extension.\n");
             CryptoError::ParseCertificate
         })?;
         let event_log = find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG).ok_or({
-            log::error!("Failed to find event log extension.");
+            log::error!("Failed to find event log extension.\n");
             CryptoError::ParseCertificate
         })?;
         let expected_policy_hash =
             find_extension(extensions, &EXTNID_MIGTD_POLICY_HASH).ok_or({
-                log::error!("Failed to find expected policy hash extension.");
+                log::error!("Failed to find expected policy hash extension.\n");
                 CryptoError::ParseCertificate
             })?;
 
         let exact_policy_hash = digest_sha384(policy)?;
         if expected_policy_hash != exact_policy_hash.as_slice() {
-            log::error!("Invalid migration policy.");
+            log::error!("Invalid migration policy.\n");
             return Err(CryptoError::TlsVerifyPeerCert(
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ));
@@ -521,11 +530,11 @@ mod verify {
 
         let suppl_data = policy_check_result.map_err(|e| match e {
             PolicyError::InvalidPolicy => {
-                log::error!("Invalid migration policy.");
+                log::error!("Invalid migration policy.\n");
                 CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string())
             }
             _ => {
-                log::error!("Migration policy unsatisfied.");
+                log::error!("Migration policy unsatisfied.\n");
                 CryptoError::TlsVerifyPeerCert(MIG_POLICY_UNSATISFIED_ERROR.to_string())
             }
         })?;
@@ -540,19 +549,19 @@ mod verify {
             .subject_public_key
             .as_bytes()
             .ok_or({
-                log::error!("Failed to get public key bytes from certificate.");
+                log::error!("Failed to get public key bytes from certificate.\n");
                 CryptoError::ParseCertificate
             })?;
         let tbs = cert.tbs_certificate.to_der().map_err(|e| {
-            log::error!("Failed to get tbs_certificate der: {:?}", e);
+            log::error!("Failed to get tbs_certificate der: {:?}\n", e);
             e
         })?;
         let signature = cert.signature_value.as_bytes().ok_or({
-            log::error!("Failed to get signature bytes from certificate.");
+            log::error!("Failed to get signature bytes from certificate.\n");
             CryptoError::ParseCertificate
         })?;
         verify_public_key(verified_report, public_key).map_err(|e| {
-            log::error!("Public key verification failed: {:?}", e);
+            log::error!("Public key verification failed: {:?}\n", e);
             e
         })?;
         ecdsa_verify(public_key, &tbs, signature)
@@ -571,14 +580,14 @@ mod verify {
 
         let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];
         let digest = digest_sha384(public_key).map_err(|e| {
-            log::error!("Failed to compute SHA384 digest: {:?}", e);
+            log::error!("Failed to compute SHA384 digest: {:?}\n", e);
             e
         })?;
 
         if report_data == digest.as_slice() {
             Ok(())
         } else {
-            log::error!("Public key verification failed in TD report.");
+            log::error!("Public key verification failed in TD report.\n");
             Err(CryptoError::TlsVerifyPeerCert(
                 MISMATCH_PUBLIC_KEY.to_string(),
             ))
@@ -622,7 +631,7 @@ fn check_migtd_eku(extensions: &Extensions) -> core::result::Result<(), CryptoEr
         if extn.extn_id == EXTENDED_KEY_USAGE {
             if let Some(extn_value) = extn.extn_value {
                 let eku = ExtendedKeyUsage::from_der(extn_value.as_bytes()).map_err(|e| {
-                    log::error!("Failed to parse ExtendedKeyUsage: {:?}", e);
+                    log::error!("Failed to parse ExtendedKeyUsage: {:?}\n", e);
                     e
                 })?;
                 if eku.contains(&MIGTD_EXTENDED_KEY_USAGE) {
@@ -632,7 +641,7 @@ fn check_migtd_eku(extensions: &Extensions) -> core::result::Result<(), CryptoEr
         }
     }
 
-    log::error!("check_migtd_eku MIGTD Extended Key Usage not found in certificate");
+    log::error!("check_migtd_eku MIGTD Extended Key Usage not found in certificate.\n");
     Err(CryptoError::ParseCertificate)
 }
 
