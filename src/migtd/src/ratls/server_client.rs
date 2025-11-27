@@ -205,13 +205,13 @@ fn gen_cert(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
         log::error!("gen_cert gen_quote() failed with error {:?}\n", e);
         e
     })?;
-    let event_log = get_event_log().ok_or({
+    let event_log = get_event_log().ok_or_else(|| {
         log::error!("gen_cert get_event_log() failed with error RatlsError::InvalidEventlog.\n");
         RatlsError::InvalidEventlog
     })?;
     #[cfg(feature = "policy_v2")]
     let policy_hash = {
-        let policy = get_policy().ok_or({
+        let policy = get_policy().ok_or_else(|| {
             log::error!(
                 "gen_cert client policy_v2 Failed to get migration policy for policy hash.\n"
             );
@@ -419,7 +419,7 @@ mod verify {
             log::error!("Failed to parse certificate from DER. Error: {:?}\n", e);
             CryptoError::ParseCertificate
         })?;
-        let extensions = cert.tbs_certificate.extensions.as_ref().ok_or({
+        let extensions = cert.tbs_certificate.extensions.as_ref().ok_or_else(|| {
             log::error!("Failed to get certificate extensions.\n");
             CryptoError::ParseCertificate
         })?;
@@ -430,11 +430,12 @@ mod verify {
             e
         })?;
         // Parse out quote report and event log from certificate extensions
-        let quote_report = find_extension(extensions, &EXTNID_MIGTD_QUOTE_REPORT).ok_or({
-            log::error!("Failed to find quote report extension.\n");
-            CryptoError::ParseCertificate
-        })?;
-        let event_log = find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG).ok_or({
+        let quote_report =
+            find_extension(extensions, &EXTNID_MIGTD_QUOTE_REPORT).ok_or_else(|| {
+                log::error!("Failed to find quote report extension.\n");
+                CryptoError::ParseCertificate
+            })?;
+        let event_log = find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG).ok_or_else(|| {
             log::error!("Failed to find event log extension.\n");
             CryptoError::ParseCertificate
         })?;
@@ -487,27 +488,27 @@ mod verify {
             CryptoError::ParseCertificate
         })?;
 
-        let extensions = cert.tbs_certificate.extensions.as_ref().ok_or({
+        let extensions = cert.tbs_certificate.extensions.as_ref().ok_or_else(|| {
             log::error!("Failed to get certificate extensions.\n");
             CryptoError::ParseCertificate
         })?;
-
         // Check if extensions contain `MIGTD_EXTENDED_KEY_USAGE`
         check_migtd_eku(extensions).map_err(|e| {
             log::error!("Failed to check MIGTD EKU: {:?}\n", e);
             e
         })?;
         // Parse out quote, event log and policy from certificate extensions
-        let quote_report = find_extension(extensions, &EXTNID_MIGTD_QUOTE_REPORT).ok_or({
-            log::error!("Failed to find quote report extension.\n");
-            CryptoError::ParseCertificate
-        })?;
-        let event_log = find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG).ok_or({
+        let quote_report =
+            find_extension(extensions, &EXTNID_MIGTD_QUOTE_REPORT).ok_or_else(|| {
+                log::error!("Failed to find quote report extension.\n");
+                CryptoError::ParseCertificate
+            })?;
+        let event_log = find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG).ok_or_else(|| {
             log::error!("Failed to find event log extension.\n");
             CryptoError::ParseCertificate
         })?;
-        let expected_policy_hash =
-            find_extension(extensions, &EXTNID_MIGTD_POLICY_HASH).ok_or({
+        let expected_policy_hash = find_extension(extensions, &EXTNID_MIGTD_POLICY_HASH)
+            .ok_or_else(|| {
                 log::error!("Failed to find expected policy hash extension.\n");
                 CryptoError::ParseCertificate
             })?;
@@ -548,7 +549,7 @@ mod verify {
             .subject_public_key_info
             .subject_public_key
             .as_bytes()
-            .ok_or({
+            .ok_or_else(|| {
                 log::error!("Failed to get public key bytes from certificate.\n");
                 CryptoError::ParseCertificate
             })?;
@@ -556,7 +557,7 @@ mod verify {
             log::error!("Failed to get tbs_certificate der: {:?}\n", e);
             e
         })?;
-        let signature = cert.signature_value.as_bytes().ok_or({
+        let signature = cert.signature_value.as_bytes().ok_or_else(|| {
             log::error!("Failed to get signature bytes from certificate.\n");
             CryptoError::ParseCertificate
         })?;

@@ -112,18 +112,18 @@ impl ExchangeInformation {
 
 pub fn query() -> Result<()> {
     // Allocate one shared page for command and response buffer
-    let mut cmd_mem = SharedMemory::new(1).ok_or({
+    let mut cmd_mem = SharedMemory::new(1).ok_or_else(|| {
         log::error!("query: Failed to allocate command shared memory\n");
         MigrationResult::OutOfResource
     })?;
-    let mut rsp_mem = SharedMemory::new(1).ok_or({
+    let mut rsp_mem = SharedMemory::new(1).ok_or_else(|| {
         log::error!("query: Failed to allocate response shared memory\n");
         MigrationResult::OutOfResource
     })?;
 
     // Set Migration query command buffer
     let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
-        .ok_or({
+        .ok_or_else(|| {
             log::error!("query: Failed to create VmcallServiceCommand\n");
             MigrationResult::InvalidParameter
         })?;
@@ -141,8 +141,8 @@ pub fn query() -> Result<()> {
             log::error!("query: Failed to write MIGTD GUID to command buffer\n");
             e
         })?;
-    let _ =
-        VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID).ok_or({
+    let _ = VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_COMMON_GUID)
+        .ok_or_else(|| {
             log::error!("query: Failed to create VmcallServiceResponse\n");
             MigrationResult::InvalidParameter
         })?;
@@ -163,14 +163,14 @@ pub fn query() -> Result<()> {
         e
     })?;
 
-    let private_mem = rsp_mem.copy_to_private_shadow().ok_or({
+    let private_mem = rsp_mem.copy_to_private_shadow().ok_or_else(|| {
         log::error!("query: Failed to copy response to private shadow\n");
         MigrationResult::OutOfResource
     })?;
 
     // Parse the response data
     // Check the GUID of the reponse
-    let rsp = VmcallServiceResponse::try_read(private_mem).ok_or({
+    let rsp = VmcallServiceResponse::try_read(private_mem).ok_or_else(|| {
         log::error!("query: Failed to read VmcallServiceResponse from response\n");
         MigrationResult::InvalidParameter
     })?;
@@ -181,7 +181,7 @@ pub fn query() -> Result<()> {
         );
         return Err(MigrationResult::InvalidParameter);
     }
-    let query = rsp.read_data::<ServiceQueryResponse>(0).ok_or({
+    let query = rsp.read_data::<ServiceQueryResponse>(0).ok_or_else(|| {
         log::error!("query: Failed to read ServiceQueryResponse from response\n");
         MigrationResult::InvalidParameter
     })?;
@@ -244,7 +244,7 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         length: 0,
     };
     let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
-    let mut data_buffer = SharedMemory::new(1).ok_or({
+    let mut data_buffer = SharedMemory::new(1).ok_or_else(|| {
         log::error!("wait_for_request: Failed to allocate shared memory\n");
         MigrationResult::OutOfResource
     })?;
@@ -487,18 +487,18 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
 
 pub fn shutdown() -> Result<()> {
     // Allocate shared page for command and response buffer
-    let mut cmd_mem = SharedMemory::new(1).ok_or({
+    let mut cmd_mem = SharedMemory::new(1).ok_or_else(|| {
         log::error!("shutdown: Failed to allocate command shared memory\n");
         MigrationResult::OutOfResource
     })?;
-    let mut rsp_mem = SharedMemory::new(1).ok_or({
+    let mut rsp_mem = SharedMemory::new(1).ok_or_else(|| {
         log::error!("shutdown: Failed to allocate response shared memory\n");
         MigrationResult::OutOfResource
     })?;
 
     // Set Command
     let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-        .ok_or({
+        .ok_or_else(|| {
             log::error!("shutdown: Invalid parameter for VmcallServiceCommand\n");
             MigrationResult::InvalidParameter
         })?;
@@ -589,7 +589,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
         length: 0,
     };
     let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
-    let mut data_buffer = SharedMemory::new(1).ok_or({
+    let mut data_buffer = SharedMemory::new(1).ok_or_else(|| {
         log::error!("report_status: Failed to allocate shared memory for data buffer\n");
         MigrationResult::OutOfResource
     })?;
@@ -885,7 +885,7 @@ async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
             e
         })?;
 
-    let header = PreSessionMessage::read_from_bytes(&header_buffer).ok_or({
+    let header = PreSessionMessage::read_from_bytes(&header_buffer).ok_or_else(|| {
         log::error!("receive_pre_session_data_packet: Failed to read PreSessionMessage header\n");
         MigrationResult::InvalidParameter
     })?;
@@ -936,7 +936,7 @@ async fn receive_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
             e
         })?;
 
-    let packet = PreSessionMessage::read_from_bytes(&header_buffer).ok_or({
+    let packet = PreSessionMessage::read_from_bytes(&header_buffer).ok_or_else(|| {
         log::error!("receive_start_session_packet: Failed to read PreSessionMessage header\n");
         MigrationResult::InvalidParameter
     })?;
@@ -989,7 +989,7 @@ async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
             e
         })?;
 
-    let header = PreSessionMessage::read_from_bytes(&header_buffer).ok_or({
+    let header = PreSessionMessage::read_from_bytes(&header_buffer).ok_or_else(|| {
         log::error!("receive_hello_packet: Failed to read PreSessionMessage header\n");
         MigrationResult::InvalidParameter
     })?;
