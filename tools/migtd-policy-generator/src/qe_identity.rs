@@ -12,8 +12,8 @@ const QE_IDENTITY_URL: &str =
 const SBX_QE_IDENTITY_URL: &str =
     "https://sbx.api.trustedservices.intel.com/tdx/certification/v4/qe/identity?update=";
 
-pub fn get_qe_identity(for_production: bool) -> Result<QePolicy> {
-    let qe_info = fetch_qe_identity(for_production)?;
+pub async fn get_qe_identity(for_production: bool) -> Result<QePolicy> {
+    let qe_info = fetch_qe_identity(for_production).await?;
     Ok(QePolicy::new(
         qe_info.enclave_identity.miscselect,
         qe_info.enclave_identity.attributes,
@@ -23,14 +23,14 @@ pub fn get_qe_identity(for_production: bool) -> Result<QePolicy> {
     ))
 }
 
-fn fetch_qe_identity(for_production: bool) -> Result<QeInfo> {
+async fn fetch_qe_identity(for_production: bool) -> Result<QeInfo> {
     let url = if for_production {
         QE_IDENTITY_URL
     } else {
         SBX_QE_IDENTITY_URL
     };
 
-    let (response_code, data) = fetch_data_from_url(&url)?;
+    let (response_code, data) = fetch_data_from_url(&url).await?;
     match response_code {
         200 => {
             println!("Got enclave identity");

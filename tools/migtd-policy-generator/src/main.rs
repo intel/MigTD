@@ -52,7 +52,8 @@ struct V2Command {
     output: PathBuf,
 }
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -62,10 +63,12 @@ fn main() {
                 eprintln!("--output is required in legacy mode (no subcommand provided)");
                 exit(2);
             });
-            let policy = generate_policy(!cli.pre_production).unwrap_or_else(|e| {
-                eprintln!("Failed to generate policy: {}", e);
-                exit(1);
-            });
+            let policy = generate_policy(!cli.pre_production)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to generate policy: {}", e);
+                    exit(1);
+                });
             fs::write(output, &policy).unwrap_or_else(|e| {
                 eprintln!("Failed to write output file: {}", e);
                 exit(1);

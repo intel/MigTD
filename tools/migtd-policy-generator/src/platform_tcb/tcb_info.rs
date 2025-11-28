@@ -10,14 +10,14 @@ use crate::fetch_data_from_url;
 const TCB_INFO_URL: &str = "https://api.trustedservices.intel.com/tdx/certification/v4/tcb";
 const SBX_TCB_INFO_URL: &str = "https://sbx.api.trustedservices.intel.com/tdx/certification/v4/tcb";
 
-pub fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<PlatformTcb>> {
+pub async fn fetch_platform_tcb(for_production: bool, fmspc: &str) -> Result<Option<PlatformTcb>> {
     let tcb_info_url = if for_production {
         TCB_INFO_URL
     } else {
         SBX_TCB_INFO_URL
     };
     let url = format!("{}?fmspc={}", tcb_info_url, fmspc);
-    let (response_code, data) = fetch_data_from_url(&url)?;
+    let (response_code, data) = fetch_data_from_url(&url).await?;
 
     let result = if response_code == 200 {
         println!("Got TCB info of fmspc - {}", fmspc,);
