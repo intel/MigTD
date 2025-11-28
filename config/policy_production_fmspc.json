@@ -170,14 +170,14 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            7,
-                            7,
+                            8,
+                            8,
                             2,
                             2,
-                            3,
+                            4,
                             1,
                             0,
-                            3,
+                            6,
                             0,
                             0,
                             0,
@@ -193,7 +193,7 @@
                         "reference": [
                             5,
                             0,
-                            7,
+                            8,
                             0,
                             0,
                             0,
@@ -276,11 +276,11 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            2,
-                            2,
-                            2,
-                            2,
                             3,
+                            3,
+                            2,
+                            2,
+                            4,
                             1,
                             0,
                             5,
@@ -299,7 +299,7 @@
                         "reference": [
                             5,
                             0,
-                            2,
+                            3,
                             0,
                             0,
                             0,
@@ -435,14 +435,14 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            7,
-                            7,
+                            8,
+                            8,
                             2,
                             2,
-                            3,
+                            4,
                             1,
                             0,
-                            3,
+                            6,
                             0,
                             0,
                             0,
@@ -458,7 +458,7 @@
                         "reference": [
                             5,
                             0,
-                            7,
+                            8,
                             0,
                             0,
                             0,
@@ -594,14 +594,14 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            7,
-                            7,
+                            8,
+                            8,
                             2,
                             2,
-                            3,
+                            4,
                             1,
                             0,
-                            3,
+                            6,
                             0,
                             0,
                             0,
@@ -617,7 +617,7 @@
                         "reference": [
                             5,
                             0,
-                            7,
+                            8,
                             0,
                             0,
                             0,
@@ -647,11 +647,11 @@
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
-                            2,
-                            2,
-                            2,
-                            2,
                             3,
+                            3,
+                            2,
+                            2,
+                            4,
                             1,
                             0,
                             5,
@@ -670,7 +670,7 @@
                         "reference": [
                             5,
                             0,
-                            2,
+                            3,
                             0,
                             0,
                             0,
@@ -755,7 +755,7 @@
                     },
                     "TDXModuleSVN": {
                         "operation": "greater-or-equal",
-                        "reference": 4
+                        "reference": 6
                     }
                 }
             }
