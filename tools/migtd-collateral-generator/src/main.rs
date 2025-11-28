@@ -27,17 +27,18 @@ struct Config {
     output: PathBuf,
 }
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let config = Config::parse();
 
     let result = match config.provider.to_lowercase().as_str() {
         "intel" => {
             let pcs_config = IntelPcsConfig::new(!config.pre_production);
-            generate_collaterals(&pcs_config, &config.output)
+            generate_collaterals(&pcs_config, &config.output).await
         }
         "azure-thim" | "azure" | "thim" => {
             let pcs_config = AzureThimConfig::new(&config.azure_region);
-            generate_collaterals(&pcs_config, &config.output)
+            generate_collaterals(&pcs_config, &config.output).await
         }
         _ => {
             eprintln!("Error: Invalid provider: {}", config.provider);
