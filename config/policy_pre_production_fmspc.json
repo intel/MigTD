@@ -2,12 +2,9 @@
     "id": "B87BFE45-9CC7-46F9-8F2C-A6CB55BF7101",
     "policy": [
         {
+            "fmspc": "20C06F000000",
             "Platform": {
                 "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 0
-                    },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -28,6 +25,10 @@
                             0,
                             0
                         ]
+                    },
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 0
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
@@ -51,16 +52,12 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "20C06F000000"
+            }
         },
         {
+            "fmspc": "10A06E040000",
             "Platform": {
                 "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 0
-                    },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -81,6 +78,10 @@
                             0,
                             0
                         ]
+                    },
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 0
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
@@ -104,37 +105,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10A06E040000"
+            }
         },
         {
+            "fmspc": "40806F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 11
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -157,16 +158,12 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "40806F000000"
+            }
         },
         {
+            "fmspc": "10806F000000",
             "Platform": {
                 "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 10
-                    },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -187,6 +184,10 @@
                             0,
                             0
                         ]
+                    },
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 10
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
@@ -210,16 +211,12 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10806F000000"
+            }
         },
         {
+            "fmspc": "50A06D000000",
             "Platform": {
                 "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 0
-                    },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -240,6 +237,10 @@
                             0,
                             0
                         ]
+                    },
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 0
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
@@ -263,16 +264,12 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "50A06D000000"
+            }
         },
         {
+            "fmspc": "B0806F000000",
             "Platform": {
                 "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 0
-                    },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -293,6 +290,10 @@
                             0,
                             0
                         ]
+                    },
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 0
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
@@ -316,16 +317,12 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "B0806F000000"
+            }
         },
         {
+            "fmspc": "00A06F010000",
             "Platform": {
                 "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 0
-                    },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -346,6 +343,10 @@
                             0,
                             0
                         ]
+                    },
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 0
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
@@ -369,16 +370,12 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "00A06F010000"
+            }
         },
         {
+            "fmspc": "00A06D070000",
             "Platform": {
                 "TcbInfo": {
-                    "pcesvn": {
-                        "operation": "greater-or-equal",
-                        "reference": 0
-                    },
                     "sgxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -399,6 +396,10 @@
                             0,
                             0
                         ]
+                    },
+                    "pcesvn": {
+                        "operation": "greater-or-equal",
+                        "reference": 0
                     },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
@@ -422,37 +423,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "00A06D070000"
+            }
         },
         {
+            "fmspc": "60806F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 11
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -475,37 +476,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "60806F000000"
+            }
         },
         {
+            "fmspc": "10A06E050000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -528,37 +529,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10A06E050000"
+            }
         },
         {
+            "fmspc": "40A06D000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -581,37 +582,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "40A06D000000"
+            }
         },
         {
+            "fmspc": "50A06F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -634,37 +635,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "50A06F000000"
+            }
         },
         {
+            "fmspc": "00A06D000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -687,37 +688,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "00A06D000000"
+            }
         },
         {
+            "fmspc": "10806F070000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -740,37 +741,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10806F070000"
+            }
         },
         {
+            "fmspc": "20D06D010000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -793,37 +794,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "20D06D010000"
+            }
         },
         {
+            "fmspc": "00A06F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -846,37 +847,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "00A06F000000"
+            }
         },
         {
+            "fmspc": "10A06D050000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -899,37 +900,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10A06D050000"
+            }
         },
         {
+            "fmspc": "00C06F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -952,37 +953,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "00C06F000000"
+            }
         },
         {
+            "fmspc": "30806F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 11
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1005,37 +1006,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "30806F000000"
+            }
         },
         {
+            "fmspc": "20806F070000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1058,37 +1059,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "20806F070000"
+            }
         },
         {
+            "fmspc": "10806F040000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 11
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1111,37 +1112,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10806F040000"
+            }
         },
         {
+            "fmspc": "10D06D000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1164,37 +1165,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10D06D000000"
+            }
         },
         {
+            "fmspc": "20806F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 11
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1217,37 +1218,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "20806F000000"
+            }
         },
         {
+            "fmspc": "30A06E000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1270,37 +1271,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "30A06E000000"
+            }
         },
         {
+            "fmspc": "10A06F000000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1323,37 +1324,37 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "10A06F000000"
+            }
         },
         {
+            "fmspc": "20A06D050000",
             "Platform": {
                 "TcbInfo": {
+                    "sgxtcbcomponents": {
+                        "operation": "array-greater-or-equal",
+                        "reference": [
+                            1,
+                            1,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0
+                        ]
+                    },
                     "pcesvn": {
                         "operation": "greater-or-equal",
                         "reference": 0
                     },
-                    "sgxtcbcomponents": {
-                        "operation": "array-greater-or-equal",
-                        "reference": [
-                            1,
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0,
-                            0
-                        ]
-                    },
                     "tdxtcbcomponents": {
                         "operation": "array-greater-or-equal",
                         "reference": [
@@ -1376,15 +1377,22 @@
                         ]
                     }
                 }
-            },
-            "fmspc": "20A06D050000"
+            }
         },
         {
             "QE": {
                 "QeIdentity": {
+                    "MISCSELECT": {
+                        "operation": "equal",
+                        "reference": "00000000"
+                    },
                     "ATTRIBUTES": {
                         "operation": "equal",
                         "reference": "11000000000000000000000000000000"
+                    },
+                    "MRSIGNER": {
+                        "operation": "equal",
+                        "reference": "DC9E2A7C6F948F17474E34A7FC43ED030F7C1563F1BABDDF6340C82E0E54A8C5"
                     },
                     "ISVPRODID": {
                         "operation": "equal",
@@ -1393,14 +1401,6 @@
                     "ISVSVN": {
                         "operation": "greater-or-equal",
                         "reference": 0
-                    },
-                    "MISCSELECT": {
-                        "operation": "equal",
-                        "reference": "00000000"
-                    },
-                    "MRSIGNER": {
-                        "operation": "equal",
-                        "reference": "DC9E2A7C6F948F17474E34A7FC43ED030F7C1563F1BABDDF6340C82E0E54A8C5"
                     }
                 }
             }
@@ -1408,14 +1408,6 @@
         {
             "TDXModule": {
                 "TDXModule_Identity": {
-                    "ATTRIBUTES": {
-                        "operation": "equal",
-                        "reference": "0000000000000000"
-                    },
-                    "MRSIGNERSEAM": {
-                        "operation": "equal",
-                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-                    },
                     "TDXModuleMajorVersion": {
                         "operation": "equal",
                         "reference": 2
@@ -1423,6 +1415,14 @@
                     "TDXModuleSVN": {
                         "operation": "greater-or-equal",
                         "reference": 0
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
                     }
                 }
             }
@@ -1430,14 +1430,6 @@
         {
             "TDXModule": {
                 "TDXModule_Identity": {
-                    "ATTRIBUTES": {
-                        "operation": "equal",
-                        "reference": "0000000000000000"
-                    },
-                    "MRSIGNERSEAM": {
-                        "operation": "equal",
-                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-                    },
                     "TDXModuleMajorVersion": {
                         "operation": "equal",
                         "reference": 3
@@ -1445,6 +1437,14 @@
                     "TDXModuleSVN": {
                         "operation": "greater-or-equal",
                         "reference": 0
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
                     }
                 }
             }
@@ -1452,14 +1452,6 @@
         {
             "TDXModule": {
                 "TDXModule_Identity": {
-                    "ATTRIBUTES": {
-                        "operation": "equal",
-                        "reference": "0000000000000000"
-                    },
-                    "MRSIGNERSEAM": {
-                        "operation": "equal",
-                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-                    },
                     "TDXModuleMajorVersion": {
                         "operation": "equal",
                         "reference": 1
@@ -1467,22 +1459,20 @@
                     "TDXModuleSVN": {
                         "operation": "greater-or-equal",
                         "reference": 0
+                    },
+                    "MRSIGNERSEAM": {
+                        "operation": "equal",
+                        "reference": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                    },
+                    "ATTRIBUTES": {
+                        "operation": "equal",
+                        "reference": "0000000000000000"
                     }
                 }
             }
         },
         {
             "MigTD": {
-                "EventLog": {
-                    "Digest.MigTdPolicy": {
-                        "operation": "equal",
-                        "reference": "self"
-                    },
-                    "Digest.MigTdSgxRootKey": {
-                        "operation": "equal",
-                        "reference": "self"
-                    }
-                },
                 "TDINFO": {
                     "ATTRIBUTES": {
                         "operation": "equal",
@@ -1521,6 +1511,16 @@
                         "reference": "self"
                     },
                     "XFAM": {
+                        "operation": "equal",
+                        "reference": "self"
+                    }
+                },
+                "EventLog": {
+                    "Digest.MigTdPolicy": {
+                        "operation": "equal",
+                        "reference": "self"
+                    },
+                    "Digest.MigTdSgxRootKey": {
                         "operation": "equal",
                         "reference": "self"
                     }
