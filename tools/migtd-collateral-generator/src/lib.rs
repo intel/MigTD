@@ -126,8 +126,11 @@ impl PcsConfig for AzureThimConfig {
 }
 
 /// Generate collaterals using the specified configuration and write to file
-pub fn generate_collaterals(config: &dyn PcsConfig, output_collateral: &PathBuf) -> Result<()> {
-    let collaterals = collateral::get_collateral(config)?;
+pub async fn generate_collaterals(
+    config: &dyn PcsConfig,
+    output_collateral: &PathBuf,
+) -> Result<()> {
+    let collaterals = collateral::get_collateral(config).await?;
     write_collaterals_file(output_collateral, &collaterals)?;
     Ok(())
 }

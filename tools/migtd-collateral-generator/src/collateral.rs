@@ -83,13 +83,24 @@ impl Collaterals {
     }
 }
 
-pub fn get_collateral(config: &dyn crate::PcsConfig) -> Result<Collaterals> {
-    let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(config)?;
-    let root_ca_crl_url = get_root_ca_crl_url(qe_identity_issuer_chain.as_str())?;
-    let root_ca_crl = fetch_data_from_url(&root_ca_crl_url)?.data;
-    let root_ca = fetch_root_ca(config)?;
-    let (pck_crl, pck_crl_issuer_chain) = fetch_pck_crl(config)?;
-    let platform_tcb_list = get_platform_tcb_list(config)?;
+pub async fn get_collateral(config: &dyn crate::PcsConfig) -> Result<Collaterals> {
+    let (
+        (qe_identity, qe_identity_issuer_chain, root_ca_crl),
+        root_ca,
+        (pck_crl, pck_crl_issuer_chain),
+        platform_tcb_list,
+    ) = tokio::try_join!(
+        async {
+            let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(config).await?;
+            let root_ca_crl_url = get_root_ca_crl_url(qe_identity_issuer_chain.as_str())?;
+            let root_ca_crl = fetch_data_from_url(&root_ca_crl_url).await?.data;
+            Ok::<_, anyhow::Error>((qe_identity, qe_identity_issuer_chain, root_ca_crl))
+        },
+        fetch_root_ca(config),
+        fetch_pck_crl(config),
+        get_platform_tcb_list(config),
+    )?;
+
     let mut collaterals = Collaterals::new(
         root_ca,
         pck_crl_issuer_chain,
@@ -166,7 +177,6 @@ fn crl_urls(cert_der: &[u8]) -> Result<Vec<String>> {
             for dist_point in crl_dist_points.iter() {
                 if let Some(distribution_point) = &dist_point.distribution_point {
                     match distribution_point {
-                        // Full name (type 0 in C code)
                         DistributionPointName::FullName(general_names) => {
                             for general_name in general_names.iter() {
                                 if let GeneralName::URI(uri) = general_name {
@@ -174,9 +184,7 @@ fn crl_urls(cert_der: &[u8]) -> Result<Vec<String>> {
                                 }
                             }
                         }
-                        // Relative name (type 1 in C code)
                         DistributionPointName::NameRelativeToCRLIssuer(relative_name) => {
-                            // Convert relative distinguished name to string
                             let rdn_string = format!("{:?}", relative_name);
                             if !rdn_string.is_empty() {
                                 urls.push(rdn_string);
