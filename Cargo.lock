@@ -1275,6 +1275,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "migtd-policy-verifier"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "policy",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "minicov"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
