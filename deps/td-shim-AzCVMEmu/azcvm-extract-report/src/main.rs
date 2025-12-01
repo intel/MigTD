@@ -90,18 +90,15 @@ fn extract_report_data(td_report: &tdx::TdReport) -> Result<ReportData> {
 
     let td_info = &td_report.tdinfo;
 
-    // Azure CVM Underhill reports have all RTMRs as zeros
-    const RTMR0: &str = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-    const RTMR1: &str = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-    const RTMR2: &str = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-    const RTMR3: &str = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-
+    // Extract RTMRs from the TD report
+    // Note: In Azure CVM Underhill environments, RTMRs will be zeros
+    // But in mock/test environments with quote files, they can contain actual measurements
     let data = ReportData {
         mrtd: bytes_to_hex(&td_info.mrtd),
-        rtmr0: RTMR0.to_string(),
-        rtmr1: RTMR1.to_string(),
-        rtmr2: RTMR2.to_string(),
-        rtmr3: RTMR3.to_string(),
+        rtmr0: bytes_to_hex(&td_info.rtrm[0].register_data),
+        rtmr1: bytes_to_hex(&td_info.rtrm[1].register_data),
+        rtmr2: bytes_to_hex(&td_info.rtrm[2].register_data),
+        rtmr3: bytes_to_hex(&td_info.rtrm[3].register_data),
         xfam: bytes_to_hex(&td_info.xfam),
         attributes: bytes_to_hex(&td_info.attributes),
         mr_config_id: bytes_to_hex(&td_info.mrconfigid),
@@ -114,8 +111,8 @@ fn extract_report_data(td_report: &tdx::TdReport) -> Result<ReportData> {
 
     log::info!("Successfully extracted report data");
     log::debug!("MRTD: {}", data.mrtd);
-    log::info!("Note: RTMR values are set to zeros (matching Azure Underhill reports)");
-    log::info!("      Azure CVM reports don't contain MigTD-specific RTMRs");
+    log::debug!("RTMR0: {}", data.rtmr0);
+    log::debug!("RTMR1: {}", data.rtmr1);
 
     Ok(data)
 }
