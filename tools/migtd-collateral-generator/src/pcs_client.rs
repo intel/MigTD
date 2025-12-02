@@ -269,7 +269,9 @@ mod tests {
     ///
     /// Run with: cargo test test_thim_headers -- --nocapture
     /// Set AZURE_REGION environment variable or it defaults to "useast"
+    /// Ignored in CI because it requires network access to Azure THIM.
     #[tokio::test]
+    #[ignore]
     async fn test_thim_headers() {
         // Get region from environment variable, default to "useast"
         let region = std::env::var("AZURE_REGION").unwrap_or_else(|_| "useast".to_string());
