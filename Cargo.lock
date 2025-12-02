@@ -1047,7 +1047,6 @@ dependencies = [
  "clap",
  "crypto",
  "der",
- "serde",
  "serde_json",
 ]
 
