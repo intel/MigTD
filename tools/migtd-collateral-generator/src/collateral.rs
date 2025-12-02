@@ -272,3 +272,49 @@ fn is_pem_format(data: &[u8]) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::IntelPcsConfig;
+
+    // Integration-style test: requires network access to Intel PCS.
+    #[tokio::test]
+    async fn test_get_collateral_with_intel_pcs() {
+        // true -> production PCS; set to false if you want sandbox.
+        let config = IntelPcsConfig::new(true);
+
+        let result = get_collateral(&config).await;
+        assert!(
+            result.is_ok(),
+            "get_collateral with IntelPcsConfig failed: {result:?}"
+        );
+
+        let collaterals = result.unwrap();
+        // Basic sanity checks on the returned structure.
+        assert_eq!(collaterals.major_version, 1);
+        assert_eq!(collaterals.minor_version, 0);
+        assert_eq!(collaterals.tee_type, 0x81);
+        assert!(collaterals
+            .root_ca
+            .starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(collaterals
+            .root_ca_crl
+            .starts_with("-----BEGIN X509 CRL-----"));
+        assert!(collaterals.pck_crl.starts_with("-----BEGIN X509 CRL-----"));
+        assert!(collaterals.qe_identity.starts_with("{\"enclaveIdentity\":"));
+        assert!(collaterals
+            .qe_identity_issuer_chain
+            .starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(collaterals
+            .pck_crl_issuer_chain
+            .starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(!collaterals.platforms.is_empty());
+        assert!(collaterals.platforms[0]
+            .tcb_info_issuer_chain
+            .starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(collaterals.platforms[0]
+            .tcb_info
+            .starts_with("{\"tcbInfo\":"));
+    }
+}
