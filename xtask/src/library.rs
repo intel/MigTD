@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Args;
 use xshell::{cmd, Shell};
 
-const DEFAULT_LIB_CRATES: [&str; 7] = [
+const DEFAULT_LIB_CRATES: &[&str] = &[
     "migtd",
     "crypto",
     "attestation",
@@ -14,6 +14,7 @@ const DEFAULT_LIB_CRATES: [&str; 7] = [
     "virtio",
     "vsock",
     "policy",
+    "migtd-collateral-generator",
 ];
 
 #[derive(Clone, Args)]
