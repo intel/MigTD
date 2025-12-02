@@ -6,9 +6,7 @@
 
 extern crate alloc;
 
-use alloc::{
-    boxed::Box, collections::BTreeMap, format, string::String, string::ToString, vec::Vec,
-};
+use alloc::{collections::BTreeMap, format, string::String, string::ToString, vec::Vec};
 use core::result::Result;
 use crypto::x509::SubjectPublicKeyInfo;
 use der::Decode;
