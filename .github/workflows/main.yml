@@ -57,4 +57,14 @@ jobs:
             BUILD_CMD="$BUILD_CMD --debug"
           fi
           $BUILD_CMD
+
+      - name: Build tools
+        run: |
+          cargo build -p json-signer
+          cargo build -p migtd-collateral-generator
+          cargo build -p migtd-hash
+          cargo build -p migtd-policy-generator
+          cargo build -p migtd-policy-verifier
+          cargo build -p servtd-collateral-generator
+
           
