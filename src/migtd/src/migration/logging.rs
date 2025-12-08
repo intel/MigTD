@@ -11,7 +11,8 @@ use alloc::format;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use lazy_static::lazy_static;
-use log::Level;
+use log::kv::{Error, Key, Value, VisitSource};
+use log::{Level, LevelFilter, Metadata, Record, SetLoggerError};
 #[cfg(not(test))]
 use raw_cpuid::CpuId;
 use spin::Mutex;
@@ -23,6 +24,7 @@ use zerocopy::{transmute_ref, AsBytes, FromBytes, FromZeroes};
 const PAGE_SIZE: usize = 0x1_000;
 #[cfg(not(test))]
 const TDCALL_STATUS_SUCCESS: u64 = 0;
+const MIGRATION_REQUEST_ID_SENTINEL: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
 type Result<T> = core::result::Result<T, MigrationResult>;
 
@@ -469,6 +471,71 @@ pub fn entrylog(msg: &Vec<u8>, loglevel: Level, request_id: u64) {
             }
         }
     }
+}
+
+// Create a visitor struct to extract migration_request_id from key-value pairs
+struct RequestIdVisitor {
+    pub mig_request_id: Option<u64>,
+}
+
+impl VisitSource<'_> for RequestIdVisitor {
+    fn visit_pair(&mut self, key: Key<'_>, value: Value<'_>) -> core::result::Result<(), Error> {
+        if key.as_str() == "migration_request_id" {
+            self.mig_request_id = Some(value.to_u64().unwrap_or(MIGRATION_REQUEST_ID_SENTINEL));
+        }
+        Ok(())
+    }
+}
+
+/// Custom logger that routes log messages to structured logging
+pub struct VmmLoggerBackend;
+
+impl log::Log for VmmLoggerBackend {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        let log_max_level = LOGGING_INFORMATION.maxloglevel.load(Ordering::SeqCst);
+        let log_level = loglevel_to_u8(metadata.level());
+
+        // Enable if logging is configured and level is appropriate
+        log_level <= log_max_level
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            let msg = format!("{}\n", record.args());
+
+            let mut visitor = RequestIdVisitor {
+                mig_request_id: None,
+            };
+            let _ = record.key_values().visit(&mut visitor);
+
+            let mig_request_id = visitor
+                .mig_request_id
+                .unwrap_or(MIGRATION_REQUEST_ID_SENTINEL);
+
+            entrylog(&msg.into_bytes(), record.level(), mig_request_id);
+
+            // Also output to debug console for development (skip in test mode to avoid issues)
+            #[cfg(not(test))]
+            if mig_request_id != MIGRATION_REQUEST_ID_SENTINEL {
+                td_logger::dbg_write_string(&format!(
+                    "{} - [req_id: {}] {}\n",
+                    record.level(),
+                    mig_request_id,
+                    record.args()
+                ));
+            }
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+/// Logger backend for the log crate
+static VM_LOGGER_BACKEND: VmmLoggerBackend = VmmLoggerBackend;
+
+/// Initialize the VMM logger as the global logger
+pub fn init_vmm_logger() -> core::result::Result<(), SetLoggerError> {
+    log::set_logger(&VM_LOGGER_BACKEND).map(|()| log::set_max_level(LevelFilter::Trace))
 }
 
 #[cfg(test)]
@@ -1009,6 +1076,113 @@ mod test {
         logareavector_2.clear();
         unsafe {
             let _ = Box::from_raw(data_buffer_ptr_2 as *mut [u8; PAGE_SIZE]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_log_info() {
+        // cargo test --features vmcall-raw --lib migration::logging::test::test_log_info -- --nocapture
+
+        // Reset the global state for testing
+        LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
+        LOGGING_INFORMATION
+            .logarea_created
+            .store(false, Ordering::SeqCst);
+        LOGGING_INFORMATION
+            .logarea_initialized
+            .store(false, Ordering::SeqCst);
+        LOGGING_INFORMATION.logentry_id.store(0, Ordering::SeqCst);
+        LOGGING_INFORMATION.maxloglevel.store(0, Ordering::SeqCst);
+
+        let mut data: Vec<u8> = Vec::new();
+        let log_max_level: u8 = 5;
+
+        let result = init_vmm_logger();
+        assert!(result.is_ok());
+
+        // Create and enable log area
+        let result = create_logarea();
+        assert!(result.is_ok());
+
+        let result = enable_logarea(log_max_level, 0, &mut data).await;
+        assert!(result.is_ok());
+
+        // call log::info macro
+        log::info!("Test message 1");
+
+        // call log::info macro with migration request id
+        log::info!(migration_request_id = 12345; "Test message 2");
+
+        // Validate buffer structure
+        let mut logareavector = LOGAREAPTR.lock();
+        let data_buffer_ptr = logareavector[0];
+        let data_buffer =
+            unsafe { core::slice::from_raw_parts(data_buffer_ptr as *const u8, PAGE_SIZE) };
+
+        // Check buffer header
+        let header_bytes = &data_buffer[0..size_of::<LogAreaBufferHeader>()];
+        let header: &LogAreaBufferHeader =
+            unsafe { &*(header_bytes.as_ptr() as *const LogAreaBufferHeader) };
+        let signature = header.signature;
+        let vcpuindex = header.vcpuindex;
+        let reserved = header.reserved;
+        let startoffset = header.startoffset;
+        let endoffset = header.endoffset;
+
+        assert_eq!(signature, LOGAREA_SIGNATURE);
+        assert_eq!(vcpuindex, 0);
+        assert_eq!(reserved, 0);
+        assert!(startoffset == size_of::<LogAreaBufferHeader>() as u64);
+        assert!(endoffset > startoffset);
+
+        // Check that there's a valid log entry
+        let header_bytes =
+            &data_buffer[startoffset as usize..startoffset as usize + size_of::<LogEntryHeader>()];
+        let header: &LogEntryHeader = unsafe { &*(header_bytes.as_ptr() as *const LogEntryHeader) };
+        let log_entry_id = header.log_entry_id;
+        let mig_request_id = header.mig_request_id;
+        let loglevel = header.loglevel;
+        let length = header.length;
+        let first_log_entry_start = startoffset as usize + size_of::<LogEntryHeader>();
+        let first_entry_message_end = first_log_entry_start + length as usize;
+        let first_entry_message_bytes =
+            &data_buffer[first_log_entry_start..first_entry_message_end];
+
+        assert_eq!(log_entry_id, 1);
+        assert_eq!(mig_request_id, MIGRATION_REQUEST_ID_SENTINEL);
+        assert_eq!(loglevel, loglevel_to_u8(Level::Info));
+        assert_eq!(length, "Test message 1\n".len() as u32);
+        assert_eq!(
+            core::str::from_utf8(first_entry_message_bytes).unwrap(),
+            "Test message 1\n"
+        );
+
+        // Check second log entry
+        let header_bytes_2 = &data_buffer
+            [first_entry_message_end..first_entry_message_end + size_of::<LogEntryHeader>()];
+        let header_2: &LogEntryHeader =
+            unsafe { &*(header_bytes_2.as_ptr() as *const LogEntryHeader) };
+        let log_entry_id_2 = header_2.log_entry_id;
+        let mig_request_id_2 = header_2.mig_request_id;
+        let loglevel_2 = header_2.loglevel;
+        let length_2 = header_2.length;
+        let second_log_entry_start = first_entry_message_end as usize + size_of::<LogEntryHeader>();
+        let second_entry_message_end = second_log_entry_start + length as usize;
+        let second_entry_message_bytes =
+            &data_buffer[second_log_entry_start..second_entry_message_end];
+
+        assert_eq!(log_entry_id_2, 2);
+        assert_eq!(mig_request_id_2, 12345);
+        assert_eq!(loglevel_2, loglevel_to_u8(Level::Info));
+        assert_eq!(length_2, "Test message 2\n".len() as u32);
+        assert_eq!(
+            core::str::from_utf8(second_entry_message_bytes).unwrap(),
+            "Test message 2\n"
+        );
+
+        logareavector.clear();
+        unsafe {
+            let _ = Box::from_raw(data_buffer_ptr as *mut [u8; PAGE_SIZE]);
         }
     }
 }
