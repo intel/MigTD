@@ -9,8 +9,7 @@ extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
 use der::{Decode, Encode};
-use pki_types::CertificateDer;
-use rustls_pemfile::Item;
+use pki_types::{pem::PemObject, CertificateDer};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "rustls")] {
@@ -95,14 +94,7 @@ impl From<x509::DerError> for Error {
 }
 
 pub fn pem_cert_to_der(cert: &[u8]) -> Result<CertificateDer<'static>> {
-    let item = rustls_pemfile::read_one_from_slice(cert)
-        .map_err(|_| Error::DecodePemCert)?
-        .map(|(item, _)| item)
-        .ok_or(Error::DecodePemCert)?;
-    match item {
-        Item::X509Certificate(cert) => Ok(cert),
-        _ => Err(Error::DecodePemCert),
-    }
+    CertificateDer::from_pem_slice(cert).map_err(|_| Error::DecodePemCert)
 }
 
 /// Verifies a certificate chain and then verifies a message signature
@@ -124,22 +116,11 @@ pub fn verify_cert_chain_and_signature(
 
 fn extract_cert_chain_from_pem(cert_chain_pem: &[u8]) -> Result<Vec<CertificateDer>> {
     let mut cert_chain = Vec::new();
-    let mut remaining = cert_chain_pem;
 
     // Extract all certificates from the PEM chain
-    while !remaining.is_empty() {
-        match rustls_pemfile::read_one_from_slice(remaining) {
-            Ok(Some((Item::X509Certificate(cert), rest))) => {
-                cert_chain.push(cert);
-                remaining = rest;
-            }
-            Ok(Some((_, rest))) => {
-                // Skip non-certificate items
-                remaining = rest;
-            }
-            Ok(None) => break,
-            Err(_) => return Err(Error::DecodePemCert),
-        }
+    for cert in CertificateDer::pem_slice_iter(cert_chain_pem) {
+        let cert = cert.map_err(|_| Error::DecodePemCert)?;
+        cert_chain.push(cert);
     }
 
     if cert_chain.is_empty() {

@@ -4,10 +4,10 @@
 
 use alloc::vec::Vec;
 use pki_types::alg_id;
+use pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, SubjectPublicKeyInfoDer};
 use ring::pkcs8::Document;
 use ring::rand::SystemRandom;
 use ring::signature::{self, EcdsaKeyPair, KeyPair, UnparsedPublicKey};
-use rustls_pemfile::Item;
 use zeroize::Zeroize;
 
 use crate::{x509, Error, Result};
@@ -125,14 +125,16 @@ pub fn ecdsa_sign(pkcs8: &[u8], data: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn pem_to_der_from_slice(pem_data: &[u8]) -> Result<Vec<u8>> {
-    match rustls_pemfile::read_one_from_slice(pem_data).map_err(|_| Error::DecodePemCert)? {
-        Some((Item::X509Certificate(cert), _remaining)) => Ok(cert.to_vec()),
-        Some((Item::Pkcs8Key(key), _)) => Ok(key.secret_pkcs8_der().to_vec()),
-        Some((Item::Pkcs1Key(key), _)) => Ok(key.secret_pkcs1_der().to_vec()),
-        Some((Item::Sec1Key(key), _)) => Ok(key.secret_sec1_der().to_vec()),
-        Some((Item::SubjectPublicKeyInfo(spki), _)) => Ok(spki.to_vec()),
-        _ => Err(Error::DecodePemCert),
+    if let Ok(cert) = CertificateDer::from_pem_slice(pem_data) {
+        return Ok(cert.to_vec());
     }
+    if let Ok(key) = PrivateKeyDer::from_pem_slice(pem_data) {
+        return Ok(key.secret_der().to_vec());
+    }
+    if let Ok(spki) = SubjectPublicKeyInfoDer::from_pem_slice(pem_data) {
+        return Ok(spki.to_vec());
+    }
+    Err(Error::DecodePemCert)
 }
 
 // Here is a workaround to cleanup the structures that contain sensitive
