@@ -7,7 +7,7 @@ use crate::Error;
 use alloc::vec::Vec;
 use der::asn1::{AnyRef, BitStringRef, ObjectIdentifier};
 use der::{Choice, Decode, Encode, ErrorKind, Header, Sequence, Tag, TagMode, TagNumber, Tagged};
-use rustls_pemfile::Item;
+use pki_types::{pem::PemObject, CertificateRevocationListDer};
 
 const CRL_NUMBER_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.20");
 
@@ -101,10 +101,8 @@ impl<'a> Choice<'a> for Extensions<'a> {
 
 /// Parses a CRL and returns the CRL Number extension value
 pub fn get_crl_number(crl: &[u8]) -> Result<u32, Error> {
-    let crl_der = match rustls_pemfile::read_one_from_slice(crl) {
-        Ok(Some((Item::Crl(data), _))) => data.to_vec(),
-        Ok(Some(_)) | Ok(None) | Err(_) => return Err(Error::DecodePemCert),
-    };
+    let crl_der =
+        CertificateRevocationListDer::from_pem_slice(crl).map_err(|_| Error::DecodePemCert)?;
 
     let crl = Crl::from_der(&crl_der).map_err(|_| Error::ParseCertificate)?;
 
