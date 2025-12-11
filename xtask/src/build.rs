@@ -114,7 +114,7 @@ impl LogLevel {
         }
     }
 
-    fn relase_feature(&self) -> &str {
+    fn release_feature(&self) -> &str {
         match self {
             LogLevel::Off => "log/release_max_level_off",
             LogLevel::Error => "log/release_max_level_error",
@@ -340,9 +340,71 @@ impl BuildArgs {
 
         features.push_str(",");
         if self.debug {
-            features.push_str(self.log_level.unwrap_or(LogLevel::Info).debug_feature());
+            println!("Building debug MigTD");
+            match self.log_level {
+                Some(loglevel) => match loglevel {
+                    LogLevel::Off => {
+                        println!("Building debug MigTD found loglevel=Off), overriding to Info");
+                        features.push_str(LogLevel::Info.debug_feature());
+                    }
+                    LogLevel::Error => {
+                        println!("Building debug MigTD found loglevel=Error");
+                        features.push_str(loglevel.debug_feature());
+                    }
+                    LogLevel::Warn => {
+                        println!("Building debug MigTD found loglevel=Warn");
+                        features.push_str(loglevel.debug_feature());
+                    }
+                    LogLevel::Info => {
+                        println!("Building debug MigTD found loglevel=Info");
+                        features.push_str(loglevel.debug_feature());
+                    }
+                    LogLevel::Debug => {
+                        println!("Building debug MigTD found loglevel=Debug");
+                        features.push_str(loglevel.debug_feature());
+                    }
+                    LogLevel::Trace => {
+                        println!("Building debug MigTD found loglevel=Trace");
+                        features.push_str(loglevel.debug_feature());
+                    }
+                },
+                _ => {
+                    println!("Building debug MigTD found None(loglevel)");
+                }
+            }
         } else {
-            features.push_str(self.log_level.unwrap_or(LogLevel::Off).relase_feature());
+            println!("Building release MigTD");
+            match self.log_level {
+                Some(loglevel) => match loglevel {
+                    LogLevel::Off => {
+                        println!("Building release MigTD found loglevel=Off), overriding to Info");
+                        features.push_str(LogLevel::Info.release_feature());
+                    }
+                    LogLevel::Error => {
+                        println!("Building release MigTD found loglevel=Error");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Warn => {
+                        println!("Building release MigTD found loglevel=Warn");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Info => {
+                        println!("Building release MigTD found loglevel=Info");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Debug => {
+                        println!("Building release MigTD found loglevel=Debug");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Trace => {
+                        println!("Building release MigTD found loglevel=Trace");
+                        features.push_str(loglevel.release_feature());
+                    }
+                },
+                _ => {
+                    println!("Building release MigTD found None(loglevel)");
+                }
+            }
         }
 
         features
