@@ -44,7 +44,7 @@ jobs:
         run: ./tools/migtd-policy-generator/target/release/migtd-policy-generator -o config/policy_pre_production_fmspc.json --pre-production
 
       - name: Create Pull Request for Collateral
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update collateral files"
@@ -59,7 +59,7 @@ jobs:
             config/collateral_pre_production_fmspc.json
 
       - name: Create Pull Request for Policy
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update policy v1 files"
