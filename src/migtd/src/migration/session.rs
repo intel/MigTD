@@ -21,8 +21,6 @@ use core::{future::poll_fn, mem::size_of, task::Poll};
 #[cfg(any(feature = "vmcall-interrupt", feature = "vmcall-raw"))]
 use event::VMCALL_SERVICE_FLAG;
 use lazy_static::lazy_static;
-#[cfg(feature = "vmcall-raw")]
-use log::Level;
 use spin::Mutex;
 use td_payload::mm::shared::SharedMemory;
 use tdx_tdcall::{
@@ -35,8 +33,6 @@ use tdx_tdcall::{tdreport::TdxReport, tdreport::TD_REPORT_ADDITIONAL_DATA_SIZE};
 use zerocopy::AsBytes;
 type Result<T> = core::result::Result<T, MigrationResult>;
 
-#[cfg(feature = "vmcall-raw")]
-use super::logging::entrylog;
 use super::{data::*, *};
 use crate::driver::ticks::with_timeout;
 #[cfg(not(feature = "spdm_attestation"))]
@@ -65,9 +61,6 @@ struct TdxReportBuf(TdxReport);
 #[cfg(feature = "vmcall-raw")]
 #[repr(C, align(64))]
 struct AdditionalDataBuf([u8; TD_REPORT_ADDITIONAL_DATA_SIZE]);
-
-#[cfg(feature = "vmcall-raw")]
-const DEFAULT_MIGREQUEST_ID: u64 = u64::MAX;
 
 #[cfg(feature = "vmcall-raw")]
 const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
@@ -214,15 +207,6 @@ fn process_buffer(buffer: &mut [u8]) -> RequestDataBufferHeader {
         length: 0,
     };
     if buffer.len() < length {
-        entrylog(
-            &format!(
-                "process_buffer: Buffer too small! - len = {:x}\n",
-                buffer.len()
-            )
-            .into_bytes(),
-            Level::Debug,
-            DEFAULT_MIGREQUEST_ID,
-        );
         log::debug!(
             "process_buffer: Buffer too small! - buffer.len = {}, length = {}\n",
             buffer.len(),
@@ -279,7 +263,6 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         }
         let data_status_bytes = &data_status.to_le_bytes();
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
-            entrylog(&format!("wait_for_request: data_status byte[0] failure\n").into_bytes(), Level::Error, DEFAULT_MIGREQUEST_ID);
             log::error!("wait_for_request: data_status byte[0] failure\n");
             return Poll::Pending;
         }
@@ -292,11 +275,10 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 if data_length >= size_of::<u64>() as u32 {
                     let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
                     let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, mig_request_id);
+                    log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
                 } else {
-                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                    log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
                 }
-                log::debug!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
                 return Poll::Pending;
             }
             let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
@@ -333,11 +315,10 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 if data_length >= size_of::<u64>() as u32 {
                     let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
                     let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} or {:x} actual {:x}\n", size_of_val(&mig_request_id), size_of::<ReportInfo>(), data_length).into_bytes(), Level::Debug, mig_request_id);
+                    log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
                 } else {
-                    entrylog(&format!("wait_for_request: StartMigration operation incorrect data length - expected {:x} or {:x} actual {:x}\n", size_of_val(&mig_request_id), size_of::<ReportInfo>(), data_length).into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                    log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
                 }
-                log::debug!("wait_for_request: StartMigration operation incorrect data length - expected {} or {} actual {}\n", size_of_val(&mig_request_id), size_of::<ReportInfo>(), data_length);
                 return Poll::Pending;
             }
             let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
@@ -369,11 +350,10 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 if data_length >= size_of::<u64>() as u32 {
                     let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
                     let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    entrylog(&format!("wait_for_request: EnableLogArea operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, mig_request_id);
+                    log::error!(migration_request_id = mig_request_id; "wait_for_request: EnableLogArea operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
                 } else {
-                    entrylog(&format!("wait_for_request: EnableLogArea operation incorrect data length - expected {:x} actual {:x}\n", expected_datalength, data_length).into_bytes(), Level::Debug, DEFAULT_MIGREQUEST_ID);
+                    log::error!("wait_for_request: EnableLogArea operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
                 }
-                log::debug!("wait_for_request: EnableLogArea operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
                 return Poll::Pending;
             }
 
@@ -542,36 +522,13 @@ pub async fn get_tdreport(
 
     let ret = td_call(&mut args);
     if ret != TDCALL_STATUS_SUCCESS {
-        entrylog(
-            &format!("get_tdreport: TDG.MR.REPORT failure {:x}\n", ret).into_bytes(),
-            Level::Debug,
-            request_id,
-        );
-        data.extend_from_slice(
-            &format!("Error: get_tdreport(): TDG.MR.REPORT failure {:x}\n", ret).into_bytes(),
-        );
-        log::error!("get_tdreport: TDG.MR.REPORT failure {:x}\n", ret);
+        log::error!(migration_request_id = request_id; "get_tdreport: TDG.MR.REPORT failure {:x}\n", ret);
         return Err(MigrationResult::TdxModuleError);
     }
 
     data.extend_from_slice(report_buf.0.as_bytes());
     if data.len() != tdreportsize {
-        entrylog(
-            &format!(
-                "get_tdreport: tdreport incorrect data length - expected {:x} actual {:x}\n",
-                tdreportsize,
-                data.len()
-            )
-            .into_bytes(),
-            Level::Debug,
-            request_id,
-        );
-        data.extend_from_slice(&format!(
-                "Error: get_tdreport(): tdreport incorrect data length - expected {:x} actual {:x}\n",
-                tdreportsize,
-                data.len()
-            ).into_bytes());
-        log::error!(
+        log::error!( migration_request_id = request_id;
             "get_tdreport: tdreport incorrect data length - expected {} actual {}\n",
             tdreportsize,
             data.len()
@@ -593,7 +550,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
     };
     let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
     let mut data_buffer = SharedMemory::new(1).ok_or_else(|| {
-        log::error!("report_status: Failed to allocate shared memory for data buffer\n");
+        log::error!(migration_request_id = request_id; "report_status: Failed to allocate shared memory for data buffer\n");
         MigrationResult::OutOfResource
     })?;
 
@@ -604,16 +561,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
                 .with_error_code(status);
         }
     } else {
-        entrylog(
-            &format!(
-                "report_status: Invalid Migration Status code: {:x}\n",
-                status
-            )
-            .into_bytes(),
-            Level::Error,
-            request_id,
-        );
-        log::error!(
+        log::error!( migration_request_id = request_id;
             "report_status: Invalid Migration Status code: {:x}\n",
             status
         );
@@ -638,7 +586,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
         event::VMCALL_SERVICE_VECTOR,
     )
     .map_err(|e| {
-        log::error!(
+        log::error!(migration_request_id = request_id;
             "report_status: tdvmcall_migtd_reportstatus failure {:?}\n",
             e
         );
@@ -659,12 +607,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
         reqbufferhdr = process_buffer(data_buffer);
         let data_status_bytes = &reqbufferhdr.datastatus.to_le_bytes();
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
-            log::error!("report_status: data_status byte[0] failure\n");
-            entrylog(
-                &format!("report_status: data_status byte[0] failure\n").into_bytes(),
-                Level::Error,
-                request_id,
-            );
+            log::error!(migration_request_id = request_id; "report_status: data_status byte[0] failure\n");            
             return Poll::Pending;
         }
 
@@ -744,16 +687,8 @@ async fn migration_src_exchange_msk(
     )
     .map_err(|_| {
         #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
-                info.mig_info.mig_request_id
-            )
-            .into_bytes(),
-        );
-        log::error!(
-            "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
-            info.mig_info.mig_request_id
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk(): Failed in ratls transport.\n"
         );
         MigrationResult::SecureSessionError
     })?;
@@ -787,16 +722,7 @@ async fn migration_src_exchange_msk(
     })?;
     if size < size_of::<ExchangeInformation>() {
         #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n",
-                info.mig_info.mig_request_id,
-                size_of::<ExchangeInformation>(),
-                size
-            )
-            .into_bytes(),
-        );
-        log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk(): Incorrect ExchangeInformation size Size - Expected: {} Actual: {}\n", size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
     shutdown_transport(ratls_client.transport_mut(), info, data).await?;
@@ -822,16 +748,8 @@ async fn migration_dst_exchange_msk(
     )
     .map_err(|_| {
         #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
-                info.mig_info.mig_request_id
-            )
-            .into_bytes(),
-        );
-        log::error!(
-            "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
-            info.mig_info.mig_request_id
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk(): Failed in ratls transport.\n"
         );
         MigrationResult::SecureSessionError
     })?;
@@ -864,8 +782,7 @@ async fn migration_dst_exchange_msk(
     })?;
     if size < size_of::<ExchangeInformation>() {
         #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(&format!("Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size).into_bytes());
-        log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk(): Incorrect ExchangeInformation size. Size - Expected: {} Actual: {}\n", size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
     shutdown_transport(ratls_server.transport_mut(), info, data).await?;
@@ -972,14 +889,13 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
     ))
     .await
     .map_err(|e| {
-        log::error!(
-            "exchange_msk: pre_session_data_exchange timeout error: {:?}\n",
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: pre_session_data_exchange timeout error: {:?}\n",
             e
         );
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: pre_session_data_exchange error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: pre_session_data_exchange error: {:?}\n", e);
         e
     })?;
 
@@ -988,7 +904,7 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
         let mut remote_information = ExchangeInformation::default();
         let mut exchange_information =
             exchange_info(&info.mig_info, info.is_src()).map_err(|e| {
-                log::error!("exchange_msk: exchange_info error: {:?}\n", e);
+                log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: exchange_info error: {:?}\n", e);
                 e
             })?;
 
@@ -1019,28 +935,19 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
 
         let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)
             .map_err(|e| {
-                log::error!("exchange_msk: cal_mig_version error: {:?}\n", e);
+                log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: cal_mig_version error: {:?}\n", e);
                 e
             })?;
         set_mig_version(&info.mig_info, mig_ver).map_err(|e| {
-            log::error!("exchange_msk: set_mig_version error: {:?}\n", e);
+            log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: set_mig_version error: {:?}\n", e);
             e
         })?;
         write_msk(&info.mig_info, &remote_information.key).map_err(|e| {
-            log::error!("exchange_msk: write_msk error: {:?}\n", e);
+            log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: write_msk error: {:?}\n", e);
             e
         })?;
 
-        log::info!("Set MSK and report status\n");
-        #[cfg(feature = "vmcall-raw")]
-        {
-            entrylog(
-                &format!("Set MSK and report status\n").into_bytes(),
-                Level::Info,
-                info.mig_info.mig_request_id,
-            );
-            log::info!("Set MSK and report status\n");
-        }
+        log::info!(migration_request_id = info.mig_info.mig_request_id; "Set MSK and report status\n");
         exchange_information.key.clear();
         remote_information.key.clear();
     }
@@ -1075,11 +982,7 @@ pub fn exchange_info(
 ) -> Result<ExchangeInformation> {
     let mut exchange_info = ExchangeInformation::default();
     read_msk(mig_info, &mut exchange_info.key).map_err(|e| {
-        log::error!(
-            "exchange_info: read_msk failed with error: {:?} for mig_info.binding_handle = {}\n",
-            e,
-            mig_info.binding_handle
-        );
+        log::error!(migration_request_id = mig_info.mig_request_id; "exchange_info: read_msk failed with error: {:?} for mig_info.binding_handle = {}\n", e, mig_info.binding_handle);
         e
     })?;
 
@@ -1090,31 +993,18 @@ pub fn exchange_info(
     };
     let min_version = tdcall_sys_rd(field_min)
         .map_err(|e| {
-            log::error!(
-                "exchange_info: tdcall_sys_rd failed with error: {:?} for field_min = {}\n",
-                e,
-                field_min
-            );
+            log::error!(migration_request_id = mig_info.mig_request_id; "exchange_info: tdcall_sys_rd failed with error: {:?} for field_min = {}\n", e, field_min);
             e
         })?
         .1;
     let max_version = tdcall_sys_rd(field_max)
         .map_err(|e| {
-            log::error!(
-                "exchange_info: tdcall_sys_rd failed with error: {:?} for field_max = {}\n",
-                e,
-                field_max
-            );
+            log::error!(migration_request_id = mig_info.mig_request_id; "exchange_info: tdcall_sys_rd failed with error: {:?} for field_max = {}\n", e, field_max);
             e
         })?
         .1;
     if min_version > u16::MAX as u64 || max_version > u16::MAX as u64 {
-        log::error!(
-            "exchange_info: Migration version out of range. is_src = {}, min_version = {}, max_version = {}\n",
-            is_src,
-            min_version,
-            max_version
-        );
+        log::error!(migration_request_id = mig_info.mig_request_id; "exchange_info: Migration version out of range. is_src = {}, min_version = {}, max_version = {}\n", is_src, min_version, max_version);
         return Err(MigrationResult::InvalidParameter);
     }
     exchange_info.min_ver = min_version as u16;
@@ -1130,7 +1020,7 @@ fn read_msk(mig_info: &MigtdMigrationInformation, msk: &mut MigrationSessionKey)
             TDCS_FIELD_MIG_ENC_KEY + idx as u64,
             &mig_info.target_td_uuid,
         ).map_err(|e|{
-            log::error!("read_msk: tdcall_servtd_rd failed with error: {:?} for mig_info.binding_handle = {}, idx = {}\n", e, mig_info.binding_handle, idx);
+            log::error!(migration_request_id = mig_info.mig_request_id; "read_msk: tdcall_servtd_rd failed with error: {:?} for mig_info.binding_handle = {}, idx = {}\n", e, mig_info.binding_handle, idx);
             e
         })?;
         msk.fields[idx] = ret.content;
@@ -1147,7 +1037,7 @@ pub fn write_msk(mig_info: &MigtdMigrationInformation, msk: &MigrationSessionKey
             &mig_info.target_td_uuid,
         )
         .map_err(|e| {
-            log::error!("write_msk: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, idx = {}, value = {}\n", e, mig_info.binding_handle, idx, msk.fields[idx]);
+            log::error!(migration_request_id = mig_info.mig_request_id; "write_msk: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, idx = {}, value = {}\n", e, mig_info.binding_handle, idx, msk.fields[idx]);
             MigrationResult::TdxModuleError
         })?;
     }
@@ -1226,7 +1116,7 @@ pub fn set_mig_version(mig_info: &MigtdMigrationInformation, mig_ver: u16) -> Re
         mig_ver as u64,
         &mig_info.target_td_uuid,
     ).map_err(|e|{
-        log::error!("set_mig_version: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, mig_ver = {}\n", e, mig_info.binding_handle, mig_ver);
+        log::error!(migration_request_id = mig_info.mig_request_id; "set_mig_version: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, mig_ver = {}\n", e, mig_info.binding_handle, mig_ver);
         e
     })?;
     Ok(())
