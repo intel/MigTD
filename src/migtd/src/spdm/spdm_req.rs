@@ -137,7 +137,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
     vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
     let vendor_id = VendorIDStruct { len: 4, vendor_id };
 
-    let mut payload = [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
+    let mut payload = vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);
     let mut cnt = 0;
 
@@ -162,46 +162,39 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
         .extend_from_slice(my_pub_key.as_slice())
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
-    let vdm_payload = VendorDefinedReqPayloadStruct {
-        req_length: cnt as u32,
-        vendor_defined_req_payload: payload,
-    };
-
-    spdm_requester.common.reset_buffer_via_request_code(
-        SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
-        None,
-    );
-
     let mut send_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let mut writer = Writer::init(&mut send_buffer);
-    let request = SpdmMessage {
-        header: SpdmMessageHeader {
-            version: spdm_requester.common.negotiate_info.spdm_version_sel,
-            request_response_code: SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
-        },
-        payload: SpdmMessagePayload::SpdmVendorDefinedRequest(SpdmVendorDefinedRequestPayload {
-            standard_id: RegistryOrStandardsBodyID::IANA,
-            vendor_id,
-            req_payload: vdm_payload,
-        }),
+    let request_header = SpdmMessageHeader {
+        version: spdm_requester.common.negotiate_info.spdm_version_sel,
+        request_response_code: SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
     };
-    let used = request.spdm_encode(&mut spdm_requester.common, &mut writer)?;
-
-    spdm_requester
-        .send_message(None, &send_buffer[..used], false)
-        .await?;
+    let request_payload = SpdmVdmRequestPayload {
+        standard_id: RegistryOrStandardsBodyID::IANA,
+        vendor_id,
+        req_length: cnt as u32,
+        req_payload: payload,
+    };
+    let mut used = 0;
+    used += request_header
+        .encode(&mut writer)
+        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    used += request_payload.spdm_encode(&mut spdm_requester.common, &mut writer)?;
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
-    let receive_used = spdm_requester
-        .receive_message(None, &mut receive_buffer, false)
+    let response = spdm_requester
+        .send_spdm_vendor_defined_request_ex(None, &send_buffer[..used], &mut receive_buffer)
         .await?;
 
-    let vdm_payload =
-        spdm_requester.handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])?;
-
     // Format checks and save the received public key
+    let mut reader = Reader::init(response);
+    let _response_header =
+        SpdmMessageHeader::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let response_payload =
+        SpdmVdmResponsePayload::spdm_read(&mut spdm_requester.common, &mut reader)
+            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+
     let mut reader =
-        Reader::init(&vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize]);
+        Reader::init(&response_payload.rsp_payload[..response_payload.rsp_length as usize]);
     let vdm_message = VdmMessage::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
         error!(
@@ -272,8 +265,7 @@ async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> Spdm
 
     let vdm_pub_key_src_hash =
         digest_sha384(&send_buffer[..used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
-    let vdm_pub_key_dst_hash =
-        digest_sha384(&receive_buffer[..receive_used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let vdm_pub_key_dst_hash = digest_sha384(response).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let mut transcript_before_key_exchange = ManagedVdmBuffer::default();
     transcript_before_key_exchange
         .append_message(vdm_pub_key_src_hash.as_slice())
@@ -306,7 +298,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
     let vendor_id = VendorIDStruct { len: 4, vendor_id };
 
-    let mut payload = [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
+    let mut payload = vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);
     let mut cnt = 0;
 
@@ -411,11 +403,6 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         .extend_from_slice(&mig_policy_src_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
-    let vdm_payload = VendorDefinedReqPayloadStruct {
-        req_length: cnt as u32,
-        vendor_defined_req_payload: payload,
-    };
-
     spdm_requester.common.reset_buffer_via_request_code(
         SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
         None,
@@ -423,35 +410,37 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     let mut send_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let mut writer = Writer::init(&mut send_buffer);
-    let request = SpdmMessage {
-        header: SpdmMessageHeader {
-            version: spdm_requester.common.negotiate_info.spdm_version_sel,
-            request_response_code: SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
-        },
-        payload: SpdmMessagePayload::SpdmVendorDefinedRequest(SpdmVendorDefinedRequestPayload {
-            standard_id: RegistryOrStandardsBodyID::IANA,
-            vendor_id,
-            req_payload: vdm_payload,
-        }),
+    let request_header = SpdmMessageHeader {
+        version: spdm_requester.common.negotiate_info.spdm_version_sel,
+        request_response_code: SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
     };
-    let used = request.spdm_encode(&mut spdm_requester.common, &mut writer)?;
-
-    spdm_requester
-        .send_message(None, &send_buffer[..used], false)
-        .await?;
+    let request_payload = SpdmVdmRequestPayload {
+        standard_id: RegistryOrStandardsBodyID::IANA,
+        vendor_id,
+        req_length: cnt as u32,
+        req_payload: payload,
+    };
+    let mut send_used = 0;
+    send_used += request_header
+        .encode(&mut writer)
+        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    send_used += request_payload.spdm_encode(&mut spdm_requester.common, &mut writer)?;
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
-    let receive_used = spdm_requester
-        .receive_message(None, &mut receive_buffer, false)
+    let response = spdm_requester
+        .send_spdm_vendor_defined_request_ex(None, &send_buffer[..send_used], &mut receive_buffer)
         .await?;
 
-    let vdm_payload =
-        spdm_requester.handle_spdm_vendor_defined_respond(None, &receive_buffer[..receive_used])?;
-
     //Format checks
-    let reader = &mut Reader::init(
-        &vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize],
-    );
+    let mut reader = Reader::init(response);
+    let _response_header =
+        SpdmMessageHeader::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let response_payload =
+        SpdmVdmResponsePayload::spdm_read(&mut spdm_requester.common, &mut reader)
+            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+
+    let reader =
+        &mut Reader::init(&response_payload.rsp_payload[..response_payload.rsp_length as usize]);
     let vdm_message = VdmMessage::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
         error!(
@@ -591,9 +580,8 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     }
 
     let vdm_attest_info_src_hash =
-        digest_sha384(&send_buffer[..used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
-    let vdm_attest_info_dst_hash =
-        digest_sha384(&receive_buffer[..receive_used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+        digest_sha384(&send_buffer[..send_used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    let vdm_attest_info_dst_hash = digest_sha384(response).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let mut transcript_before_finish = ManagedVdmBuffer::default();
     transcript_before_finish
         .append_message(vdm_attest_info_src_hash.as_slice())
@@ -622,7 +610,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
 
     let mut exchange_information = exchange_info(mig_info, false)?;
 
-    let mut payload = [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
+    let mut payload = vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);
     let mut cnt = 0;
 
@@ -668,11 +656,6 @@ async fn send_and_receive_sdm_exchange_migration_info(
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
-    let vdm_payload = VendorDefinedReqPayloadStruct {
-        req_length: cnt as u32,
-        vendor_defined_req_payload: payload,
-    };
-
     spdm_requester.common.reset_buffer_via_request_code(
         SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
         None,
@@ -680,34 +663,42 @@ async fn send_and_receive_sdm_exchange_migration_info(
 
     let mut send_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let mut writer = Writer::init(&mut send_buffer);
-    let request = SpdmMessage {
-        header: SpdmMessageHeader {
-            version: spdm_requester.common.negotiate_info.spdm_version_sel,
-            request_response_code: SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
-        },
-        payload: SpdmMessagePayload::SpdmVendorDefinedRequest(SpdmVendorDefinedRequestPayload {
-            standard_id: RegistryOrStandardsBodyID::IANA,
-            vendor_id,
-            req_payload: vdm_payload,
-        }),
-    };
-    let used = request.spdm_encode(&mut spdm_requester.common, &mut writer)?;
 
-    spdm_requester
-        .send_message(session_id, &send_buffer[..used], false)
-        .await?;
+    let request_header = SpdmMessageHeader {
+        version: spdm_requester.common.negotiate_info.spdm_version_sel,
+        request_response_code: SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
+    };
+    let request_payload = SpdmVdmRequestPayload {
+        standard_id: RegistryOrStandardsBodyID::IANA,
+        vendor_id,
+        req_length: cnt as u32,
+        req_payload: payload,
+    };
+    let mut send_used = 0;
+    send_used += request_header
+        .encode(&mut writer)
+        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    send_used += request_payload.spdm_encode(&mut spdm_requester.common, &mut writer)?;
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
-    let receive_used = spdm_requester
-        .receive_message(session_id, &mut receive_buffer, false)
+    let response = spdm_requester
+        .send_spdm_vendor_defined_request_ex(
+            session_id,
+            &send_buffer[..send_used],
+            &mut receive_buffer,
+        )
         .await?;
 
-    let vdm_payload = spdm_requester
-        .handle_spdm_vendor_defined_respond(session_id, &receive_buffer[..receive_used])?;
+    // Format checks
+    let mut reader = Reader::init(response);
+    let _response_header =
+        SpdmMessageHeader::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    let response_payload =
+        SpdmVdmResponsePayload::spdm_read(&mut spdm_requester.common, &mut reader)
+            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
-    let reader = &mut Reader::init(
-        &vdm_payload.vendor_defined_rsp_payload[..vdm_payload.rsp_length as usize],
-    );
+    let reader =
+        &mut Reader::init(&response_payload.rsp_payload[..response_payload.rsp_length as usize]);
     let vdm_message = VdmMessage::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_message.major_version != VDM_MESSAGE_MAJOR_VERSION {
         error!(
