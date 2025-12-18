@@ -2,12 +2,15 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use alloc::vec::Vec;
 use codec::{enum_builder, Codec, Reader, Writer};
 use crypto::hash::digest_sha384;
+use spdmlib::common;
 use spdmlib::{
     common::{ManagedVdmBuffer, SpdmCodec},
     error::*,
     message::*,
+    protocol::{SpdmRequestCapabilityFlags, SpdmResponseCapabilityFlags, SpdmVersion},
     responder::ResponderContext,
 };
 
@@ -137,6 +140,229 @@ impl Codec for VdmMessageElement {
     }
 }
 
+// Define the VDM request and response payloads rather than reuse Spdm lib structures to avoid using large slices in stack.
+#[derive(Debug, Clone)]
+pub struct SpdmVdmRequestPayload {
+    pub standard_id: RegistryOrStandardsBodyID,
+    pub vendor_id: VendorIDStruct,
+    pub req_length: u32,
+    pub req_payload: Vec<u8>,
+}
+
+impl SpdmCodec for SpdmVdmRequestPayload {
+    fn spdm_encode(
+        &self,
+        context: &mut common::SpdmContext,
+        bytes: &mut Writer,
+    ) -> Result<usize, SpdmStatus> {
+        let large_payload = context.negotiate_info.spdm_version_sel >= SpdmVersion::SpdmVersion14
+            && context
+                .negotiate_info
+                .rsp_capabilities_sel
+                .contains(SpdmResponseCapabilityFlags::LARGE_RESP_CAP)
+            && context
+                .negotiate_info
+                .req_capabilities_sel
+                .contains(SpdmRequestCapabilityFlags::LARGE_RESP_CAP);
+        let mut cnt = 0usize;
+        let param1 = if large_payload {
+            SpdmVdmFlags::USE_LARGE_PAYLOAD
+        } else {
+            SpdmVdmFlags::default()
+        };
+        cnt += param1.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?; // param1
+        cnt += 0u8.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?; // param2
+        cnt += self
+            .standard_id
+            .encode(bytes)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?; //Standard ID
+        cnt += self
+            .vendor_id
+            .encode(bytes)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        if large_payload {
+            if self.req_length as usize > self.req_payload.len() {
+                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            }
+            cnt += 0u16.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?; // req_length
+            cnt += self
+                .req_length
+                .encode(bytes)
+                .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            for d in self.req_payload.iter().take(self.req_length as usize) {
+                cnt += d.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            }
+        } else {
+            if self.req_length > u16::MAX as u32
+                || self.req_payload.len() < self.req_length as usize
+            {
+                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            }
+            cnt += (self.req_length as u16)
+                .encode(bytes)
+                .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            for d in self.req_payload.iter().take(self.req_length as usize) {
+                cnt += d.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            }
+        }
+        Ok(cnt)
+    }
+
+    fn spdm_read(
+        context: &mut common::SpdmContext,
+        r: &mut Reader,
+    ) -> Option<SpdmVdmRequestPayload> {
+        let param1 = SpdmVdmFlags::read(r)?; // param1
+        u8::read(r)?; // param2
+        let large_payload = param1.contains(SpdmVdmFlags::USE_LARGE_PAYLOAD);
+        if large_payload
+            && !(context.negotiate_info.spdm_version_sel >= SpdmVersion::SpdmVersion14
+                && context
+                    .negotiate_info
+                    .rsp_capabilities_sel
+                    .contains(SpdmResponseCapabilityFlags::LARGE_RESP_CAP)
+                && context
+                    .negotiate_info
+                    .req_capabilities_sel
+                    .contains(SpdmRequestCapabilityFlags::LARGE_RESP_CAP))
+        {
+            return None;
+        }
+        let standard_id = RegistryOrStandardsBodyID::read(r)?; // Standard ID
+        let vendor_id = VendorIDStruct::read(r)?;
+        let req_length = if large_payload {
+            let _ = u16::read(r)?; // rsp_length (reserved)
+            u32::read(r)?
+        } else {
+            let len = u16::read(r)?; // rsp_length
+            len as u32
+        };
+        let mut req_payload = Vec::with_capacity(req_length as usize);
+        for _ in 0..req_length {
+            let d = u8::read(r)?;
+            req_payload.push(d);
+        }
+
+        Some(SpdmVdmRequestPayload {
+            standard_id,
+            vendor_id,
+            req_length,
+            req_payload,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SpdmVdmResponsePayload {
+    pub standard_id: RegistryOrStandardsBodyID,
+    pub vendor_id: VendorIDStruct,
+    pub rsp_length: u32,
+    pub rsp_payload: Vec<u8>,
+}
+
+impl SpdmCodec for SpdmVdmResponsePayload {
+    fn spdm_encode(
+        &self,
+        context: &mut common::SpdmContext,
+        bytes: &mut Writer,
+    ) -> Result<usize, SpdmStatus> {
+        let large_payload = context.negotiate_info.spdm_version_sel >= SpdmVersion::SpdmVersion14
+            && context
+                .negotiate_info
+                .rsp_capabilities_sel
+                .contains(SpdmResponseCapabilityFlags::LARGE_RESP_CAP)
+            && context
+                .negotiate_info
+                .req_capabilities_sel
+                .contains(SpdmRequestCapabilityFlags::LARGE_RESP_CAP);
+        let mut cnt = 0usize;
+        let param1 = if large_payload {
+            SpdmVdmFlags::USE_LARGE_PAYLOAD
+        } else {
+            SpdmVdmFlags::default()
+        };
+        cnt += param1.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?; // param1
+        cnt += 0u8.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?; // param2
+        cnt += self
+            .standard_id
+            .encode(bytes)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?; //Standard ID
+        cnt += self
+            .vendor_id
+            .encode(bytes)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        if large_payload {
+            if self.rsp_length as usize > self.rsp_payload.len() {
+                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            }
+            cnt += 0u16.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?; // rsp_length
+            cnt += self
+                .rsp_length
+                .encode(bytes)
+                .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            for d in self.rsp_payload.iter().take(self.rsp_length as usize) {
+                cnt += d.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            }
+        } else {
+            if self.rsp_length > u16::MAX as u32
+                || self.rsp_payload.len() < self.rsp_length as usize
+            {
+                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            }
+            cnt += (self.rsp_length as u16)
+                .encode(bytes)
+                .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            for d in self.rsp_payload.iter().take(self.rsp_length as usize) {
+                cnt += d.encode(bytes).map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+            }
+        }
+        Ok(cnt)
+    }
+
+    fn spdm_read(
+        context: &mut common::SpdmContext,
+        r: &mut Reader,
+    ) -> Option<SpdmVdmResponsePayload> {
+        let param1 = SpdmVdmFlags::read(r)?; // param1
+        u8::read(r)?; // param2
+        let large_payload = param1.contains(SpdmVdmFlags::USE_LARGE_PAYLOAD);
+        if large_payload
+            && !(context.negotiate_info.spdm_version_sel >= SpdmVersion::SpdmVersion14
+                && context
+                    .negotiate_info
+                    .rsp_capabilities_sel
+                    .contains(SpdmResponseCapabilityFlags::LARGE_RESP_CAP)
+                && context
+                    .negotiate_info
+                    .req_capabilities_sel
+                    .contains(SpdmRequestCapabilityFlags::LARGE_RESP_CAP))
+        {
+            return None;
+        }
+        let standard_id = RegistryOrStandardsBodyID::read(r)?; // Standard ID
+        let vendor_id = VendorIDStruct::read(r)?;
+        let rsp_length = if large_payload {
+            let _ = u16::read(r)?; // rsp_length (reserved)
+            u32::read(r)?
+        } else {
+            let len = u16::read(r)?; // rsp_length
+            len as u32
+        };
+        let mut rsp_payload = Vec::with_capacity(rsp_length as usize);
+        for _ in 0..rsp_length {
+            let d = u8::read(r)?;
+            rsp_payload.push(d);
+        }
+
+        Some(SpdmVdmResponsePayload {
+            standard_id,
+            vendor_id,
+            rsp_length,
+            rsp_payload,
+        })
+    }
+}
+
 pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
     responder_context: &mut ResponderContext,
     session_id: Option<u32>,
@@ -163,18 +389,16 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
         return (Err(SPDM_STATUS_INVALID_MSG_FIELD), Some(&rsp_bytes[..used]));
     }
 
-    let vendor_defined_request_payload =
-        SpdmVendorDefinedRequestPayload::spdm_read(&mut responder_context.common, &mut reader);
-    if vendor_defined_request_payload.is_none() {
+    let req_payload = SpdmVdmRequestPayload::spdm_read(&mut responder_context.common, &mut reader);
+    if req_payload.is_none() {
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorInvalidRequest, 0, &mut writer);
         let used = writer.used();
         return (Err(SPDM_STATUS_INVALID_MSG_FIELD), Some(&rsp_bytes[..used]));
     }
 
-    let vendor_defined_request_payload = vendor_defined_request_payload.unwrap();
-    let standard_id = vendor_defined_request_payload.standard_id;
-    let vendor_id = vendor_defined_request_payload.vendor_id;
-    let req_payload = vendor_defined_request_payload.req_payload;
+    let req_payload = req_payload.unwrap();
+    let standard_id = req_payload.standard_id;
+    let vendor_id = req_payload.vendor_id;
 
     if standard_id != RegistryOrStandardsBodyID::IANA
         || vendor_id.len != VDM_MESSAGE_VENDOR_ID_LEN as u8
@@ -185,8 +409,7 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
         return (Err(SPDM_STATUS_INVALID_MSG_FIELD), Some(&rsp_bytes[..used]));
     }
 
-    let mut reader =
-        Reader::init(&req_payload.vendor_defined_req_payload[0..req_payload.req_length as usize]);
+    let mut reader = Reader::init(&req_payload.req_payload[0..req_payload.req_length as usize]);
     let vdm_request = if let Some(vdm_request) = VdmMessage::read(&mut reader) {
         vdm_request
     } else {
@@ -195,67 +418,51 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
         return (Err(SPDM_STATUS_INVALID_MSG_SIZE), Some(&rsp_bytes[..used]));
     };
 
-    let mut response = SpdmMessage {
-        header: SpdmMessageHeader {
-            version: responder_context.common.negotiate_info.spdm_version_sel,
-            request_response_code: SpdmRequestResponseCode::SpdmResponseVendorDefinedResponse,
-        },
-        payload: SpdmMessagePayload::SpdmVendorDefinedResponse(SpdmVendorDefinedResponsePayload {
-            standard_id: RegistryOrStandardsBodyID::IANA,
-            vendor_id: VendorIDStruct {
-                len: VDM_MESSAGE_VENDOR_ID_LEN as u8,
-                vendor_id: [0u8; MAX_SPDM_VENDOR_DEFINED_VENDOR_ID_LEN],
-            },
-            rsp_payload: VendorDefinedRspPayloadStruct {
-                rsp_length: 0,
-                vendor_defined_rsp_payload: [0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE],
-            },
-        }),
+    let response_header = SpdmMessageHeader {
+        version: responder_context.common.negotiate_info.spdm_version_sel,
+        request_response_code: SpdmRequestResponseCode::SpdmResponseVendorDefinedResponse,
     };
 
-    let vdm_payload = match &mut response.payload {
-        SpdmMessagePayload::SpdmVendorDefinedResponse(vdm_payload) => vdm_payload,
-        _ => {
-            responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
-            let used = writer.used();
-            return (
-                Err(SPDM_STATUS_INVALID_STATE_LOCAL),
-                Some(&rsp_bytes[..used]),
-            );
-        }
+    let mut vdm_rsp_payload = SpdmVdmResponsePayload {
+        standard_id: RegistryOrStandardsBodyID::IANA,
+        vendor_id: VendorIDStruct {
+            len: VDM_MESSAGE_VENDOR_ID_LEN as u8,
+            vendor_id: [0u8; MAX_SPDM_VENDOR_DEFINED_VENDOR_ID_LEN],
+        },
+        rsp_length: 0,
+        rsp_payload: vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE],
     };
 
     // Patch the vendor id field
-    vdm_payload.vendor_id.vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN]
+    vdm_rsp_payload.vendor_id.vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN]
         .copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
 
     //Patch the response payload
-    let rsp_payload = &mut vdm_payload.rsp_payload;
     let vdm_payload_size = match vdm_request.op_code {
         VdmMessageOpCode::ExchangePubKeyReq => handle_exchange_pub_key_req(
             responder_context,
             &vdm_request,
             &mut reader,
-            &mut rsp_payload.vendor_defined_rsp_payload,
+            &mut vdm_rsp_payload.rsp_payload,
         ),
         VdmMessageOpCode::ExchangeMigrationAttestInfoReq => handle_exchange_mig_attest_info_req(
             responder_context,
             session_id,
             &vdm_request,
             &mut reader,
-            &mut rsp_payload.vendor_defined_rsp_payload,
+            &mut vdm_rsp_payload.rsp_payload,
         ),
         VdmMessageOpCode::ExchangeMigrationInfoReq => handle_exchange_mig_info_req(
             responder_context,
             session_id,
             &vdm_request,
             &mut reader,
-            &mut rsp_payload.vendor_defined_rsp_payload,
+            &mut vdm_rsp_payload.rsp_payload,
         ),
         _ => Err(SPDM_STATUS_INVALID_MSG_FIELD),
     };
     if let Ok(vdm_payload_size) = vdm_payload_size {
-        rsp_payload.rsp_length = vdm_payload_size as u32;
+        vdm_rsp_payload.rsp_length = vdm_payload_size as u32;
     } else {
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
         let used = writer.used();
@@ -265,7 +472,17 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
         );
     };
 
-    let res = response.spdm_encode(&mut responder_context.common, &mut writer);
+    let res = response_header.encode(&mut writer);
+    if res.is_err() {
+        responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
+        let used = writer.used();
+        return (
+            Err(SPDM_STATUS_INVALID_STATE_LOCAL),
+            Some(&rsp_bytes[..used]),
+        );
+    }
+
+    let res = vdm_rsp_payload.spdm_encode(&mut responder_context.common, &mut writer);
     if res.is_err() {
         responder_context.write_spdm_error(SpdmErrorCode::SpdmErrorUnspecified, 0, &mut writer);
         let used = writer.used();
