@@ -255,12 +255,11 @@ echo "qom-set /objects/tdx0/ vsockport 1237" | nc -U /tmp/qmp-sock-dst-2
 
 Wait all sessions complete pre-migration, and check the data logged in terminal for memory using status:
 
-(example result)
+(example result, migtd-dst)
 
 ```bash
-INFO - MSK exchange completed
-max stack usage: 118128
-max heap usage: 190585
+max stack usage: b3f38
+max heap usage: 140c07
 ```
 
 ### Current SPDM attestation memory data
@@ -268,7 +267,7 @@ max heap usage: 190585
 Current test result for spdm attestation are determined by destination migtd with policy v2 configuration.
 
 ```bash
-Stack Size = 0x16_0000
+Stack Size = 0x10_0000
 Heap Size = 0x12_0000 + 0x5_0000 * session_num
 ```
 
