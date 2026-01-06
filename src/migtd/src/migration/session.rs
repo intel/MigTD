@@ -722,7 +722,7 @@ pub fn report_status(status: u8, request_id: u64) -> Result<()> {
 
 #[cfg(feature = "policy_v2")]
 #[repr(C)]
-struct PreSessionMessage {
+pub(super) struct PreSessionMessage {
     pub r#type: u8,
     pub reserved: [u8; 3],
     pub length: u32, // Length in bytes of the message payload
@@ -756,7 +756,7 @@ impl PreSessionMessage {
 }
 
 #[cfg(feature = "policy_v2")]
-struct HelloPacketPayload {
+pub(super) struct HelloPacketPayload {
     magic_word: [u8; 4],
     lowest_supported_version: u16,
     highest_supported_version: u16,
@@ -814,7 +814,7 @@ impl HelloPacketPayload {
 }
 
 #[cfg(feature = "policy_v2")]
-async fn send_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn send_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
     data: &[u8],
 ) -> Result<()> {
@@ -830,7 +830,7 @@ async fn send_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "policy_v2")]
-async fn receive_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn receive_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
     data: &mut [u8],
 ) -> Result<()> {
@@ -846,7 +846,7 @@ async fn receive_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "policy_v2")]
-async fn send_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn send_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
     pre_session_data: &[u8],
     transport: &mut T,
 ) -> Result<()> {
@@ -874,7 +874,7 @@ async fn send_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "policy_v2")]
-async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
 ) -> Result<Vec<u8>> {
     let mut header_buffer = [0u8; size_of::<PreSessionMessage>()];
@@ -907,7 +907,7 @@ async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "policy_v2")]
-async fn send_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn send_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
 ) -> Result<()> {
     let header = PreSessionMessage {
@@ -925,7 +925,7 @@ async fn send_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "policy_v2")]
-async fn receive_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn receive_start_session_packet<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
 ) -> Result<()> {
     let mut header_buffer = [0u8; size_of::<PreSessionMessage>()];
@@ -1023,7 +1023,7 @@ async fn receive_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
 
 // Exchange hello packet and negotiate a pre-session message version
 #[cfg(feature = "policy_v2")]
-async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
 ) -> Result<u16> {
     send_hello_packet(transport).await.map_err(|e| {
@@ -1044,7 +1044,7 @@ async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "policy_v2")]
-async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
+pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
 ) -> Result<Vec<u8>> {
     use crate::config;
@@ -1102,22 +1102,27 @@ async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(feature = "vmcall-raw")]
-type TransportType = vmcall_raw::stream::VmcallRaw;
+pub(super) type TransportType = vmcall_raw::stream::VmcallRaw;
 
 #[cfg(all(feature = "virtio-serial", not(feature = "vmcall-raw")))]
-type TransportType = virtio_serial::VirtioSerialPort;
+pub(super) type TransportType = virtio_serial::VirtioSerialPort;
 
 #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
-type TransportType = vsock::stream::VsockStream;
+pub(super) type TransportType = vsock::stream::VsockStream;
 
-async fn setup_transport(info: &MigrationInformation, data: &mut Vec<u8>) -> Result<TransportType> {
+pub(super) async fn setup_transport(
+    request_id: u64,
+    #[cfg(any(feature = "virtio-vsock", feature = "vmcall-vsock"))] migtd_cid: u32,
+    #[cfg(any(feature = "virtio-vsock", feature = "vmcall-vsock"))] mig_channel_port: u32,
+    data: &mut Vec<u8>,
+) -> Result<TransportType> {
     #[cfg(not(feature = "vmcall-raw"))]
     let _ = data;
 
     #[cfg(feature = "vmcall-raw")]
     {
         use vmcall_raw::stream::VmcallRaw;
-        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(info.mig_info.mig_request_id)
+        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(request_id)
             .map_err(|e| {
                 data.extend_from_slice(&format!("Error: exchange_msk(): Failed to create vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
                 log::error!("exchange_msk: Failed to create vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
@@ -1153,25 +1158,19 @@ async fn setup_transport(info: &MigrationInformation, data: &mut Vec<u8>) -> Res
         let mut vsock = VsockStream::new()?;
 
         #[cfg(feature = "vmcall-vsock")]
-        let mut vsock = VsockStream::new_with_cid(
-            info.mig_socket_info.mig_td_cid,
-            info.mig_info.mig_request_id,
-        )?;
+        let mut vsock = VsockStream::new_with_cid(migtd_cid, mig_request_id)?;
 
         // Establish the vsock connection with host
         vsock
-            .connect(&VsockAddr::new(
-                info.mig_socket_info.mig_td_cid as u32,
-                info.mig_socket_info.mig_channel_port,
-            ))
+            .connect(&VsockAddr::new(migtd_cid, mig_channel_port))
             .await?;
         return Ok(vsock);
     }
 }
 
-async fn shutdown_transport(
+pub(super) async fn shutdown_transport(
     transport: &mut TransportType,
-    info: &MigrationInformation,
+    request_id: u64,
     data: &mut Vec<u8>,
 ) -> Result<()> {
     #[cfg(not(feature = "vmcall-raw"))]
@@ -1182,14 +1181,14 @@ async fn shutdown_transport(
         data.extend_from_slice(
             &format!(
                 "Error: shutdown_transport(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n",
-                info.mig_info.mig_request_id,
+                request_id,
                 e
             )
             .into_bytes(),
         );
         log::error!(
             "shutdown_transport: Failed to transport in vmcall_raw_instance with Migration ID: {} errorcode: {}",
-            info.mig_info.mig_request_id,
+            request_id,
             e
         );
         MigrationResult::InvalidParameter
@@ -1286,7 +1285,12 @@ async fn migration_src_exchange_msk(
         log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
-    shutdown_transport(ratls_client.transport_mut(), info, data).await?;
+    shutdown_transport(
+        ratls_client.transport_mut(),
+        info.mig_info.mig_request_id,
+        data,
+    )
+    .await?;
     Ok(())
 }
 
@@ -1355,7 +1359,12 @@ async fn migration_dst_exchange_msk(
         log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
-    shutdown_transport(ratls_server.transport_mut(), info, data).await?;
+    shutdown_transport(
+        ratls_server.transport_mut(),
+        info.mig_info.mig_request_id,
+        data,
+    )
+    .await?;
     Ok(())
 }
 
@@ -1440,10 +1449,17 @@ async fn migration_dst_exchange_msk(
 
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Result<()> {
-    #[cfg(feature = "policy_v2")]
-    let mut transport = setup_transport(info, data).await?;
-    #[cfg(not(feature = "policy_v2"))]
-    let transport = setup_transport(info, data).await?;
+    #[cfg(any(feature = "virtio-vsock", feature = "vmcall-vsock"))]
+    let mut transport = setup_transport(
+        info.mig_info.mig_request_id,
+        info.mig_socket_info.mig_td_cid as u32,
+        info.mig_socket_info.mig_channel_port as u32,
+        data,
+    )
+    .await?;
+
+    #[cfg(not(any(feature = "virtio-vsock", feature = "vmcall-vsock")))]
+    let mut transport = setup_transport(info.mig_info.mig_request_id, data).await?;
 
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
