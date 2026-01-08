@@ -133,9 +133,12 @@ impl PartialEq for ServtdTcbStatus {
 
 impl Eq for ServtdTcbStatus {}
 
-/// Contains all required data to be evaluated against a policy
+/// Contains all required data to be evaluated against a rebinding policy
 #[derive(Debug, Clone, Default)]
 pub struct PolicyEvaluationInfo {
+    /// The TEE_TCB_SVN of MigTD
+    pub tee_tcb_svn: Option<[u8; 16]>,
+
     /// The date of the Trusted Computing Base (TCB) in ISO-8601 format, e.g. "2023-06-19T00:00:00Z"
     pub tcb_date: Option<String>,
 
@@ -846,6 +849,7 @@ mod test {
         let global = include_str!("../../test/policy_v2/global.json");
         let global_policy = serde_json::from_str::<GlobalPolicy>(global).unwrap();
         let mut value = PolicyEvaluationInfo {
+            tee_tcb_svn: None,
             tcb_date: Some("2025-09-01T00:00:00Z".to_string()),
             tcb_status: Some("UpToDate".to_string()),
             tcb_evaluation_number: Some(15),
