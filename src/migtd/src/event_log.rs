@@ -12,7 +12,7 @@ use cc_measurement::{
 };
 use core::mem::size_of;
 use crypto::hash::digest_sha384;
-use policy::{CcEvent, EventName, Report, REPORT_DATA_SIZE};
+use policy::{CcEvent, EventName};
 use spin::Once;
 use td_payload::acpi::get_acpi_tables;
 use td_shim::event_log::{
@@ -218,11 +218,17 @@ pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEve
     Some(map)
 }
 
-pub fn verify_event_log(event_log: &[u8], report: &[u8]) -> Result<()> {
-    replay_event_log_with_report(event_log, report)
+pub fn verify_event_log(
+    event_log: &[u8],
+    report_rtmrs: &[[u8; SHA384_DIGEST_SIZE]; 4],
+) -> Result<()> {
+    replay_event_log_with_report(event_log, report_rtmrs)
 }
 
-fn replay_event_log_with_report(event_log: &[u8], report: &[u8]) -> Result<()> {
+fn replay_event_log_with_report(
+    event_log: &[u8],
+    report_rtmrs: &[[u8; SHA384_DIGEST_SIZE]; 4],
+) -> Result<()> {
     let mut rtmrs: [[u8; 96]; 4] = [[0; 96]; 4];
 
     let event_log = if let Some(event_log) = CcEventLogReader::new(event_log) {
@@ -250,14 +256,10 @@ fn replay_event_log_with_report(event_log: &[u8], report: &[u8]) -> Result<()> {
         }
     }
 
-    if report.len() < REPORT_DATA_SIZE {
-        return Err(anyhow!("Invalid report"));
-    }
-
-    if report[Report::R_MIGTD_RTMR0] == rtmrs[0][0..48]
-        && report[Report::R_MIGTD_RTMR1] == rtmrs[1][0..48]
-        && report[Report::R_MIGTD_RTMR2] == rtmrs[2][0..48]
-        && report[Report::R_MIGTD_RTMR3] == rtmrs[3][0..48]
+    if report_rtmrs[0] == rtmrs[0][0..48]
+        && report_rtmrs[1] == rtmrs[1][0..48]
+        && report_rtmrs[2] == rtmrs[2][0..48]
+        && report_rtmrs[3] == rtmrs[3][0..48]
     {
         Ok(())
     } else {
