@@ -223,7 +223,8 @@ impl From<RatlsError> for MigrationResult {
             RatlsError::Crypto(_)
             | RatlsError::X509(_)
             | RatlsError::InvalidEventlog
-            | RatlsError::InvalidPolicy => MigrationResult::SecureSessionError,
+            | RatlsError::InvalidPolicy
+            | RatlsError::GenerateCertificate => MigrationResult::SecureSessionError,
             RatlsError::TdxModule(_) => MigrationResult::TdxModuleError,
             RatlsError::GetQuote | RatlsError::VerifyQuote => {
                 MigrationResult::MutualAttestationError
