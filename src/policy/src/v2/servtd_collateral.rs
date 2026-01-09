@@ -161,6 +161,22 @@ pub struct Measurements {
 }
 
 impl Measurements {
+    pub fn new_from_bytes(
+        mrtd: &[u8],
+        rtmr0: &[u8],
+        rtmr1: &[u8],
+        rtmr2: Option<&[u8]>,
+        rtmr3: Option<&[u8]>,
+    ) -> Self {
+        Measurements {
+            mrtd: bytes_to_hex_string(mrtd),
+            rtmr0: bytes_to_hex_string(rtmr0),
+            rtmr1: bytes_to_hex_string(rtmr1),
+            rtmr2: rtmr2.map(|b| bytes_to_hex_string(b)),
+            rtmr3: rtmr3.map(|b| bytes_to_hex_string(b)),
+        }
+    }
+
     fn to_ascii_uppercase(&self) -> Self {
         Measurements {
             mrtd: self.mrtd.to_ascii_uppercase(),

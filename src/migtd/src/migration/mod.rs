@@ -5,6 +5,9 @@
 pub mod data;
 pub mod event;
 pub mod logging;
+#[cfg(all(feature = "main", feature = "policy_v2"))]
+pub mod rebinding;
+pub mod servtd_ext;
 #[cfg(feature = "main")]
 pub mod session;
 
@@ -216,7 +219,8 @@ impl From<RatlsError> for MigrationResult {
             RatlsError::Crypto(_)
             | RatlsError::X509(_)
             | RatlsError::InvalidEventlog
-            | RatlsError::InvalidPolicy => MigrationResult::SecureSessionError,
+            | RatlsError::InvalidPolicy
+            | RatlsError::GenerateCertificate => MigrationResult::SecureSessionError,
             RatlsError::TdxModule(_) => MigrationResult::TdxModuleError,
             RatlsError::GetQuote | RatlsError::VerifyQuote => {
                 MigrationResult::MutualAttestationError
