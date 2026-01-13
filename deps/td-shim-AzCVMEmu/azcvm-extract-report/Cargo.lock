@@ -75,10 +75,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "az-cvm-vtpm"
-version = "0.7.4"
-source = "git+https://github.com/kinvolk/azure-cvm-tooling#29ef1581561e85a3a2313f80c738aabe064c4bc4"
+version = "0.8.0"
+source = "git+https://github.com/kinvolk/azure-cvm-tooling#7766b0b85c254abae0544b68733989d257f7b821"
 dependencies = [
- "bincode",
  "jsonwebkey",
  "memoffset",
  "openssl",
@@ -94,12 +93,11 @@ dependencies = [
 
 [[package]]
 name = "az-tdx-vtpm"
-version = "0.7.4"
-source = "git+https://github.com/kinvolk/azure-cvm-tooling#29ef1581561e85a3a2313f80c738aabe064c4bc4"
+version = "0.8.0"
+source = "git+https://github.com/kinvolk/azure-cvm-tooling#7766b0b85c254abae0544b68733989d257f7b821"
 dependencies = [
  "az-cvm-vtpm",
  "base64-url",
- "bincode",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -147,15 +145,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38e2b6c78c06f7288d5e3c3d683bde35a79531127c83b087e5d0d77c974b4b28"
 dependencies = [
  "base64 0.22.1",
-]
-
-[[package]]
-name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -297,12 +286,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
-name = "codicon"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12170080f3533d6f09a19f81596f836854d0fa4867dc32c8172b8474b4e9de61"
-
-[[package]]
 name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,7 +338,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1117,16 +1100,14 @@ dependencies = [
 
 [[package]]
 name = "sev"
-version = "6.2.1"
+version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1750ba11a6a6bba3c220da714caa0226aa34e417dce3975d2953062240717dea"
+checksum = "c2ff74d7e7d1cc172f3a45adec74fbeee928d71df095b85aaaf66eb84e1e31e6"
 dependencies = [
  "base64 0.22.1",
- "bincode",
  "bitfield 0.19.3",
  "bitflags 2.10.0",
  "byteorder",
- "codicon",
  "dirs",
  "hex",
  "iocuddle",
@@ -1134,9 +1115,6 @@ dependencies = [
  "libc",
  "openssl",
  "rdrand",
- "serde",
- "serde-big-array",
- "serde_bytes",
  "static_assertions",
  "uuid",
 ]

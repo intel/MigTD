@@ -15,7 +15,7 @@ tokio = { version = "1.0", features = ["net", "sync", "time", "rt", "rt-multi-th
 log = { version = "0.4", default-features = false }
 
 # Azure CVM specific dependencies
-az-tdx-vtpm = { version = "0.7", git = "https://github.com/kinvolk/azure-cvm-tooling", package = "az-tdx-vtpm", default-features = false, features = ["attester"] }
+az-tdx-vtpm = { version = "=0.8.0", git = "https://github.com/kinvolk/azure-cvm-tooling", package = "az-tdx-vtpm", default-features = false, features = ["attester"] }
 zerocopy = { version = "0.7", features = ["derive"] }
 
 # For compatibility with original tdx-tdcall interface

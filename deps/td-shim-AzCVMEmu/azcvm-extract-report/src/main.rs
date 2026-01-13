@@ -95,10 +95,10 @@ fn extract_report_data(td_report: &tdx::TdReport) -> Result<ReportData> {
     // But in mock/test environments with quote files, they can contain actual measurements
     let data = ReportData {
         mrtd: bytes_to_hex(&td_info.mrtd),
-        rtmr0: bytes_to_hex(&td_info.rtrm[0].register_data),
-        rtmr1: bytes_to_hex(&td_info.rtrm[1].register_data),
-        rtmr2: bytes_to_hex(&td_info.rtrm[2].register_data),
-        rtmr3: bytes_to_hex(&td_info.rtrm[3].register_data),
+        rtmr0: bytes_to_hex(&td_info.rtmr[0].register_data),
+        rtmr1: bytes_to_hex(&td_info.rtmr[1].register_data),
+        rtmr2: bytes_to_hex(&td_info.rtmr[2].register_data),
+        rtmr3: bytes_to_hex(&td_info.rtmr[3].register_data),
         xfam: bytes_to_hex(&td_info.xfam),
         attributes: bytes_to_hex(&td_info.attributes),
         mr_config_id: bytes_to_hex(&td_info.mrconfigid),
