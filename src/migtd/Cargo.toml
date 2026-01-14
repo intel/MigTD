@@ -23,7 +23,7 @@ chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 crypto = { path = "../crypto" }
 futures-util = { version = "0.3.17", default-features = false }
 lazy_static = { version = "1.0", features = ["spin_no_std"] }
-log = { version = "0.4.29", features = ["kv", "release_max_level_off"] }
+log = { version = "0.4.29", features = ["kv"] }
 pci = { path="../devices/pci" }
 policy = {path = "../policy"}
 rust_std_stub = { path = "../std-support/rust-std-stub" }

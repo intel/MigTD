@@ -65,7 +65,7 @@ generate-hash:
 
 build-igvm:
 	cd ../../ && cargo image --no-default-features --features $(IGVM_FEATURES_GET_QUOTE) --log-level $(LOG_LEVEL) \
-	 --image-format igvm --output $(IGVM_FILE)
+	 --image-format igvm --output $(IGVM_FILE) --debug
 
 build-igvm-all: pre-build build-igvm generate-hash
 
