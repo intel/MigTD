@@ -5,8 +5,12 @@
 pub mod data;
 pub mod event;
 pub mod logging;
+#[cfg(feature = "policy_v2")]
+pub mod pre_session_data;
 #[cfg(feature = "main")]
 pub mod session;
+#[cfg(feature = "main")]
+pub mod transport;
 
 use crate::driver::ticks::TimeoutError;
 use crate::ratls::RatlsError;
