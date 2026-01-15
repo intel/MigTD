@@ -27,6 +27,7 @@ pub enum PolicyError {
     InvalidParameter,
     InvalidPolicy,
     InvalidEventLog,
+    InvalidTdReport,
     PlatformNotFound(String),
     PlatformNotMatch(String, String),
     UnqualifiedPlatformInfo,
@@ -47,6 +48,7 @@ pub enum PolicyError {
     CrlEvaluation,
     HashCalculation,
     QuoteVerification,
+    TdReportVerification,
     QuoteGeneration,
     GetTdxReport,
 }
