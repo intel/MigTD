@@ -143,33 +143,6 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
     Ok(responder_context_ex)
 }
 
-pub async fn spdm_responder_transfer_msk(
-    spdm_responder_ex: &mut ResponderContextEx<'_>,
-    mig_info: &MigtdMigrationInformation,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
-) -> Result<(), SpdmStatus> {
-    #[cfg(not(feature = "policy_v2"))]
-    let remote_policy = Vec::new();
-
-    spdm_responder_ex.remote_policy = remote_policy;
-
-    let spdm_responder = &mut spdm_responder_ex.responder_context;
-    let mut writer = Writer::init(&mut spdm_responder.common.app_context_data_buffer);
-
-    let responder_app_context = SpdmAppContextData {
-        migration_info: mig_info.clone(),
-        private_key: PrivateKeyDer::default(),
-    };
-    responder_app_context
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-
-    Box::pin(rsp_handle_message(spdm_responder)).await?;
-    spdm_responder.common.app_context_data_buffer.zeroize();
-
-    Ok(())
-}
-
 pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result<(), SpdmStatus> {
     let mut sid = None;
     loop {

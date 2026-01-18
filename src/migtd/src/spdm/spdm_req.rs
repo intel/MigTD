@@ -83,42 +83,6 @@ pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
     Ok(requester_context)
 }
 
-pub async fn spdm_requester_transfer_msk(
-    spdm_requester: &mut RequesterContext,
-    mig_info: &MigtdMigrationInformation,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
-) -> Result<(), SpdmStatus> {
-    Box::pin(spdm_requester.send_receive_spdm_version()).await?;
-    Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
-    Box::pin(spdm_requester.send_receive_spdm_algorithm()).await?;
-
-    Box::pin(send_and_receive_pub_key(spdm_requester)).await?;
-    let session_id = Box::pin(spdm_requester.send_receive_spdm_key_exchange(
-        0xff,
-        SpdmMeasurementSummaryHashType::SpdmMeasurementSummaryHashTypeNone,
-    ))
-    .await?;
-
-    Box::pin(send_and_receive_sdm_migration_attest_info(
-        spdm_requester,
-        session_id,
-        #[cfg(feature = "policy_v2")]
-        remote_policy,
-    ))
-    .await?;
-
-    Box::pin(spdm_requester.send_receive_spdm_finish(Some(0xff), session_id)).await?;
-    Box::pin(send_and_receive_sdm_exchange_migration_info(
-        spdm_requester,
-        mig_info,
-        Some(session_id),
-    ))
-    .await?;
-    Box::pin(spdm_requester.send_receive_spdm_end_session(session_id)).await?;
-
-    Ok(())
-}
-
 pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> SpdmResult {
     let signing_key = EcdsaPk::new().map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let my_pub_key = signing_key.public_key_spki();
@@ -600,7 +564,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     Ok(())
 }
 
-async fn send_and_receive_sdm_exchange_migration_info(
+pub async fn send_and_receive_sdm_exchange_migration_info(
     spdm_requester: &mut RequesterContext,
     mig_info: &MigtdMigrationInformation,
     session_id: Option<u32>,
