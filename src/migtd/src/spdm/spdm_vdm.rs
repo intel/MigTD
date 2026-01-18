@@ -24,11 +24,15 @@ pub const VDM_MESSAGE_MAJOR_VERSION: u8 = 0;
 pub const VDM_MESSAGE_MINOR_VERSION: u8 = 0;
 
 pub const VDM_MESSAGE_EXCHANGE_PUB_KEY_ELEMENT_COUNT: u8 = 1;
-pub const VDM_MESSAGE_EXCHANGE_MIG_ATTEST_INFO_ELEMENT_COUNT: u8 = 3;
+pub const VDM_MESSAGE_EXCHANGE_ATTEST_INFO_ELEMENT_COUNT: u8 = 3;
+pub const VDM_MESSAGE_EXCHANGE_ATTEST_INFO_WITH_HISTORY_INFO_ELEMENT_COUNT: u8 = 7;
 pub const VDM_MESSAGE_EXCHANGE_MIG_INFO_ELEMENT_COUNT: u8 = 2;
+pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_REQ_COUNT: u8 = 1;
+pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_RSP_COUNT: u8 = 0;
 
 pub const VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_VERSION_SIZE: u16 = 4;
 pub const VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_SESSION_KEY_SIZE: u16 = 32;
+pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_SESSION_TOKEN_SIZE: u16 = 32;
 
 enum_builder! {
     @U8
@@ -40,11 +44,11 @@ enum_builder! {
         ExchangeMigrationAttestInfoReq => 0x03,
         ExchangeMigrationAttestInfoRsp => 0x04,
         ExchangeMigrationInfoReq => 0x05,
-        ExchangeMigrationInfoRsp => 0x06
-//        ExchangeRebindAttestInfoReq => 0x07,
-//        ExchangeRebindAttestInfoRsp => 0x08,
-//        ExchangeRebindInfoReq => 0x09,
-//        ExchangeRebindInfoRsp => 0x0A
+        ExchangeMigrationInfoRsp => 0x06,
+        ExchangeRebindAttestInfoReq => 0x07,
+        ExchangeRebindAttestInfoRsp => 0x08,
+        ExchangeRebindInfoReq => 0x09,
+        ExchangeRebindInfoRsp => 0x0A
     }
 }
 
@@ -97,15 +101,15 @@ enum_builder! {
         QuoteMy => 0x03,
         EventLogMy => 0x04,
         MigPolicyMy => 0x05,
-//        SerVtdExt => 0x10,
-//        TdReportInit => 0x12,
-//        EventLogInit => 0x14,
-//        MigPolicyInit => 0x15,
+        SerVtdExt => 0x10,
+        TdReportInit => 0x12,
+        EventLogInit => 0x14,
+        MigPolicyInit => 0x15,
         MigrationExportVersion => 0x81,
         MigrationImportVersion => 0x82,
         ForwardMigrationSessionKey => 0x83,
-        BackwardMigrationSessionKey => 0x84
-//        RebindSessionToken => 0x85,
+        BackwardMigrationSessionKey => 0x84,
+        RebindSessionToken => 0x85
     }
 }
 
@@ -459,6 +463,22 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             &mut reader,
             &mut vdm_rsp_payload.rsp_payload,
         ),
+        #[cfg(feature = "policy_v2")]
+        VdmMessageOpCode::ExchangeRebindAttestInfoReq => handle_exchange_rebind_attest_info_req(
+            responder_context,
+            session_id,
+            &vdm_request,
+            &mut reader,
+            &mut vdm_rsp_payload.rsp_payload,
+        ),
+        #[cfg(feature = "policy_v2")]
+        VdmMessageOpCode::ExchangeRebindInfoReq => handle_exchange_rebind_info_req(
+            responder_context,
+            session_id,
+            &vdm_request,
+            &mut reader,
+            &mut vdm_rsp_payload.rsp_payload,
+        ),
         _ => Err(SPDM_STATUS_INVALID_MSG_FIELD),
     };
     if let Ok(vdm_payload_size) = vdm_payload_size {
@@ -544,7 +564,8 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
                 .runtime_info
                 .vdm_message_transcript_before_key_exchange = Some(transcript_before_key_exchange);
         }
-        VdmMessageOpCode::ExchangeMigrationAttestInfoReq => {
+        VdmMessageOpCode::ExchangeMigrationAttestInfoReq
+        | VdmMessageOpCode::ExchangeRebindAttestInfoReq => {
             let vdm_attest_info_src_hash = match digest_sha384(req_bytes) {
                 Ok(hash) => hash,
                 Err(_) => {
@@ -594,7 +615,7 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
                 }
             }
         }
-        VdmMessageOpCode::ExchangeMigrationInfoReq => {}
+        VdmMessageOpCode::ExchangeMigrationInfoReq | VdmMessageOpCode::ExchangeRebindInfoReq => {}
         _ => {}
     };
 

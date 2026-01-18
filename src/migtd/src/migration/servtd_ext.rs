@@ -24,6 +24,7 @@ pub const TDCS_FIELD_SERVTD_ATTR: u64 = 0x1910000300000202;
 pub const TDCS_FIELD_SERVTD_ACCEPT_SERVTD_EXT_HASH: u64 = 0x1910000300000214;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ServtdExt {
     pub init_servtd_info_hash: [u8; 48],
     pub init_attr: [u8; 8],

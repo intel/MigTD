@@ -14,6 +14,8 @@ use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 
 use crate::migration::servtd_ext::read_servtd_ext;
+#[cfg(feature = "spdm_attestation")]
+use crate::spdm;
 use crate::{event_log, migration::transport::*};
 use crypto::hash::digest_sha384;
 
@@ -392,6 +394,22 @@ pub async fn start_rebinding(
             MIGTD_REBIND_OP_FINALIZE => rebinding_old_finalize(info, data).await?,
             _ => return Err(MigrationResult::InvalidParameter),
         }
+
+        #[cfg(feature = "spdm_attestation")]
+        match info.operation {
+            MIGTD_REBIND_OP_PREPARE => {
+                rebinding_old_spdm(
+                    transport,
+                    info,
+                    data,
+                    #[cfg(feature = "policy_v2")]
+                    remote_policy,
+                )
+                .await?
+            }
+            MIGTD_REBIND_OP_FINALIZE => rebinding_old_finalize(info, data).await?,
+            _ => return Err(MigrationResult::InvalidParameter),
+        }
     } else {
         let pre_session_data = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
@@ -421,8 +439,23 @@ pub async fn start_rebinding(
             MIGTD_REBIND_OP_FINALIZE => rebinding_new_finalize(info, data).await?,
             _ => return Err(MigrationResult::InvalidParameter),
         }
-    }
 
+        #[cfg(feature = "spdm_attestation")]
+        match info.operation {
+            MIGTD_REBIND_OP_PREPARE => {
+                rebinding_new_spdm(
+                    transport,
+                    info,
+                    data,
+                    #[cfg(feature = "policy_v2")]
+                    pre_session_data,
+                )
+                .await?
+            }
+            MIGTD_REBIND_OP_FINALIZE => rebinding_new_finalize(info, data).await?,
+            _ => return Err(MigrationResult::InvalidParameter),
+        }
+    }
     #[cfg(feature = "vmcall-raw")]
     {
         use crate::migration::logging::entrylog;
@@ -434,6 +467,87 @@ pub async fn start_rebinding(
         );
         log::info!("Complete rebinding and report status\n");
     }
+    Ok(())
+}
+
+#[cfg(feature = "spdm_attestation")]
+pub async fn rebinding_old_spdm(
+    transport: TransportType,
+    info: &RebindingInfo<'_>,
+    _data: &mut Vec<u8>,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+) -> Result<(), MigrationResult> {
+    const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    let mut spdm_requester = spdm::spdm_requester(transport).map_err(|_e| {
+        log::error!(
+            "rebinding: Failed in spdm_requester transport. Migration ID: {}\n",
+            info.mig_request_id
+        );
+        MigrationResult::SecureSessionError
+    })?;
+    with_timeout(
+        SPDM_TIMEOUT,
+        spdm::spdm_requester_rebind_old(
+            &mut spdm_requester,
+            info,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        ),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "rebinding: spdm_requester_rebind_old timeout error: {:?}\n",
+            e
+        );
+        e
+    })?
+    .map_err(|e| {
+        log::error!("rebinding: spdm_requester_rebind_old error: {:?}\n", e);
+        e
+    })?;
+    log::info!("Rebind completed\n");
+    Ok(())
+}
+
+#[cfg(feature = "spdm_attestation")]
+pub async fn rebinding_new_spdm(
+    transport: TransportType,
+    info: &RebindingInfo<'_>,
+    _data: &mut Vec<u8>,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+) -> Result<(), MigrationResult> {
+    const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    let mut spdm_responder = spdm::spdm_responder(transport).map_err(|_e| {
+        log::error!(
+            "rebinding: Failed in spdm_responder transport. Migration ID: {}\n",
+            info.mig_request_id
+        );
+        MigrationResult::SecureSessionError
+    })?;
+
+    with_timeout(
+        SPDM_TIMEOUT,
+        spdm::spdm_responder_rebind_new(
+            &mut spdm_responder,
+            info,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        ),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "rebinding: spdm_responder_rebind_new timeout error: {:?}\n",
+            e
+        );
+        e
+    })?
+    .map_err(|e| {
+        log::error!("rebinding: spdm_responder_rebind_new error: {:?}\n", e);
+        e
+    })?;
+    log::info!("Rebind completed\n");
     Ok(())
 }
 
@@ -594,7 +708,7 @@ fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, Mig
     }
 }
 
-fn create_rebind_token(info: &RebindingInfo) -> Result<RebindingToken, MigrationResult> {
+pub fn create_rebind_token(info: &RebindingInfo) -> Result<RebindingToken, MigrationResult> {
     let mut token = [0u8; 32];
     let rng = SystemRandom::new();
     rng.fill(&mut token)
