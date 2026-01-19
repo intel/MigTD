@@ -225,6 +225,65 @@ mod v2 {
         Ok(suppl_data)
     }
 
+    pub fn authenticate_migration_source_with_history_info(
+        quote_src: &[u8],
+        event_log_src: &[u8],
+        mig_policy_src: &[u8],
+        init_policy: &[u8],
+        init_event_log: &[u8],
+        init_td_report: &[u8],
+        servtd_ext_src: &[u8],
+    ) -> Result<Vec<u8>, PolicyError> {
+        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
+            quote_src,
+            event_log_src,
+            mig_policy_src,
+            policy_issuer_chain,
+        )?;
+        let relative_reference = get_local_tcb_evaluation_info()?;
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+
+        policy
+            .policy_data
+            .evaluate_policy_backward(&evaluation_data_src, &relative_reference)?;
+
+        // Verify the td report init / event log init / policy init
+        let servtd_ext_src_obj =
+            ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
+        let init_tdreport = verify_init_tdreport(init_td_report, &servtd_ext_src_obj)?;
+        let _engine_svn = policy
+            .servtd_tcb_mapping
+            .get_engine_svn_by_measurements(&Measurements::new_from_bytes(
+                &init_tdreport.td_info.mrtd,
+                &init_tdreport.td_info.rtmr0,
+                &init_tdreport.td_info.rtmr1,
+                None,
+                None,
+            ))
+            .ok_or(PolicyError::SvnMismatch)?;
+        let verified_policy_init = verify_policy_and_event_log(
+            init_event_log,
+            init_policy,
+            policy_issuer_chain,
+            &get_rtmrs_from_tdreport(&init_tdreport)?,
+        )?;
+
+        let relative_reference =
+            get_init_tcb_evaluation_info(&init_tdreport, &verified_policy_init)?;
+        policy
+            .policy_data
+            .evaluate_policy_common(&evaluation_data_src, &relative_reference)?;
+
+        // If backward policy exists, evaluate the migration src based on it.
+        let relative_reference = get_local_tcb_evaluation_info()?;
+        policy
+            .policy_data
+            .evaluate_policy_backward(&evaluation_data_src, &relative_reference)?;
+
+        Ok(suppl_data)
+    }
+
     // Authenticate the migtd-new from migtd-old side
     pub fn authenticate_rebinding_new(
         tdreport_dst: &[u8],
@@ -380,7 +439,7 @@ mod v2 {
         Ok(rtmrs)
     }
 
-    fn verify_policy_and_event_log<'p>(
+    pub fn verify_policy_and_event_log<'p>(
         event_log: &[u8],
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],

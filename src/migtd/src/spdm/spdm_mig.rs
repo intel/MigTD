@@ -42,6 +42,7 @@ pub async fn spdm_requester_transfer_msk(
     Box::pin(send_and_receive_sdm_migration_attest_info(
         spdm_requester,
         session_id,
+        mig_info,
         #[cfg(feature = "policy_v2")]
         remote_policy,
     ))

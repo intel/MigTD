@@ -249,6 +249,7 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
 pub async fn send_and_receive_sdm_migration_attest_info(
     spdm_requester: &mut RequesterContext,
     session_id: u32,
+    mig_info: &MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> SpdmResult {
     if spdm_requester.common.provision_info.my_pub_key.is_none()
@@ -257,6 +258,28 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         error!("Cannot transfer attestation info without provisioning my_pub_key.\n");
         return Err(SPDM_STATUS_UNSUPPORTED_CAP);
     }
+
+    #[cfg(feature = "policy_v2")]
+    let is_history_info_supported = {
+        use crate::migration::servtd_ext::read_servtd_ext;
+        let _servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid);
+
+        // Fixme: add history info in migration requests.
+        //let tdreport_init = get_init_tdreprot(mig_info.binding_handle);
+        //let event_log_init = get_init_event_log(mig_info.binding_handle);
+        //let mig_policy_init = get_init_policy(mig_info.binding_handle);
+        //if servtd_ext.is_err()
+        //    || tdreport_init.is_none()
+        //    || event_log_init.is_none()
+        //    || mig_policy_init.is_none()
+        //{
+        false
+        //} else {
+        //    true
+        //}
+    };
+    #[cfg(not(feature = "policy_v2"))]
+    let is_history_info_supported = false;
 
     let mut vendor_id = [0u8; MAX_SPDM_VENDOR_DEFINED_VENDOR_ID_LEN];
     vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
@@ -270,7 +293,11 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
-        element_count: VDM_MESSAGE_EXCHANGE_ATTEST_INFO_ELEMENT_COUNT,
+        element_count: if is_history_info_supported {
+            VDM_MESSAGE_EXCHANGE_ATTEST_INFO_WITH_HISTORY_INFO_ELEMENT_COUNT
+        } else {
+            VDM_MESSAGE_EXCHANGE_ATTEST_INFO_ELEMENT_COUNT
+        },
     };
 
     cnt += vdm_exchange_attest_info
@@ -366,6 +393,80 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     cnt += writer
         .extend_from_slice(&mig_policy_src_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+
+    #[cfg(feature = "policy_v2")]
+    if is_history_info_supported {
+        //SERVTD_EXT
+        use crate::migration::servtd_ext::read_servtd_ext;
+        let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
+            .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        let servtd_ext_element = VdmMessageElement {
+            element_type: VdmMessageElementType::SerVtdExt,
+            length: servtd_ext.as_bytes().len() as u16,
+        };
+        cnt += servtd_ext_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(servtd_ext.as_bytes())
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+
+        //TD report init
+        // Fixme: add history info in migration requests.
+        let tdreport_init = [];
+        //get_init_tdreprot(mig_info.binding_handle).ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        if tdreport_init.len() > u16::MAX as usize {
+            error!("Tdreport size is too large: {}\n", tdreport_init.len());
+            return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+        }
+        let tdreport_init_element = VdmMessageElement {
+            element_type: VdmMessageElementType::TdReportInit,
+            length: tdreport_init.len() as u16,
+        };
+        cnt += tdreport_init_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(tdreport_init.as_slice())
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+
+        //event log init
+        let event_log_init = [];
+        //get_init_event_log(mig_info.binding_handle).ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        if event_log_init.len() > u16::MAX as usize {
+            error!(
+                "Event log init size is too large: {}\n",
+                event_log_init.len()
+            );
+            return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+        }
+        let event_log_init_element = VdmMessageElement {
+            element_type: VdmMessageElementType::EventLogInit,
+            length: event_log_init.len() as u16,
+        };
+        cnt += event_log_init_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(event_log_init.as_slice())
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+
+        //mig policy init hash
+        let mig_policy_init = [];
+        //get_init_policy(mig_info.binding_handle).ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        let mig_policy_init_hash =
+            digest_sha384(&mig_policy_init).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+        let mig_policy_init_element = VdmMessageElement {
+            element_type: VdmMessageElementType::MigPolicyInit,
+            length: mig_policy_init_hash.len() as u16,
+        };
+        cnt += mig_policy_init_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(&mig_policy_init_hash)
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
 
     spdm_requester.common.reset_buffer_via_request_code(
         SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
