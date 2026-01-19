@@ -9,6 +9,8 @@ pub mod logging;
 pub mod pre_session_data;
 #[cfg(feature = "main")]
 pub mod session;
+#[cfg(feature = "main")]
+pub mod transport;
 
 use crate::driver::ticks::TimeoutError;
 use crate::ratls::RatlsError;

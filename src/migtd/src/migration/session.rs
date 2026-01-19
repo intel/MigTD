@@ -5,6 +5,11 @@
 #[cfg(feature = "vmcall-raw")]
 use crate::migration::event::VMCALL_MIG_REPORTSTATUS_FLAGS;
 #[cfg(feature = "policy_v2")]
+use crate::migration::pre_session_data::pre_session_data_exchange;
+use crate::migration::transport::setup_transport;
+use crate::migration::transport::shutdown_transport;
+use crate::migration::transport::TransportType;
+#[cfg(feature = "policy_v2")]
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 #[cfg(feature = "vmcall-raw")]
@@ -718,72 +723,237 @@ pub fn report_status(status: u8, request_id: u64) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(feature = "spdm_attestation"))]
+async fn migration_src_exchange_msk(
+    transport: TransportType,
+    info: &MigrationInformation,
+    data: &mut Vec<u8>,
+    exchange_information: &ExchangeInformation,
+    remote_information: &mut ExchangeInformation,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+) -> Result<()> {
+    const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+
+    // TLS client
+    let mut ratls_client = ratls::client(
+        transport,
+        #[cfg(feature = "policy_v2")]
+        remote_policy,
+        #[cfg(feature = "vmcall-raw")]
+        data,
+    )
+    .map_err(|_| {
+        #[cfg(feature = "vmcall-raw")]
+        data.extend_from_slice(
+            &format!(
+                "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
+                info.mig_info.mig_request_id
+            )
+            .into_bytes(),
+        );
+        log::error!(
+            "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
+            info.mig_info.mig_request_id
+        );
+        MigrationResult::SecureSessionError
+    })?;
+
+    // MigTD-S send Migration Session Forward key to peer
+    with_timeout(
+        TLS_TIMEOUT,
+        ratls_client.write(exchange_information.as_bytes()),
+    )
+    .await
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_client.write timeout error: {:?}\n", e);
+        e
+    })?
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_client.write error: {:?}\n", e);
+        e
+    })?;
+    let size = with_timeout(
+        TLS_TIMEOUT,
+        ratls_client.read(remote_information.as_bytes_mut()),
+    )
+    .await
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_client.read timeout error: {:?}\n", e);
+        e
+    })?
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_client.read error: {:?}\n", e);
+        e
+    })?;
+    if size < size_of::<ExchangeInformation>() {
+        #[cfg(feature = "vmcall-raw")]
+        data.extend_from_slice(
+            &format!(
+                "Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n",
+                info.mig_info.mig_request_id,
+                size_of::<ExchangeInformation>(),
+                size
+            )
+            .into_bytes(),
+        );
+        log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
+        return Err(MigrationResult::NetworkError);
+    }
+    shutdown_transport(ratls_client.transport_mut(), info, data).await?;
+    Ok(())
+}
+
+#[cfg(not(feature = "spdm_attestation"))]
+async fn migration_dst_exchange_msk(
+    transport: TransportType,
+    info: &MigrationInformation,
+    data: &mut Vec<u8>,
+    exchange_information: &ExchangeInformation,
+    remote_information: &mut ExchangeInformation,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+) -> Result<()> {
+    const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+
+    // TLS server
+    let mut ratls_server = ratls::server(
+        transport,
+        #[cfg(feature = "policy_v2")]
+        remote_policy,
+    )
+    .map_err(|_| {
+        #[cfg(feature = "vmcall-raw")]
+        data.extend_from_slice(
+            &format!(
+                "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
+                info.mig_info.mig_request_id
+            )
+            .into_bytes(),
+        );
+        log::error!(
+            "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
+            info.mig_info.mig_request_id
+        );
+        MigrationResult::SecureSessionError
+    })?;
+
+    with_timeout(
+        TLS_TIMEOUT,
+        ratls_server.write(exchange_information.as_bytes()),
+    )
+    .await
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_server.write timeout error: {:?}\n", e);
+        e
+    })?
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_server.write error: {:?}\n", e);
+        e
+    })?;
+    let size = with_timeout(
+        TLS_TIMEOUT,
+        ratls_server.read(remote_information.as_bytes_mut()),
+    )
+    .await
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_server.read timeout error: {:?}\n", e);
+        e
+    })?
+    .map_err(|e| {
+        log::error!("exchange_msk: ratls_server.read error: {:?}\n", e);
+        e
+    })?;
+    if size < size_of::<ExchangeInformation>() {
+        #[cfg(feature = "vmcall-raw")]
+        data.extend_from_slice(&format!("Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size).into_bytes());
+        log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
+        return Err(MigrationResult::NetworkError);
+    }
+    shutdown_transport(ratls_server.transport_mut(), info, data).await?;
+    Ok(())
+}
+
+#[cfg(feature = "spdm_attestation")]
+async fn migration_src_exchange_msk(
+    transport: TransportType,
+    info: &MigrationInformation,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+) -> Result<()> {
+    const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    let mut spdm_requester = spdm::spdm_requester(transport).map_err(|_e| {
+        log::error!(
+            "exchange_msk(): Failed in spdm_requester transport. Migration ID: {}\n",
+            info.mig_info.mig_request_id
+        );
+        MigrationResult::SecureSessionError
+    })?;
+    with_timeout(
+        SPDM_TIMEOUT,
+        spdm::spdm_requester_transfer_msk(
+            &mut spdm_requester,
+            &info.mig_info,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        ),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "exchange_msk: spdm_requester_transfer_msk timeout error: {:?}\n",
+            e
+        );
+        e
+    })?
+    .map_err(|e| {
+        log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
+        e
+    })?;
+    log::info!("MSK exchange completed\n");
+    Ok(())
+}
+
+#[cfg(feature = "spdm_attestation")]
+async fn migration_dst_exchange_msk(
+    transport: TransportType,
+    info: &MigrationInformation,
+    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+) -> Result<()> {
+    const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    let mut spdm_responder = spdm::spdm_responder(transport).map_err(|_e| {
+        log::error!(
+            "exchange_msk(): Failed in spdm_responder transport. Migration ID: {}\n",
+            info.mig_info.mig_request_id
+        );
+        MigrationResult::SecureSessionError
+    })?;
+
+    with_timeout(
+        SPDM_TIMEOUT,
+        spdm::spdm_responder_transfer_msk(
+            &mut spdm_responder,
+            &info.mig_info,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        ),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "exchange_msk: spdm_responder_transfer_msk timeout error: {:?}\n",
+            e
+        );
+        e
+    })?
+    .map_err(|e| {
+        log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
+        e
+    })?;
+    log::info!("MSK exchange completed\n");
+    Ok(())
+}
+
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Result<()> {
-    #[cfg(feature = "policy_v2")]
-    use crate::migration::pre_session_data::pre_session_data_exchange;
-
-    #[cfg(not(feature = "vmcall-raw"))]
-    let _ = data;
-    #[cfg(feature = "policy_v2")]
-    let mut transport;
-    #[cfg(not(feature = "policy_v2"))]
-    let transport;
-
-    #[cfg(feature = "vmcall-raw")]
-    {
-        use vmcall_raw::stream::VmcallRaw;
-        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(info.mig_info.mig_request_id)
-            .map_err(|e| {
-                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to create vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to create vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
-                MigrationResult::InvalidParameter
-        })?;
-
-        vmcall_raw_instance
-            .connect()
-            .await
-            .map_err(|e| {
-                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to connect vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to connect vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
-                MigrationResult::InvalidParameter
-            })?;
-        transport = vmcall_raw_instance;
-    }
-
-    #[cfg(feature = "virtio-serial")]
-    {
-        use virtio_serial::VirtioSerialPort;
-        const VIRTIO_SERIAL_PORT_ID: u32 = 1;
-
-        let port = VirtioSerialPort::new(VIRTIO_SERIAL_PORT_ID);
-        port.open()?;
-        transport = port;
-    };
-
-    #[cfg(not(feature = "virtio-serial"))]
-    #[cfg(not(feature = "vmcall-raw"))]
-    {
-        use vsock::{stream::VsockStream, VsockAddr};
-
-        #[cfg(feature = "virtio-vsock")]
-        let mut vsock = VsockStream::new()?;
-
-        #[cfg(feature = "vmcall-vsock")]
-        let mut vsock = VsockStream::new_with_cid(
-            info.mig_socket_info.mig_td_cid,
-            info.mig_info.mig_request_id,
-        )?;
-
-        // Establish the vsock connection with host
-        vsock
-            .connect(&VsockAddr::new(
-                info.mig_socket_info.mig_td_cid as u32,
-                info.mig_socket_info.mig_channel_port,
-            ))
-            .await?;
-        transport = vsock;
-    };
+    let mut transport = setup_transport(info, data).await?;
 
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
@@ -815,8 +985,6 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
 
     #[cfg(not(feature = "spdm_attestation"))]
     {
-        const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
-
         let mut remote_information = ExchangeInformation::default();
         let mut exchange_information =
             exchange_info(&info.mig_info, info.is_src()).map_err(|e| {
@@ -826,169 +994,27 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
 
         // Establish TLS layer connection and negotiate the MSK
         if info.is_src() {
-            // TLS client
-            let mut ratls_client = ratls::client(
+            migration_src_exchange_msk(
                 transport,
-                #[cfg(feature = "policy_v2")]
-                remote_policy,
-                #[cfg(feature = "vmcall-raw")]
+                info,
                 data,
-            )
-            .map_err(|_| {
-                #[cfg(feature = "vmcall-raw")]
-                data.extend_from_slice(
-                    &format!(
-                        "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
-                        info.mig_info.mig_request_id
-                    )
-                    .into_bytes(),
-                );
-                log::error!(
-                    "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
-                    info.mig_info.mig_request_id
-                );
-                MigrationResult::SecureSessionError
-            })?;
-
-            // MigTD-S send Migration Session Forward key to peer
-            with_timeout(
-                TLS_TIMEOUT,
-                ratls_client.write(exchange_information.as_bytes()),
-            )
-            .await
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.write timeout error: {:?}\n", e);
-                e
-            })?
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.write error: {:?}\n", e);
-                e
-            })?;
-            let size = with_timeout(
-                TLS_TIMEOUT,
-                ratls_client.read(remote_information.as_bytes_mut()),
-            )
-            .await
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.read timeout error: {:?}\n", e);
-                e
-            })?
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_client.read error: {:?}\n", e);
-                e
-            })?;
-            if size < size_of::<ExchangeInformation>() {
-                #[cfg(feature = "vmcall-raw")]
-                data.extend_from_slice(
-                    &format!(
-                        "Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n",
-                        info.mig_info.mig_request_id,
-                        size_of::<ExchangeInformation>(),
-                        size
-                    )
-                    .into_bytes(),
-                );
-                log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
-                return Err(MigrationResult::NetworkError);
-            }
-            #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
-            ratls_client.transport_mut().shutdown().await.map_err(|e| {
-                log::error!(
-                    "exchange_msk: ratls_client.transport_mut().shutdown() error: {:?}\n",
-                    e
-                );
-                e
-            })?;
-
-            #[cfg(feature = "vmcall-raw")]
-            ratls_client
-                .transport_mut()
-                .shutdown()
-                .await
-                .map_err(|e| {
-                    data.extend_from_slice(
-                        &format!(
-                            "Error: exchange_msk(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n",
-                            info.mig_info.mig_request_id,
-                            e
-                        )
-                        .into_bytes(),
-                    );
-                    log::error!(
-                        "exchange_msk: Failed to transport in vmcall_raw_instance with Migration ID: {} errorcode: {}",
-                        info.mig_info.mig_request_id,
-                        e
-                    );
-                    MigrationResult::InvalidParameter
-                })?;
-        } else {
-            // TLS server
-            let mut ratls_server = ratls::server(
-                transport,
+                &exchange_information,
+                &mut remote_information,
                 #[cfg(feature = "policy_v2")]
                 remote_policy,
             )
-            .map_err(|_| {
-                #[cfg(feature = "vmcall-raw")]
-                data.extend_from_slice(
-                    &format!(
-                        "Error: exchange_msk(): Failed in ratls transport. Migration ID: {:x}\n",
-                        info.mig_info.mig_request_id
-                    )
-                    .into_bytes(),
-                );
-                log::error!(
-                    "exchange_msk(): Failed in ratls transport. Migration ID: {}\n",
-                    info.mig_info.mig_request_id
-                );
-                MigrationResult::SecureSessionError
-            })?;
-
-            with_timeout(
-                TLS_TIMEOUT,
-                ratls_server.write(exchange_information.as_bytes()),
+            .await?;
+        } else {
+            migration_dst_exchange_msk(
+                transport,
+                info,
+                data,
+                &exchange_information,
+                &mut remote_information,
+                #[cfg(feature = "policy_v2")]
+                remote_policy,
             )
-            .await
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.write timeout error: {:?}\n", e);
-                e
-            })?
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.write error: {:?}\n", e);
-                e
-            })?;
-            let size = with_timeout(
-                TLS_TIMEOUT,
-                ratls_server.read(remote_information.as_bytes_mut()),
-            )
-            .await
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.read timeout error: {:?}\n", e);
-                e
-            })?
-            .map_err(|e| {
-                log::error!("exchange_msk: ratls_server.read error: {:?}\n", e);
-                e
-            })?;
-            if size < size_of::<ExchangeInformation>() {
-                #[cfg(feature = "vmcall-raw")]
-                data.extend_from_slice(&format!("Error: exchange_msk(): Incorrect ExchangeInformation size Migration ID: {:x}. Size - Expected: {:x} Actual: {:x}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size).into_bytes());
-                log::error!("exchange_msk(): Incorrect ExchangeInformation size Migration ID: {}. Size - Expected: {} Actual: {}\n", info.mig_info.mig_request_id, size_of::<ExchangeInformation>(), size);
-                return Err(MigrationResult::NetworkError);
-            }
-            #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
-            ratls_server.transport_mut().shutdown().await?;
-
-            #[cfg(feature = "vmcall-raw")]
-            ratls_server
-                .transport_mut()
-                .shutdown()
-                .await
-                .map_err(|e| {
-                    data.extend_from_slice(&format!("Error: exchange_msk(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                    log::error!("exchange_msk: Failed to transport in vmcall_raw_instance with Migration ID: {} errorcode: {}\n", info.mig_info.mig_request_id, e);
-                    MigrationResult::InvalidParameter
-                })?;
+            .await?;
         }
 
         let mig_ver = cal_mig_version(info.is_src(), &exchange_information, &remote_information)
@@ -1021,68 +1047,22 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
 
     #[cfg(feature = "spdm_attestation")]
     {
-        const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
         if info.is_src() {
-            let mut spdm_requester = spdm::spdm_requester(transport).map_err(|_e| {
-                log::error!(
-                    "exchange_msk(): Failed in spdm_requester transport. Migration ID: {}\n",
-                    info.mig_info.mig_request_id
-                );
-                MigrationResult::SecureSessionError
-            })?;
-            with_timeout(
-                SPDM_TIMEOUT,
-                spdm::spdm_requester_transfer_msk(
-                    &mut spdm_requester,
-                    &info.mig_info,
-                    #[cfg(feature = "policy_v2")]
-                    remote_policy,
-                ),
+            migration_src_exchange_msk(
+                transport,
+                info,
+                #[cfg(feature = "policy_v2")]
+                remote_policy,
             )
-            .await
-            .map_err(|e| {
-                log::error!(
-                    "exchange_msk: spdm_requester_transfer_msk timeout error: {:?}\n",
-                    e
-                );
-                e
-            })?
-            .map_err(|e| {
-                log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
-                e
-            })?;
-            log::info!("MSK exchange completed\n");
+            .await?;
         } else {
-            let mut spdm_responder = spdm::spdm_responder(transport).map_err(|_e| {
-                log::error!(
-                    "exchange_msk(): Failed in spdm_responder transport. Migration ID: {}\n",
-                    info.mig_info.mig_request_id
-                );
-                MigrationResult::SecureSessionError
-            })?;
-
-            with_timeout(
-                SPDM_TIMEOUT,
-                spdm::spdm_responder_transfer_msk(
-                    &mut spdm_responder,
-                    &info.mig_info,
-                    #[cfg(feature = "policy_v2")]
-                    remote_policy,
-                ),
+            migration_dst_exchange_msk(
+                transport,
+                info,
+                #[cfg(feature = "policy_v2")]
+                remote_policy,
             )
-            .await
-            .map_err(|e| {
-                log::error!(
-                    "exchange_msk: spdm_responder_transfer_msk timeout error: {:?}\n",
-                    e
-                );
-                e
-            })?
-            .map_err(|e| {
-                log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
-                e
-            })?;
-            log::info!("MSK exchange completed\n");
+            .await?;
         }
     }
 
