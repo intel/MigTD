@@ -90,7 +90,6 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
     //Save private to spdm context for signing
     let private_key = signing_key.private_key();
     let requester_app_context = SpdmAppContextData {
-        migration_info: MigtdMigrationInformation::default(),
         private_key: PrivateKeyDer::from(private_key),
     };
     let writer = &mut Writer::init(&mut spdm_requester.common.app_context_data_buffer);

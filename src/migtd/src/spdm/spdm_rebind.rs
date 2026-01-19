@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 use crate::{
-    migration::{rebinding::RebindingInfo, MigtdMigrationInformation},
+    migration::rebinding::RebindingInfo,
     spdm::{
         spdm_req::{
             send_and_receive_pub_key, send_and_receive_sdm_rebind_attest_info,
@@ -71,7 +71,6 @@ pub async fn spdm_responder_rebind_new<'a>(
     let mut writer = Writer::init(&mut spdm_responder.common.app_context_data_buffer);
 
     let responder_app_context = SpdmAppContextData {
-        migration_info: MigtdMigrationInformation::default(),
         private_key: PrivateKeyDer::default(),
     };
     responder_app_context

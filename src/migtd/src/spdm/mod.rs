@@ -40,7 +40,6 @@ pub use spdm_rsp::spdm_responder;
 pub use spdm_vdm::*;
 
 use crate::migration::MigrationResult;
-use crate::migration::MigtdMigrationInformation;
 use crate::spdm::vmcall_msg::VMCALL_SPDM_MESSAGE_HEADER_SIZE;
 
 pub struct MigtdTransport<T: AsyncRead + AsyncWrite + Unpin> {
@@ -171,23 +170,12 @@ impl Codec for PrivateKeyDer {
 
 #[derive(Debug)]
 struct SpdmAppContextData {
-    pub migration_info: MigtdMigrationInformation,
     pub private_key: PrivateKeyDer,
 }
 
 impl Codec for SpdmAppContextData {
     fn encode(&self, bytes: &mut Writer) -> Result<usize, codec::EncodeErr> {
         let mut size = 0;
-        size += self.migration_info.mig_request_id.encode(bytes)?;
-        size += self.migration_info.migration_source.encode(bytes)?;
-        size += self.migration_info.target_td_uuid.encode(bytes)?;
-        size += self.migration_info.binding_handle.encode(bytes)?;
-
-        #[cfg(not(feature = "vmcall-raw"))]
-        {
-            size += self.migration_info.mig_policy_id.encode(bytes)?;
-            size += self.migration_info.communication_id.encode(bytes)?
-        }
 
         size += self.private_key.encode(bytes)?;
 
@@ -195,24 +183,9 @@ impl Codec for SpdmAppContextData {
     }
 
     fn read(reader: &mut Reader) -> Option<Self> {
-        let mut migration_info = MigtdMigrationInformation::default();
-        migration_info.mig_request_id = u64::read(reader)?;
-        migration_info.migration_source = u8::read(reader)?;
-        migration_info.target_td_uuid = <[u64; 4]>::read(reader)?;
-        migration_info.binding_handle = u64::read(reader)?;
-
-        #[cfg(not(feature = "vmcall-raw"))]
-        {
-            migration_info.mig_policy_id = u64::read(reader)?;
-            migration_info.communication_id = u64::read(reader)?;
-        }
-
         let private_key = PrivateKeyDer::read(reader)?;
 
-        Some(Self {
-            migration_info,
-            private_key,
-        })
+        Some(Self { private_key })
     }
 }
 

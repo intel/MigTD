@@ -69,7 +69,6 @@ impl ResponderContextEx<'_> {
     }
 }
 
-#[cfg(feature = "policy_v2")]
 pub unsafe fn upcast_mut(inner: &mut ResponderContext) -> &mut ResponderContextEx {
     let ptr = inner as *mut ResponderContext as *mut u8;
     let outer_ptr = ptr.sub(0) as *mut ResponderContextEx;
@@ -327,6 +326,16 @@ pub fn handle_exchange_mig_attest_info_req(
     reader: &mut Reader<'_>,
     vendor_defined_rsp_payload: &mut [u8],
 ) -> SpdmResult<usize> {
+    // Migration messages must be handled only when migration info is set.
+    let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
+    if !matches!(
+        &spdm_responder_ex.info,
+        ResponderContextExInfo::MigrationInformation(_)
+    ) {
+        error!("Remigrationbinding info is not set in responder context.\n");
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+
     let session_id = if session_id.is_some() {
         session_id
     } else {
@@ -620,6 +629,16 @@ pub fn handle_exchange_mig_info_req(
     reader: &mut Reader<'_>,
     vendor_defined_rsp_payload: &mut [u8],
 ) -> SpdmResult<usize> {
+    // Migration messages must be handled only when migration info is set.
+    let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
+    if !matches!(
+        &spdm_responder_ex.info,
+        ResponderContextExInfo::MigrationInformation(_)
+    ) {
+        error!("Remigrationbinding info is not set in responder context.\n");
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+
     // The VDM message for secret migration info exchange MUST be sent after mutual attested session establishment.
     let session_id = if let Some(sid) = session_id {
         sid
@@ -698,17 +717,19 @@ pub fn handle_exchange_mig_info_req(
         },
     };
 
-    let mut reader = Reader::init(responder_context.common.app_context_data_buffer.as_ref());
-    let responder_app_context =
-        SpdmAppContextData::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let mut exchange_information = exchange_info(&responder_app_context.migration_info, false)?;
+    let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
+    let migration_info = match &spdm_responder_ex.info {
+        ResponderContextExInfo::MigrationInformation(info) => info,
+        _ => {
+            error!("Migration info is not set in responder context.\n");
+            return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+        }
+    };
+    let mut exchange_information = exchange_info(migration_info, false)?;
 
     let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)?;
-    set_mig_version(&responder_app_context.migration_info, mig_ver)?;
-    write_msk(
-        &responder_app_context.migration_info,
-        &remote_information.key,
-    )?;
+    set_mig_version(migration_info, mig_ver)?;
+    write_msk(migration_info, &remote_information.key)?;
     log::info!("Set MSK and report status\n");
     exchange_information.key.clear();
     remote_information.key.clear();

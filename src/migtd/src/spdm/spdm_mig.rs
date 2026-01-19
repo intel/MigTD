@@ -9,7 +9,7 @@ use crate::{
             send_and_receive_pub_key, send_and_receive_sdm_exchange_migration_info,
             send_and_receive_sdm_migration_attest_info,
         },
-        spdm_rsp::{rsp_handle_message, ResponderContextEx},
+        spdm_rsp::{rsp_handle_message, ResponderContextEx, ResponderContextExInfo},
         PrivateKeyDer, SpdmAppContextData,
     },
 };
@@ -59,21 +59,21 @@ pub async fn spdm_requester_transfer_msk(
     Ok(())
 }
 
-pub async fn spdm_responder_transfer_msk(
-    spdm_responder_ex: &mut ResponderContextEx<'_>,
-    mig_info: &MigtdMigrationInformation,
+pub async fn spdm_responder_transfer_msk<'a>(
+    spdm_responder_ex: &mut ResponderContextEx<'a>,
+    mig_info: &'a MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     #[cfg(not(feature = "policy_v2"))]
     let remote_policy = Vec::new();
 
     spdm_responder_ex.remote_policy = remote_policy;
+    spdm_responder_ex.info = ResponderContextExInfo::MigrationInformation(mig_info);
 
     let spdm_responder = &mut spdm_responder_ex.responder_context;
     let mut writer = Writer::init(&mut spdm_responder.common.app_context_data_buffer);
 
     let responder_app_context = SpdmAppContextData {
-        migration_info: mig_info.clone(),
         private_key: PrivateKeyDer::default(),
     };
     responder_app_context
