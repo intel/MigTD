@@ -44,6 +44,10 @@ lazy_static! {
     static ref MSK_FIELDS: Mutex<HashMap<(u64, [u64;4], u64), u64>> = Mutex::new(HashMap::new());
     /// Emulated global-scope SYS fields keyed by field_identifier
     static ref SYS_FIELDS: Mutex<HashMap<u64, u64>> = Mutex::new(HashMap::new());
+    /// Emulated td-scope metadata fields keyed by field_identifier
+    static ref VM_FIELDS: Mutex<HashMap<u64, u64>> = Mutex::new(HashMap::new());
+    /// Emulated rebind-session-token
+    static ref REBIND_SESSION_TOKEN: Mutex<HashMap<(u64, [u64; 4]), [u8; 32]>> = Mutex::new(HashMap::new());
     /// Event notification vector for GetQuote completion
     static ref EVENT_NOTIFY_VECTOR: Mutex<Option<u64>> = Mutex::new(None);
     /// Pending receive buffer for large transfers that span multiple GHCI transactions
@@ -822,6 +826,44 @@ pub fn tdcall_sys_wr(field_identifier: u64, value: u64) -> core::result::Result<
     );
     SYS_FIELDS.lock().insert(field_identifier, value);
     Ok(())
+}
+
+/// Emulation for TDG.VM.WR: write a TD-scope metadata field
+pub fn tdcall_vm_write(field_identifier: u64, value: u64, mask: u64) -> Result<u64, TdCallError> {
+    warn!(
+        "AzCVMEmu: tdcall_vm_write emulated: field=0x{:x} <= 0x{:x}",
+        field_identifier, value
+    );
+    SYS_FIELDS.lock().insert(field_identifier, value);
+    Ok(field_identifier)
+}
+
+/// Emulation for TDG.SERVTD.REBIND.APPROVE: called by the currently bound service TD to approve
+/// a new Service TD to be bound to the target TD.
+pub fn tdcall_servtd_rebind_approve(
+    old_binding_handle: u64,
+    rebind_session_token: &[u8],
+    target_td_uuid: &[u64],
+) -> Result<[u64; 4], TdCallError> {
+    warn!(
+        "AzCVMEmu: tdcall_servtd_rebind_approve emulated: old_binding_hanlde=0x{:x} target_td_uuid= 0x{:x?}",
+        old_binding_handle, target_td_uuid
+    );
+    let uuid = [
+            target_td_uuid[0],
+            target_td_uuid[1],
+            target_td_uuid[2],
+            target_td_uuid[3],
+        ];
+    let key = (
+        old_binding_handle,
+        uuid,
+    );
+    let mut value = [0u8; 32];
+    value.copy_from_slice(&rebind_session_token[..32]);
+
+    REBIND_SESSION_TOKEN.lock().insert(key, value);
+    Ok(uuid)
 }
 
 /// Emulation for TDG.VP.VMCALL<GetQuote>: Generate TD-Quote using vTPM or return hardcoded collateral
