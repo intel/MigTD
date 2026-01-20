@@ -93,7 +93,7 @@ pub struct RebindingInfo {
 impl RebindingInfo {
     pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
         // Check the length of input and the reserved fields
-        if b.len() < 56 || b[9..16] != [0; 7] || b[11..16] != [0; 4] {
+        if b.len() < 56 || b[11..16] != [0; 5] {
             return None;
         }
         let mig_request_id = u64::from_le_bytes(b[..8].try_into().unwrap());

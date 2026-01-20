@@ -13,9 +13,9 @@ use core::task::Poll;
 #[cfg(feature = "policy_v2")]
 use alloc::string::String;
 use alloc::vec::Vec;
+use log::info;
 #[cfg(feature = "vmcall-raw")]
 use log::{debug, Level};
-use log::{info, LevelFilter};
 use migtd::event_log::*;
 #[cfg(not(feature = "vmcall-raw"))]
 use migtd::migration::data::MigrationInformation;
@@ -101,7 +101,7 @@ pub fn runtime_main() {
     {
         // Initialize logging with level filter. The actual log level is determined by
         // compile-time feature flags.
-        let _ = td_logger::init(LevelFilter::Trace);
+        let _ = td_logger::init(log::LevelFilter::Trace);
     }
 
     // Create LogArea per vCPU
@@ -445,6 +445,39 @@ fn handle_pre_mig() {
                             });
                             log::trace!(migration_request_id = wfr_info.mig_info.mig_request_id; "ReportStatus for key exchange completed\n");
                             REQUESTS.lock().remove(&wfr_info.mig_info.mig_request_id);
+                        }
+                        #[cfg(feature = "policy_v2")]
+                        WaitForRequestResponse::StartRebinding(rebinding_info) => {
+                            use migtd::migration::rebinding::start_rebinding;
+
+                            let status = start_rebinding(&rebinding_info, &mut data)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
+                            if status == MigrationResult::Success {
+                                log::trace!("Successfully completed key exchange\n");
+                                log::trace!(
+                                    migration_request_id = rebinding_info.mig_request_id; "Successfully completed rebinding\n",
+                                );
+                            } else {
+                                log::error!(
+                                    migration_request_id = rebinding_info.mig_request_id; "Failure during rebinding status code: {:x}\n", status.clone() as u8);
+                            }
+                            let _ =
+                                report_status(status as u8, rebinding_info.mig_request_id, &data)
+                                    .await
+                                    .map_err(|e| {
+                                        log::error!(
+                                            migration_request_id = rebinding_info.mig_request_id;
+                                            "Failed to report status for StartRebinding: {:?}\n",
+                                            e
+                                        );
+                                    });
+                            log::trace!(
+                                migration_request_id = rebinding_info.mig_request_id;
+                                "ReportStatus for rebinding completed\n"
+                            );
+                            REQUESTS.lock().remove(&rebinding_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
                             let status = get_tdreport(
