@@ -25,6 +25,13 @@ pub enum QuoteError {
     ConversionError,
 }
 
+/// Emulated TD Report Verification
+#[cfg(feature = "test_mock_report")]
+pub fn tdcall_verify_report(report_mac: &[u8]) -> Result<(), TdCallError> {
+    info!("Using mock TD report verification for test_mock_report feature");
+    Ok(())
+}
+
 /// Emulated TD report generation using mock report
 #[cfg(feature = "test_mock_report")]
 pub fn tdcall_report_emulated(_additional_data: &[u8; 64]) -> Result<tdx::TdReport, TdCallError> {
@@ -423,7 +430,7 @@ fn create_td_report_from_file(quote_file_path: String) -> tdx::TdReport {
     }
 
     // Get report body from quote
-    let (report_body, servtd_hash) = if body_size == QUOTE_V5_BODY_SIZE_15 {
+    let (report_body, tee_tcb_svn2, servtd_hash) = if body_size == QUOTE_V5_BODY_SIZE_15 {
         // v5 with TD Report 1.5 (648 bytes) - includes mr_servicetd
         let report_v15 = unsafe {
             &*(quote_data[body_offset..body_offset + body_size].as_ptr() as *const SgxReport2BodyV15)
@@ -445,7 +452,7 @@ fn create_td_report_from_file(quote_file_path: String) -> tdx::TdReport {
             rt_mr: report_v15.rt_mr,
             report_data: report_v15.report_data,
         };
-        (base_body, report_v15.mr_servicetd)
+        (base_body, report_v15.tee_tcb_svn2, report_v15.mr_servicetd)
     } else {
         // v4 or v5 with TD Report 1.0 (584 bytes)
         let report = unsafe {
@@ -468,7 +475,7 @@ fn create_td_report_from_file(quote_file_path: String) -> tdx::TdReport {
             rt_mr: report.rt_mr,
             report_data: report.report_data,
         };
-        (base_body, [0u8; 48]) // SERVTD_HASH always zero for MigTD
+        (base_body, [0u8; 16], [0u8; 48]) // SERVTD_HASH always zero for MigTD
     };
 
     // Create TD report with values from parsed quote body
@@ -494,7 +501,8 @@ fn create_td_report_from_file(quote_file_path: String) -> tdx::TdReport {
             mrseam: report_body.mr_seam,
             mrsigner_seam: report_body.mrsigner_seam,
             attributes: report_body.seam_attributes,
-            reserved: [0u8; 111],
+            tee_tcb_svn2,
+            reserved: [0u8; 95],
         },
         reserved: [0u8; 17],
         td_info: TdInfo {

@@ -557,6 +557,10 @@ fn handle_pre_mig_emu() -> i32 {
                             log::trace!(migration_request_id = report_info.mig_request_id; "ReportStatus for get TDREPORT completed.\n");
                             // Continue to process next request (migration)
                         }
+                        #[cfg(all(feature = "policy_v2"))]
+                        WaitForRequestResponse::StartRebinding(_) => {
+                            unimplemented!();
+                        }
                     }
                 }
                 Err(e) => {

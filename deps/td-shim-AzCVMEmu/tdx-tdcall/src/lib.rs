@@ -68,6 +68,7 @@ pub mod tdx {
         tdvmcall_wrmsr,
         // Re-export types
         TdxDigest,
+        TargetTdUuid,
     };
 
     // Export emulated functions
@@ -75,7 +76,7 @@ pub mod tdx {
         tdcall_extend_rtmr, tdcall_servtd_rd, tdcall_servtd_wr, tdcall_sys_rd, tdcall_sys_wr,
         tdvmcall_get_quote, tdvmcall_migtd_receive_sync as tdvmcall_migtd_receive,
         tdvmcall_migtd_reportstatus, tdvmcall_migtd_send_sync as tdvmcall_migtd_send,
-        tdvmcall_migtd_waitforrequest, tdvmcall_setup_event_notify,
+        tdvmcall_migtd_waitforrequest, tdvmcall_setup_event_notify, tdcall_vm_write, tdcall_servtd_rebind_approve,
     };
 }
 
@@ -87,7 +88,7 @@ pub mod tdreport {
 
     // Re-export some useful constants and types from original
     pub use original_tdx_tdcall::tdreport::{
-        TdxReport, TD_REPORT_ADDITIONAL_DATA_SIZE, TD_REPORT_SIZE,
+        TdxReport, TD_REPORT_ADDITIONAL_DATA_SIZE, TD_REPORT_SIZE, TdInfo,
     };
 
     /// Emulated tdcall_report function for AzCVMEmu mode
@@ -117,6 +118,12 @@ pub mod tdreport {
         };
 
         Ok(tdx_report)
+    }
+
+    /// Emulated TD Report Verification
+    pub fn tdcall_verify_report(report_mac: &[u8]) -> Result<(), TdCallError> {
+        log::warn!("Emulated TD report verification");
+        Ok(())
     }
 }
 
