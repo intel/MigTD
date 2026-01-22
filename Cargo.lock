@@ -1311,7 +1311,6 @@ dependencies = [
  "chrono",
  "codec",
  "crypto",
- "env_logger",
  "futures-util",
  "lazy_static",
  "log",
@@ -1331,6 +1330,7 @@ dependencies = [
  "td-layout",
  "td-loader",
  "td-logger",
+ "td-logger-emu",
  "td-paging",
  "td-payload",
  "td-payload-emu",
@@ -2419,6 +2419,10 @@ dependencies = [
  "spin 0.9.8",
  "tdx-tdcall",
 ]
+
+[[package]]
+name = "td-logger-emu"
+version = "0.1.0"
 
 [[package]]
 name = "td-paging"

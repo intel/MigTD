@@ -1,0 +1,6 @@
+[package]
+name = "td-logger-emu"
+version = "0.1.0"
+description = "td-logger shim for AzCVMEmu - routes to console output"
+license = "BSD-2-Clause-Patent"
+edition = "2021"
