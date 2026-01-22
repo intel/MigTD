@@ -13,7 +13,7 @@ use std::process;
 use alloc::vec::Vec;
 use migtd;
 use migtd::migration::event;
-use migtd::migration::logging::{create_logarea, enable_logarea};
+use migtd::migration::logging::{create_logarea, enable_logarea, init_vmm_logger};
 use migtd::migration::session::{exchange_msk, report_status};
 use migtd::migration::{MigrationResult, MigtdMigrationInformation};
 
@@ -26,8 +26,11 @@ use crate::{basic_info, do_measurements};
 
 /// AzCVMEmu entry point - standard Rust main function
 pub fn main() {
-    // Initialize standard Rust logging for AzCVMEmu mode with info level by default
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Initialize VMM logger (outputs to console via td-logger-emu in AzCVMEmu mode)
+    let result = init_vmm_logger();
+    if result.is_err() {
+        panic!("Failed to initialize VMM logger");
+    }
 
     // Init internal heap
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
@@ -146,17 +149,17 @@ fn initialize_emulation() {
 
 /// Main runtime function for AzCVMEmu mode
 fn runtime_main_emu() -> i32 {
-    // Dump basic information of MigTD (reusing from main.rs)
-    basic_info();
-
-    // Perform measurements (reusing from main.rs)
-    do_measurements();
-
     // Create LogArea per vCPU
     match create_logarea() {
         Ok(_) => log::info!("LogArea created successfully\n"),
         Err(e) => log::error!("Failed to create logarea: {}\n", e as u8),
     }
+
+    // Dump basic information of MigTD (reusing from main.rs)
+    basic_info();
+
+    // Perform measurements (reusing from main.rs)
+    do_measurements();
 
     // Register callback
     event::register_callback();

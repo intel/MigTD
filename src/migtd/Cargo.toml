@@ -32,6 +32,7 @@ scroll = { version = "0.10", default-features = false, features = ["derive"]}
 spin = "0.9.2"
 tdx-tdcall = { path = "../../deps/td-shim/tdx-tdcall"}
 td-logger = { path = "../../deps/td-shim/td-logger", features = ["tdx"] }
+td-logger-emu = { path = "../../deps/td-shim-AzCVMEmu/td-logger-emu", optional = true }
 td-layout = { path = "../../deps/td-shim/td-layout"}
 td-loader = { path = "../../deps/td-shim/td-loader"}
 td-paging = { path = "../../deps/td-shim/td-paging"}
@@ -54,7 +55,6 @@ td-payload-emu = { path = "../../deps/td-shim-AzCVMEmu/td-payload-emu", optional
 td-shim = { path = "../../deps/td-shim/td-shim", default-features = false }
 td-shim-interface-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim-interface", optional = true, features = ["std"] }
 td-shim-emu = { path = "../../deps/td-shim-AzCVMEmu/td-shim", optional = true }
-env_logger = { version = "0.10.0", optional = true }
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread"], optional = true }
 
 minicov = { version = "0.2", default-features = false, optional = true }
@@ -96,7 +96,7 @@ AzCVMEmu = [
 	"td-shim-emu",
 	"tdx-tdcall-emu",
 	"td-payload-emu",
-	"env_logger",
+	"td-logger-emu",            # Use console-based td-logger shim
 	"tokio",
 ]
 igvm-attest = ["attestation/igvm-attest"]
