@@ -4,7 +4,6 @@
 
 use super::MigrationResult;
 use crate::migration::data::MigrationInformation;
-use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, MigrationResult>;
 
@@ -17,31 +16,22 @@ pub(super) type TransportType = virtio_serial::VirtioSerialPort;
 #[cfg(all(not(feature = "virtio-serial"), not(feature = "vmcall-raw")))]
 pub(super) type TransportType = vsock::stream::VsockStream;
 
-pub(super) async fn setup_transport(
-    info: &MigrationInformation,
-    data: &mut Vec<u8>,
-) -> Result<TransportType> {
-    #[cfg(not(feature = "vmcall-raw"))]
-    let _ = data;
-
+pub(super) async fn setup_transport(info: &MigrationInformation) -> Result<TransportType> {
     #[cfg(feature = "vmcall-raw")]
     {
         use vmcall_raw::stream::VmcallRaw;
         let mut vmcall_raw_instance = VmcallRaw::new_with_mid(info.mig_info.mig_request_id)
             .map_err(|e| {
-                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to create vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to create vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
-                MigrationResult::InvalidParameter
-        })?;
-
-        vmcall_raw_instance
-            .connect()
-            .await
-            .map_err(|e| {
-                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to connect vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to connect vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
+                log::error!(migration_request_id = info.mig_info.mig_request_id;
+                    "exchange_msk: Failed to create vmcall_raw_instance errorcode: {:?}\n", e);
                 MigrationResult::InvalidParameter
             })?;
+
+        vmcall_raw_instance.connect().await.map_err(|e| {
+            log::error!(migration_request_id = info.mig_info.mig_request_id;
+                    "exchange_msk: Failed to connect vmcall_raw_instance errorcode: {:?}\n", e);
+            MigrationResult::InvalidParameter
+        })?;
         return Ok(vmcall_raw_instance);
     }
 
@@ -82,26 +72,11 @@ pub(super) async fn setup_transport(
 pub(super) async fn shutdown_transport(
     transport: &mut TransportType,
     info: &MigrationInformation,
-    data: &mut Vec<u8>,
 ) -> Result<()> {
-    #[cfg(not(feature = "vmcall-raw"))]
-    let _ = data;
-
     #[cfg(feature = "vmcall-raw")]
     transport.shutdown().await.map_err(|e| {
-        data.extend_from_slice(
-            &format!(
-                "Error: shutdown_transport(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n",
-                info.mig_info.mig_request_id,
-                e
-            )
-            .into_bytes(),
-        );
-        log::error!(
-            "shutdown_transport: Failed to transport in vmcall_raw_instance with Migration ID: {} errorcode: {}",
-            info.mig_info.mig_request_id,
-            e
-        );
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "shutdown_transport: Failed to shutdown vmcall_raw_instance errorcode: {:?}\n", e);
         MigrationResult::InvalidParameter
     })?;
 
