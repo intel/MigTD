@@ -403,7 +403,7 @@ fn handle_pre_mig() {
             async_runtime::add_task(async move {
                 #[cfg(not(feature = "vmcall-raw"))]
                 {
-                    let status = exchange_msk(&request, &mut data)
+                    let status = exchange_msk(&request)
                         .await
                         .map(|_| MigrationResult::Success)
                         .unwrap_or_else(|e| e);
@@ -422,7 +422,7 @@ fn handle_pre_mig() {
                 {
                     match request {
                         WaitForRequestResponse::StartMigration(wfr_info) => {
-                            let status = exchange_msk(&wfr_info, &mut data)
+                            let status = exchange_msk(&wfr_info)
                                 .await
                                 .map(|_| MigrationResult::Success)
                                 .unwrap_or_else(|e| e);
