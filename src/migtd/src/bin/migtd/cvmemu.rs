@@ -558,7 +558,8 @@ fn handle_pre_mig_emu() -> i32 {
                             // Continue to process next request (migration)
                         }
                         #[cfg(all(feature = "policy_v2"))]
-                        WaitForRequestResponse::StartRebinding(_) => {
+                        WaitForRequestResponse::StartRebinding(_)
+                        | WaitForRequestResponse::GetMigtdData(_) => {
                             unimplemented!();
                         }
                     }

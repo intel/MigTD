@@ -530,6 +530,26 @@ fn handle_pre_mig() {
                             log::trace!(migration_request_id = wfr_info.mig_request_id; "ReportStatus for Enable LogArea completed\n");
                             REQUESTS.lock().remove(&wfr_info.mig_request_id);
                         }
+                        #[cfg(feature = "policy_v2")]
+                        WaitForRequestResponse::GetMigtdData(wfr_info) => {
+                            let status = get_migtd_data(
+                                &wfr_info.reportdata,
+                                &mut data,
+                                wfr_info.mig_request_id,
+                            )
+                            .await
+                            .map(|_| MigrationResult::Success)
+                            .unwrap_or_else(|e| e);
+                            if status == MigrationResult::Success {
+                                log::trace!(migration_request_id = wfr_info.mig_request_id; "Successfully completed get migtd data\n");
+                            } else {
+                                log::error!(migration_request_id = wfr_info.mig_request_id; "Failure during get migtd data status code: {:x}\n", status.clone() as u8);
+                            }
+                            let _ =
+                                report_status(status as u8, wfr_info.mig_request_id, &data).await;
+                            log::trace!(migration_request_id = wfr_info.mig_request_id; "ReportStatus for get migtd data completed.\n");
+                            REQUESTS.lock().remove(&wfr_info.mig_request_id);
+                        }
                     }
                 }
                 #[cfg(any(feature = "test_stack_size", feature = "test_heap_size"))]
