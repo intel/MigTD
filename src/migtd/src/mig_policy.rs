@@ -149,36 +149,12 @@ mod v2 {
         VERIFIED_POLICY.get()
     }
 
-    pub fn authenticate_remote(
-        is_src: bool,
-        quote_peer: &[u8],
-        policy_peer: &[u8],
-        event_log_peer: &[u8],
-    ) -> Result<Vec<u8>, PolicyError> {
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-        if is_src {
-            authenticate_migration_dest(
-                quote_peer,
-                event_log_peer,
-                policy_peer,
-                policy_issuer_chain,
-            )
-        } else {
-            authenticate_migration_source(
-                quote_peer,
-                event_log_peer,
-                policy_peer,
-                policy_issuer_chain,
-            )
-        }
-    }
-
-    fn authenticate_migration_dest(
+    pub fn authenticate_migration_dest(
         quote_dst: &[u8],
         event_log_dst: &[u8],
         mig_policy_dst: &[u8],
-        policy_issuer_chain: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
         let (evaluation_data_dst, verified_policy_dst, suppl_data) = authenticate_remote_common(
             quote_dst,
             event_log_dst,
@@ -207,26 +183,44 @@ mod v2 {
         Ok(suppl_data)
     }
 
-    fn authenticate_migration_source(
+    pub fn authenticate_migration_source(
         quote_src: &[u8],
         event_log_src: &[u8],
         mig_policy_src: &[u8],
-        policy_issuer_chain: &[u8],
+        #[cfg(feature = "vmcall-raw")] init_policy: &[u8],
+        #[cfg(feature = "vmcall-raw")] init_td_report: &[u8],
+        #[cfg(feature = "vmcall-raw")] init_event_log: &[u8],
+        #[cfg(feature = "vmcall-raw")] servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
         let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
             quote_src,
             event_log_src,
             mig_policy_src,
             policy_issuer_chain,
         )?;
-        let relative_reference = get_local_tcb_evaluation_info()?;
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        policy.policy_data.evaluate_policy_backward(
-            &evaluation_data_src,
-            &relative_reference,
-            false,
-        )?;
+        #[cfg(feature = "vmcall-raw")]
+        {
+            let servtd_ext_src_obj =
+                ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
+            let init_tdreport = verify_init_tdreport(init_td_report, &servtd_ext_src_obj)?;
+            let verified_policy_init = verify_policy_and_event_log(
+                init_event_log,
+                init_policy,
+                policy_issuer_chain,
+                &get_rtmrs_from_tdreport(&init_tdreport)?,
+            )?;
+            let relative_reference =
+                get_init_tcb_evaluation_info(&init_tdreport, &verified_policy_init)?;
+            let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+
+            policy.policy_data.evaluate_policy_backward(
+                &evaluation_data_src,
+                &relative_reference,
+                false,
+            )?;
+        }
 
         Ok(suppl_data)
     }
