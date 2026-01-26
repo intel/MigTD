@@ -172,9 +172,37 @@ impl InitData {
         })
     }
 
-    pub fn get_from_local() -> Option<Self> {
+    pub fn write_into_bytes(&self, buf: &mut Vec<u8>) {
+        let start_len = buf.len();
+        buf.extend_from_slice(MIGTD_DATA_SIGNATURE);
+        buf.extend_from_slice(&0x00010000u32.to_le_bytes()); // Version
+
+        // Placeholder for length.
+        buf.extend_from_slice(&0u32.to_le_bytes());
+
+        buf.extend_from_slice(&3u32.to_le_bytes()); // num_entries
+
+        // Helper to write entries
+        let mut write_entry = |type_: u32, value: &[u8]| {
+            buf.extend_from_slice(&type_.to_le_bytes());
+            buf.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            buf.extend_from_slice(value);
+        };
+
+        write_entry(MIGTD_DATA_TYPE_INIT_MIG_POLICY, &self.init_policy);
+        write_entry(MIGTD_DATA_TYPE_INIT_TD_REPORT, &self.init_report);
+        write_entry(MIGTD_DATA_TYPE_INIT_EVENT_LOG, &self.init_event_log);
+
+        let total_size = (buf.len() - start_len) as u32;
+
+        // Update length field
+        let length_offset = start_len + 12;
+        buf[length_offset..length_offset + 4].copy_from_slice(&total_size.to_le_bytes());
+    }
+
+    pub fn get_from_local(report_data: &[u8; 64]) -> Option<Self> {
         Some(Self {
-            init_report: tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
+            init_report: tdx_tdcall::tdreport::tdcall_report(report_data)
                 .ok()?
                 .as_bytes()
                 .to_vec(),
@@ -358,7 +386,8 @@ pub async fn start_rebinding(
     // Exchange policy firstly because of the message size limitation of TLS protocol
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
     if info.rebinding_src == 1 {
-        let local_data = InitData::get_from_local().ok_or(MigrationResult::InvalidParameter)?;
+        let local_data =
+            InitData::get_from_local(&[0u8; 64]).ok_or(MigrationResult::InvalidParameter)?;
         let init_migtd_data = info
             .init_migtd_data
             .as_ref()
