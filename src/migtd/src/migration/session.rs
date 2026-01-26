@@ -75,6 +75,7 @@ pub enum DataStatusOperation {
     StartRebinding = 2,
     GetReportData = 3,
     EnableLogArea = 4,
+    GetMigtdData = 5,
 }
 
 #[cfg(feature = "vmcall-raw")]
@@ -436,6 +437,50 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 REQUESTS.lock().insert(mig_request_id);
                 Poll::Ready(Ok(WaitForRequestResponse::EnableLogArea(wfr_info)))
             }
+        } else if operation == DataStatusOperation::GetMigtdData as u8 {
+            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            {
+                let mut reportdata: [u8; 64] = [0; 64];
+                let mut mig_request_id: u64 = 0;
+                if data_length != size_of::<MigtdDataInfo>() as u32
+                {
+                    if data_length >= size_of::<u64>() as u32 {
+                        let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
+                        let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+                        log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
+                    } else {
+                        log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
+                    }
+                    return Poll::Pending;
+                }
+                let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
+                mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
+
+                if data_length == (size_of_val(&mig_request_id) + TD_REPORT_ADDITIONAL_DATA_SIZE) as u32
+                {
+                    reportdata = slice[8..72].try_into().unwrap();
+                }
+
+                VMCALL_MIG_REPORTSTATUS_FLAGS
+                    .lock()
+                    .insert(mig_request_id, AtomicBool::new(false));
+
+                let wfr_info = MigtdDataInfo {
+                    mig_request_id,
+                    reportdata,
+                };
+                if REQUESTS.lock().contains(&mig_request_id) {
+                    Poll::Pending
+                } else {
+                    REQUESTS.lock().insert(mig_request_id);
+                    Poll::Ready(Ok(WaitForRequestResponse::GetMigtdData(wfr_info)))
+                }
+            }
+            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
+            {
+                log::debug!("wait_for_request: invalid operation GetMigtdData received\n");
+                Poll::Pending
+            }
         } else {
             Poll::Pending
         }
@@ -598,6 +643,25 @@ pub async fn get_tdreport(
     Ok(())
 }
 
+#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+pub async fn get_migtd_data(
+    additional_data: &[u8; TD_REPORT_ADDITIONAL_DATA_SIZE],
+    data: &mut Vec<u8>,
+    request_id: u64,
+) -> Result<()> {
+    use crate::migration::rebinding::InitData;
+
+    let init_data = InitData::get_from_local(additional_data).ok_or_else(|| {
+        log::error!( migration_request_id = request_id;
+            "Failed to get init migtd data from local\n",
+        );
+        MigrationResult::InvalidParameter
+    })?;
+
+    init_data.write_into_bytes(data);
+    Ok(())
+}
+
 #[cfg(feature = "vmcall-raw")]
 pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Result<()> {
     let mut reportstatus = ReportStatusResponse::new()
@@ -609,7 +673,9 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
         length: 0,
     };
     let reqbufferhdrlen = size_of::<RequestDataBufferHeader>();
-    let mut data_buffer = SharedMemory::new(1).ok_or_else(|| {
+
+    let shared_page_nums = (reqbufferhdrlen + data.len() + PAGE_SIZE - 1) / PAGE_SIZE;
+    let mut data_buffer = SharedMemory::new(shared_page_nums).ok_or_else(|| {
         log::error!(migration_request_id = request_id; "report_status: Failed to allocate shared memory for data buffer\n");
         MigrationResult::OutOfResource
     })?;
@@ -628,13 +694,13 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
         return Err(MigrationResult::InvalidParameter);
     }
 
-    if data.len() > 0 && data.len() < (PAGE_SIZE - reqbufferhdrlen) {
+    if data.len() > 0 {
         reqbufferhdr.length += data.len() as u32;
     }
 
     let data_buffer = data_buffer.as_mut_bytes();
     data_buffer[0..reqbufferhdrlen].copy_from_slice(&reqbufferhdr.as_bytes());
-    if data.len() > 0 && data.len() < (PAGE_SIZE - reqbufferhdrlen) {
+    if data.len() > 0 {
         data_buffer[reqbufferhdrlen..data.len() + reqbufferhdrlen]
             .copy_from_slice(&data[0..data.len()]);
     }
