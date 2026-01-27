@@ -385,7 +385,12 @@ fn handle_pre_mig() {
             })
             .await;
 
+            log::trace!(
+                "Ready to wait for new request. Current pending requests: {}\n",
+                REQUESTS.lock().len()
+            );
             if let Ok(request) = wait_for_request().await {
+                log::trace!("Received new request: {}\n", request);
                 *PENDING_REQUEST.lock() = Some(request);
             }
         }
@@ -422,6 +427,8 @@ fn handle_pre_mig() {
                 {
                     match request {
                         WaitForRequestResponse::StartMigration(wfr_info) => {
+                            log::trace!(migration_request_id = wfr_info.mig_info.mig_request_id; "Processing StartMigration request\n");
+
                             let status = exchange_msk(&wfr_info)
                                 .await
                                 .map(|_| MigrationResult::Success)
@@ -450,6 +457,7 @@ fn handle_pre_mig() {
                         WaitForRequestResponse::StartRebinding(rebinding_info) => {
                             use migtd::migration::rebinding::start_rebinding;
 
+                            log::trace!(migration_request_id = rebinding_info.mig_request_id; "Processing StartRebinding request\n");
                             let status = start_rebinding(&rebinding_info, &mut data)
                                 .await
                                 .map(|_| MigrationResult::Success)
@@ -480,6 +488,7 @@ fn handle_pre_mig() {
                             REQUESTS.lock().remove(&rebinding_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
+                            log::trace!(migration_request_id = wfr_info.mig_request_id; "Processing GetTdReport request\n");
                             let status = get_tdreport(
                                 &wfr_info.reportdata,
                                 &mut data,
@@ -499,6 +508,7 @@ fn handle_pre_mig() {
                             REQUESTS.lock().remove(&wfr_info.mig_request_id);
                         }
                         WaitForRequestResponse::EnableLogArea(wfr_info) => {
+                            log::trace!(migration_request_id = wfr_info.mig_request_id; "Processing EnableLogArea request\n");
                             let status = enable_logarea(
                                 wfr_info.log_max_level,
                                 wfr_info.mig_request_id,
@@ -532,6 +542,7 @@ fn handle_pre_mig() {
                         }
                         #[cfg(feature = "policy_v2")]
                         WaitForRequestResponse::GetMigtdData(wfr_info) => {
+                            log::trace!(migration_request_id = wfr_info.mig_request_id; "Processing GetMigtdData request\n");
                             let status = get_migtd_data(
                                 &wfr_info.reportdata,
                                 &mut data,

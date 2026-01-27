@@ -265,6 +265,21 @@ pub enum WaitForRequestResponse {
     GetMigtdData(MigtdDataInfo),
 }
 
+#[cfg(feature = "vmcall-raw")]
+impl core::fmt::Display for WaitForRequestResponse {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::StartMigration(_) => "StartMigration",
+            #[cfg(feature = "policy_v2")]
+            Self::StartRebinding(_) => "StartRebinding",
+            Self::GetTdReport(_) => "GetTdReport",
+            Self::EnableLogArea(_) => "EnableLogArea",
+            #[cfg(feature = "policy_v2")]
+            Self::GetMigtdData(_) => "GetMigtdData",
+        })
+    }
+}
+
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
     #[cfg(all(
