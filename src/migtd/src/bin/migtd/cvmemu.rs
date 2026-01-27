@@ -13,12 +13,14 @@ use std::process;
 use alloc::vec::Vec;
 use migtd;
 use migtd::migration::event;
-use migtd::migration::logging::{create_logarea, enable_logarea, init_vmm_logger};
+use migtd::migration::logging::{
+    create_logarea, enable_logarea, init_vmm_logger, u8_to_levelfilter,
+};
 use migtd::migration::session::{exchange_msk, report_status};
 use migtd::migration::{MigrationResult, MigtdMigrationInformation};
 
 use tdx_tdcall_emu::tdreport_emu::tdcall_report_emulated;
-use tdx_tdcall_emu::tdx_emu::{set_emulated_get_report_data, set_emulated_start_migration};
+use tdx_tdcall_emu::tdx_emu::set_emulated_start_migration;
 use tdx_tdcall_emu::{init_tcp_emulation_with_mode, start_tcp_server_sync, TcpEmulationMode};
 
 // Import shared functions from main.rs
@@ -416,7 +418,7 @@ fn handle_pre_mig_emu() -> i32 {
 
                     match response {
                         WaitForRequestResponse::EnableLogArea(wfr_info) => {
-                            log::info!("Processing EnableLogArea request\n");
+                            log::info!(migration_request_id = wfr_info.mig_request_id; "Processing EnableLogArea request\n");
                             let mut data = Vec::new();
                             let status = enable_logarea(
                                 wfr_info.log_max_level,
@@ -427,30 +429,42 @@ fn handle_pre_mig_emu() -> i32 {
                             .map(|_| MigrationResult::Success)
                             .unwrap_or_else(|e| e);
 
+                            log::info!(migration_request_id = wfr_info.mig_request_id;
+                                "Setting log level to {}\n",
+                                wfr_info.log_max_level
+                            );
+                            log::set_max_level(u8_to_levelfilter(wfr_info.log_max_level));
+
                             if status == MigrationResult::Success {
-                                log::info!("Successfully completed Enable LogArea\n");
+                                log::trace!(migration_request_id = wfr_info.mig_request_id; "Successfully completed Enable LogArea\n");
                             } else {
-                                log::error!(
+                                log::error!(migration_request_id = wfr_info.mig_request_id;
                                     "Failure during Enable LogArea, status code: {:x}\n",
                                     status as u8
                                 );
                             }
 
                             let _ =
-                                report_status(status as u8, wfr_info.mig_request_id, &data).await;
-                            log::info!("ReportStatus for Enable LogArea completed\n");
+                                report_status(status as u8, wfr_info.mig_request_id, &data).await
+                                .map_err(|e| {
+                                    log::error!(migration_request_id = wfr_info.mig_request_id;
+                                        "Failed to report status for Enable LogArea {:?}\n",
+                                        e
+                                    );
+                                });
+                            log::trace!(migration_request_id = wfr_info.mig_request_id; "ReportStatus for Enable LogArea completed\n");
                             // Continue to process next request
                         }
                         WaitForRequestResponse::StartMigration(req) => {
-                            log::info!("Processing StartMigration request\n");
+                            log::info!(migration_request_id = req.mig_info.mig_request_id; "Processing StartMigration request\n");
                             let mut data = Vec::new();
 
                             // Call exchange_msk() and log its immediate outcome
                             let res = exchange_msk(&req, &mut data).await;
                             match &res {
-                                Ok(_) => log::info!("exchange_msk() returned Ok\n"),
+                                Ok(_) => log::info!(migration_request_id = req.mig_info.mig_request_id; "exchange_msk() returned Ok\n"),
                                 Err(e) => {
-                                    log::error!("exchange_msk() returned error code {}\n", *e as u8)
+                                    log::error!(migration_request_id = req.mig_info.mig_request_id; "exchange_msk() returned error code {}\n", *e as u8)
                                 }
                             }
                             let status =
@@ -459,26 +473,34 @@ fn handle_pre_mig_emu() -> i32 {
                             // Derive a numeric code without moving `status`
                             let status_code_u8 = status as u8;
 
+                            if status_code_u8 == MigrationResult::Success as u8 {
+                                log::trace!(migration_request_id = req.mig_info.mig_request_id; "Successfully completed key exchange\n");
+                            } else {
+                                log::error!(migration_request_id = req.mig_info.mig_request_id; "Failure during key exchange status code: {:x}\n", status_code_u8);
+                            }
+
                             // Report status back via vmcall-raw emulation
                             let empty_data = Vec::new();
-                            if let Err(e) = report_status(
+                            let _ = report_status(
                                 status_code_u8,
                                 req.mig_info.mig_request_id,
                                 &empty_data,
                             )
                             .await
-                            {
-                                log::error!("report_status failed with code {}\n", e as u8);
-                            } else {
-                                log::info!("report_status completed successfully\n");
-                            }
+                            .map_err(|e| {
+                                log::error!(migration_request_id = req.mig_info.mig_request_id;
+                                    "Failed to report status {:?}\n",
+                                    e
+                                );
+                            });
+                            log::trace!(migration_request_id = req.mig_info.mig_request_id; "ReportStatus for key exchange completed\n");
 
                             if status_code_u8 == MigrationResult::Success as u8 {
-                                log::info!("Migration key exchange successful!\n");
+                                log::info!(migration_request_id = req.mig_info.mig_request_id; "Migration key exchange successful!\n");
                                 return 0;
                             } else {
                                 let status_code = status_code_u8 as i32;
-                                log::error!(
+                                log::error!(migration_request_id = req.mig_info.mig_request_id;
                                     "Migration key exchange failed with code: {}\n",
                                     status_code
                                 );
@@ -486,20 +508,19 @@ fn handle_pre_mig_emu() -> i32 {
                             }
                         }
                         WaitForRequestResponse::GetTdReport(report_info) => {
-                            log::info!("Processing GetReportData request\n");
-                            log::info!("  Request ID: {}\n", report_info.mig_request_id);
-                            log::info!(
-                                "  ReportData (first 32 bytes): {:02x?}\n",
+                            log::info!(migration_request_id = report_info.mig_request_id; "Processing GetReportData request\n");
+                            log::debug!(migration_request_id = report_info.mig_request_id;
+                                "ReportData (first 32 bytes): {:02x?}\n",
                                 &report_info.reportdata[0..32]
                             );
 
                             // Generate TD report using the reportdata
-                            log::info!("Generating TD report with vTPM interface\n");
+                            log::debug!(migration_request_id = report_info.mig_request_id; "Generating TD report with vTPM interface\n");
 
                             let (status_code_u8, report_data) =
                                 match tdcall_report_emulated(&report_info.reportdata) {
                                     Ok(td_report) => {
-                                        log::info!("TD report generated successfully\n");
+                                        log::debug!(migration_request_id = report_info.mig_request_id; "TD report generated successfully\n");
 
                                         // Convert the TD report to bytes
                                         let report_bytes = unsafe {
@@ -509,42 +530,32 @@ fn handle_pre_mig_emu() -> i32 {
                                             )
                                         };
 
-                                        log::info!(
+                                        log::debug!(migration_request_id = report_info.mig_request_id;
                                             "TD report size: {} bytes\n",
                                             report_bytes.len()
-                                        );
-                                        log::info!(
-                                            "TD report (first 32 bytes): {:02x?}\n",
-                                            &report_bytes[0..32]
                                         );
 
                                         // Return success with the TD report as data
                                         (MigrationResult::Success as u8, report_bytes.to_vec())
                                     }
                                     Err(e) => {
-                                        log::error!("Failed to generate TD report: {:?}\n", e);
+                                        log::error!(migration_request_id = report_info.mig_request_id; "Failed to generate TD report: {:?}\n", e);
                                         (MigrationResult::TdxModuleError as u8, Vec::new())
                                     }
                                 };
 
-                            if let Err(e) = report_status(
+                            let _ = report_status(
                                 status_code_u8,
                                 report_info.mig_request_id,
                                 &report_data,
                             )
-                            .await
-                            {
-                                log::error!("report_status failed with code {}\n", e as u8);
+                            .await;
+                            if status_code_u8 == MigrationResult::Success as u8 {
+                                log::trace!(migration_request_id = report_info.mig_request_id; "Successfully completed get TDREPORT\n");
                             } else {
-                                if status_code_u8 == MigrationResult::Success as u8 {
-                                    log::info!("GetReportData request completed successfully\n");
-                                } else {
-                                    log::error!(
-                                        "GetReportData request failed with status {}\n",
-                                        status_code_u8
-                                    );
-                                }
+                                log::error!(migration_request_id = report_info.mig_request_id; "Failure during get TDREPORT status code: {:x}\n", status_code_u8);
                             }
+                            log::trace!(migration_request_id = report_info.mig_request_id; "ReportStatus for get TDREPORT completed.\n");
                             // Continue to process next request (migration)
                         }
                     }
