@@ -298,6 +298,7 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         }
 
         let operation: u8 = data_status_bytes[1];
+        log::trace!("wait_for_request: Received operation {} with data length {}\n", operation, data_length);
         if operation == DataStatusOperation::StartMigration as u8 {
             // data_length should be MigtdMigrationInformation
             let expected_datalength = size_of::<MigtdMigrationInformation>();
