@@ -670,7 +670,6 @@ pub fn report_status(status: u8, request_id: u64) -> Result<()> {
 async fn migration_src_exchange_msk(
     transport: TransportType,
     info: &MigrationInformation,
-    data: &mut Vec<u8>,
     exchange_information: &ExchangeInformation,
     remote_information: &mut ExchangeInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
@@ -682,13 +681,10 @@ async fn migration_src_exchange_msk(
         transport,
         #[cfg(feature = "policy_v2")]
         remote_policy,
-        #[cfg(feature = "vmcall-raw")]
-        data,
     )
-    .map_err(|_| {
-        #[cfg(feature = "vmcall-raw")]
+    .map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
-            "exchange_msk(): Failed in ratls transport.\n"
+            "exchange_msk(): Failed in ratls client setup. Error: {:?}\n", e
         );
         MigrationResult::SecureSessionError
     })?;
@@ -700,11 +696,13 @@ async fn migration_src_exchange_msk(
     )
     .await
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_client.write timeout error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_client.write timeout error: {:?}\n", e);
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_client.write error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_client.write error: {:?}\n", e);
         e
     })?;
     let size = with_timeout(
@@ -713,19 +711,20 @@ async fn migration_src_exchange_msk(
     )
     .await
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_client.read timeout error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_client.read timeout error: {:?}\n", e);
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_client.read error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_client.read error: {:?}\n", e);
         e
     })?;
     if size < size_of::<ExchangeInformation>() {
-        #[cfg(feature = "vmcall-raw")]
         log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk(): Incorrect ExchangeInformation size Size - Expected: {} Actual: {}\n", size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
-    shutdown_transport(ratls_client.transport_mut(), info, data).await?;
+    shutdown_transport(ratls_client.transport_mut(), info).await?;
     Ok(())
 }
 
@@ -733,7 +732,6 @@ async fn migration_src_exchange_msk(
 async fn migration_dst_exchange_msk(
     transport: TransportType,
     info: &MigrationInformation,
-    data: &mut Vec<u8>,
     exchange_information: &ExchangeInformation,
     remote_information: &mut ExchangeInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
@@ -746,10 +744,9 @@ async fn migration_dst_exchange_msk(
         #[cfg(feature = "policy_v2")]
         remote_policy,
     )
-    .map_err(|_| {
-        #[cfg(feature = "vmcall-raw")]
+    .map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
-            "exchange_msk(): Failed in ratls transport.\n"
+            "exchange_msk(): Failed in ratls server setup. Error: {:?}\n", e
         );
         MigrationResult::SecureSessionError
     })?;
@@ -760,11 +757,13 @@ async fn migration_dst_exchange_msk(
     )
     .await
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_server.write timeout error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_server.write timeout error: {:?}\n", e);
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_server.write error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_server.write error: {:?}\n", e);
         e
     })?;
     let size = with_timeout(
@@ -773,19 +772,20 @@ async fn migration_dst_exchange_msk(
     )
     .await
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_server.read timeout error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_server.read timeout error: {:?}\n", e);
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: ratls_server.read error: {:?}\n", e);
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: ratls_server.read error: {:?}\n", e);
         e
     })?;
     if size < size_of::<ExchangeInformation>() {
-        #[cfg(feature = "vmcall-raw")]
         log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk(): Incorrect ExchangeInformation size. Size - Expected: {} Actual: {}\n", size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
-    shutdown_transport(ratls_server.transport_mut(), info, data).await?;
+    shutdown_transport(ratls_server.transport_mut(), info).await?;
     Ok(())
 }
 
@@ -869,8 +869,8 @@ async fn migration_dst_exchange_msk(
 }
 
 #[cfg(feature = "main")]
-pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Result<()> {
-    let mut transport = setup_transport(info, data).await?;
+pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
+    let mut transport = setup_transport(info).await?;
 
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
@@ -913,7 +913,6 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             migration_src_exchange_msk(
                 transport,
                 info,
-                data,
                 &exchange_information,
                 &mut remote_information,
                 #[cfg(feature = "policy_v2")]
@@ -924,7 +923,6 @@ pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Re
             migration_dst_exchange_msk(
                 transport,
                 info,
-                data,
                 &exchange_information,
                 &mut remote_information,
                 #[cfg(feature = "policy_v2")]

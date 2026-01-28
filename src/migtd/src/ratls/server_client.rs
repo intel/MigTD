@@ -81,10 +81,7 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 #[cfg(not(feature = "policy_v2"))]
-pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
-    stream: T,
-    #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
-) -> Result<SecureChannel<T>> {
+pub fn client<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!("client EcdsaPk::new() failed with error {:?}\n", e);
         e
@@ -101,14 +98,6 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
         e
     })?;
     config.tls_client(stream).map_err(|e| {
-        #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: server_client client(): Failure in tls_client() error: {:?}\n",
-                e
-            )
-            .into_bytes(),
-        );
         log::error!(
             "server_client client(): Failure in tls_client() error: {:?}\n",
             e
@@ -121,7 +110,6 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
 pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     remote_policy: Vec<u8>,
-    #[cfg(feature = "vmcall-raw")] data: &mut Vec<u8>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
@@ -146,14 +134,6 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
             e
         })?;
     config.tls_client(stream).map_err(|e| {
-        #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: client policy_v2 client(): Failure in tls_client() error: {:?}\n",
-                e
-            )
-            .into_bytes(),
-        );
         log::error!("client policy_v2 tls_client() failed with error {:?}\n", e);
         e.into()
     })

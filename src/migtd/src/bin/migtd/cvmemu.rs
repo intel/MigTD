@@ -457,10 +457,9 @@ fn handle_pre_mig_emu() -> i32 {
                         }
                         WaitForRequestResponse::StartMigration(req) => {
                             log::info!(migration_request_id = req.mig_info.mig_request_id; "Processing StartMigration request\n");
-                            let mut data = Vec::new();
 
                             // Call exchange_msk() and log its immediate outcome
-                            let res = exchange_msk(&req, &mut data).await;
+                            let res = exchange_msk(&req).await;
                             match &res {
                                 Ok(_) => log::info!(migration_request_id = req.mig_info.mig_request_id; "exchange_msk() returned Ok\n"),
                                 Err(e) => {
