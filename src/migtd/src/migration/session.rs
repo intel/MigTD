@@ -725,7 +725,12 @@ async fn migration_src_exchange_msk(
         log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk(): Incorrect ExchangeInformation size Size - Expected: {} Actual: {}\n", size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
-    shutdown_transport(ratls_client.transport_mut(), info, data).await?;
+    shutdown_transport(
+        ratls_client.transport_mut(),
+        info.mig_info.mig_request_id,
+        data,
+    )
+    .await?;
     Ok(())
 }
 
@@ -785,7 +790,12 @@ async fn migration_dst_exchange_msk(
         log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk(): Incorrect ExchangeInformation size. Size - Expected: {} Actual: {}\n", size_of::<ExchangeInformation>(), size);
         return Err(MigrationResult::NetworkError);
     }
-    shutdown_transport(ratls_server.transport_mut(), info, data).await?;
+    shutdown_transport(
+        ratls_server.transport_mut(),
+        info.mig_info.mig_request_id,
+        data,
+    )
+    .await?;
     Ok(())
 }
 
@@ -870,7 +880,15 @@ async fn migration_dst_exchange_msk(
 
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation, data: &mut Vec<u8>) -> Result<()> {
-    let mut transport = setup_transport(info, data).await?;
+    let mut transport = setup_transport(
+        info.mig_info.mig_request_id,
+        #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
+        info.mig_socket_info.mig_td_cid,
+        #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
+        info.mig_socket_info.mig_channel_port,
+        data,
+    )
+    .await?;
 
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]

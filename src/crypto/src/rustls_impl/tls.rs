@@ -55,6 +55,10 @@ where
     pub async fn read(&mut self, data: &mut [u8]) -> Result<usize> {
         self.conn.read(data).await
     }
+
+    pub fn peer_certs(&self) -> Option<Vec<&[u8]>> {
+        self.conn.peer_certs()
+    }
 }
 
 enum TlsConnection<T: AsyncRead + AsyncWrite + Unpin> {
@@ -91,6 +95,13 @@ impl<T: AsyncRead + AsyncWrite + Unpin> TlsConnection<T> {
                 Error::TlsStream
             }
             _ => Error::TlsStream,
+        }
+    }
+
+    fn peer_certs(&self) -> Option<Vec<&[u8]>> {
+        match self {
+            Self::Server(conn) => conn.peer_certs(),
+            Self::Client(conn) => conn.peer_certs(),
         }
     }
 
@@ -498,7 +509,7 @@ pub(crate) mod connection {
     }
 
     pub struct TlsServerConnection<T: AsyncRead + AsyncWrite + Unpin> {
-        conn: UnbufferedServerConnection,
+        pub(super) conn: UnbufferedServerConnection,
         input: TlsBuffer,
         output: TlsBuffer,
         pub transport: T,
@@ -516,6 +527,12 @@ pub(crate) mod connection {
                 is_handshaking: true,
                 received_app_data: ChunkVecBuffer::new(Some(APP_DATA_BUFFER_LIMIT)),
             })
+        }
+
+        pub fn peer_certs(&self) -> Option<Vec<&[u8]>> {
+            self.conn
+                .peer_certificates()
+                .map(|certs| certs.iter().map(|der| der.as_ref()).collect())
         }
 
         pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, TlsConnectionError> {
@@ -774,6 +791,12 @@ pub(crate) mod connection {
                 is_handshaking: true,
                 received_app_data: ChunkVecBuffer::new(Some(APP_DATA_BUFFER_LIMIT)),
             })
+        }
+
+        pub fn peer_certs(&self) -> Option<Vec<&[u8]>> {
+            self.conn
+                .peer_certificates()
+                .map(|certs| certs.iter().map(|der| der.as_ref()).collect())
         }
 
         pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, TlsConnectionError> {

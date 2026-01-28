@@ -22,6 +22,7 @@ pub enum RatlsError {
     X509(DerError),
     InvalidEventlog,
     InvalidPolicy,
+    GenerateCertificate,
 }
 
 impl From<TdCallError> for RatlsError {
@@ -54,6 +55,16 @@ pub const EXTNID_MIGTD_EVENT_LOG: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.3");
 pub const EXTNID_MIGTD_POLICY_HASH: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.4");
+pub const EXTNID_MIGTD_TDREPORT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.5");
+pub const EXTNID_MIGTD_SERVTD_EXT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.6");
+pub const EXTNID_MIGTD_TDREPORT_INIT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.7");
+pub const EXTNID_MIGTD_EVENT_LOG_INIT: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.8");
+pub const EXTNID_MIGTD_INIT_POLICY_HASH: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.9");
 
 // As specified in https://datatracker.ietf.org/doc/html/rfc5480#appendix-A
 // id-ecPublicKey OBJECT IDENTIFIER ::= {
