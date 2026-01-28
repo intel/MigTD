@@ -4,6 +4,8 @@
 
 #![cfg(feature = "spdm_attestation")]
 
+#[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
+mod spdm_rebind;
 mod spdm_req;
 mod spdm_rsp;
 mod spdm_vdm;
@@ -25,6 +27,10 @@ use zeroize::ZeroizeOnDrop;
 use async_io::AsyncRead;
 use async_io::AsyncWrite;
 use crypto::hash::digest_sha384;
+#[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
+pub use spdm_rebind::spdm_requester_rebind_old;
+#[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
+pub use spdm_rebind::spdm_responder_rebind_new;
 pub use spdm_req::spdm_requester;
 pub use spdm_req::spdm_requester_transfer_msk;
 pub use spdm_rsp::spdm_responder;
