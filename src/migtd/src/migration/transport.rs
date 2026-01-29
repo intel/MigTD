@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use super::MigrationResult;
-use crate::migration::data::MigrationInformation;
 use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, MigrationResult>;
@@ -18,7 +17,9 @@ pub(super) type TransportType = virtio_serial::VirtioSerialPort;
 pub(super) type TransportType = vsock::stream::VsockStream;
 
 pub(super) async fn setup_transport(
-    info: &MigrationInformation,
+    mig_request_id: u64,
+    #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))] migtd_cid: u64,
+    #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))] mig_channel_port: u32,
     data: &mut Vec<u8>,
 ) -> Result<TransportType> {
     #[cfg(not(feature = "vmcall-raw"))]
@@ -27,10 +28,10 @@ pub(super) async fn setup_transport(
     #[cfg(feature = "vmcall-raw")]
     {
         use vmcall_raw::stream::VmcallRaw;
-        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(info.mig_info.mig_request_id)
+        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(mig_request_id)
             .map_err(|e| {
-                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to create vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to create vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
+                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to create vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", mig_request_id, e).into_bytes());
+                log::error!("exchange_msk: Failed to create vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", mig_request_id, e);
                 MigrationResult::InvalidParameter
         })?;
 
@@ -38,8 +39,8 @@ pub(super) async fn setup_transport(
             .connect()
             .await
             .map_err(|e| {
-                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to connect vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", info.mig_info.mig_request_id, e).into_bytes());
-                log::error!("exchange_msk: Failed to connect vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", info.mig_info.mig_request_id, e);
+                data.extend_from_slice(&format!("Error: exchange_msk(): Failed to connect vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n", mig_request_id, e).into_bytes());
+                log::error!("exchange_msk: Failed to connect vmcall_raw_instance with Migration ID: {} errorcode: {:?}\n", mig_request_id, e);
                 MigrationResult::InvalidParameter
             })?;
         return Ok(vmcall_raw_instance);
@@ -63,17 +64,11 @@ pub(super) async fn setup_transport(
         let mut vsock = VsockStream::new()?;
 
         #[cfg(feature = "vmcall-vsock")]
-        let mut vsock = VsockStream::new_with_cid(
-            info.mig_socket_info.mig_td_cid,
-            info.mig_info.mig_request_id,
-        )?;
+        let mut vsock = VsockStream::new_with_cid(migtd_cid, mig_request_id)?;
 
         // Establish the vsock connection with host
         vsock
-            .connect(&VsockAddr::new(
-                info.mig_socket_info.mig_td_cid as u32,
-                info.mig_socket_info.mig_channel_port,
-            ))
+            .connect(&VsockAddr::new(migtd_cid as u32, mig_channel_port))
             .await?;
         return Ok(vsock);
     }
@@ -81,7 +76,7 @@ pub(super) async fn setup_transport(
 
 pub(super) async fn shutdown_transport(
     transport: &mut TransportType,
-    info: &MigrationInformation,
+    mig_request_id: u64,
     data: &mut Vec<u8>,
 ) -> Result<()> {
     #[cfg(not(feature = "vmcall-raw"))]
@@ -92,14 +87,14 @@ pub(super) async fn shutdown_transport(
         data.extend_from_slice(
             &format!(
                 "Error: shutdown_transport(): Failed to transport in vmcall_raw_instance with Migration ID: {:x} errorcode: {}\n",
-                info.mig_info.mig_request_id,
+                mig_request_id,
                 e
             )
             .into_bytes(),
         );
         log::error!(
             "shutdown_transport: Failed to transport in vmcall_raw_instance with Migration ID: {} errorcode: {}",
-            info.mig_info.mig_request_id,
+            mig_request_id,
             e
         );
         MigrationResult::InvalidParameter

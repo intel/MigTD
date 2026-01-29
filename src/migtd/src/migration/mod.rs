@@ -7,6 +7,9 @@ pub mod event;
 pub mod logging;
 #[cfg(feature = "policy_v2")]
 pub mod pre_session_data;
+#[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
+pub mod rebinding;
+pub mod servtd_ext;
 #[cfg(feature = "main")]
 pub mod session;
 #[cfg(feature = "main")]
@@ -106,6 +109,16 @@ pub struct MigtdMigrationInformation {
 #[derive(Debug, Pread, Pwrite)]
 #[cfg(feature = "vmcall-raw")]
 pub struct ReportInfo {
+    // ID for the migration request, which can be used in TDG.VP.VMCALL
+    // <Service.MigTD.ReportStatus>
+    pub mig_request_id: u64,
+    pub reportdata: [u8; 64],
+}
+
+#[repr(C)]
+#[derive(Debug, Pread, Pwrite)]
+#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+pub struct MigtdDataInfo {
     // ID for the migration request, which can be used in TDG.VP.VMCALL
     // <Service.MigTD.ReportStatus>
     pub mig_request_id: u64,
@@ -220,7 +233,8 @@ impl From<RatlsError> for MigrationResult {
             RatlsError::Crypto(_)
             | RatlsError::X509(_)
             | RatlsError::InvalidEventlog
-            | RatlsError::InvalidPolicy => MigrationResult::SecureSessionError,
+            | RatlsError::InvalidPolicy
+            | RatlsError::GenerateCertificate => MigrationResult::SecureSessionError,
             RatlsError::TdxModule(_) => MigrationResult::TdxModuleError,
             RatlsError::GetQuote | RatlsError::VerifyQuote => {
                 MigrationResult::MutualAttestationError
