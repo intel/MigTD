@@ -46,7 +46,6 @@ jobs:
       - name: Create Pull Request for Collateral
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update collateral files"
           title: "chore: update collateral files"
           body: |
@@ -61,7 +60,6 @@ jobs:
       - name: Create Pull Request for Policy
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update policy v1 files"
           title: "chore: update policy files"
           body: |

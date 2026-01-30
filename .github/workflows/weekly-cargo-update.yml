@@ -31,7 +31,6 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: weekly cargo update"
           title: "chore: weekly cargo update"
           body: |
