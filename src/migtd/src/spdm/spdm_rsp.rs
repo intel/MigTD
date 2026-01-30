@@ -717,8 +717,6 @@ pub fn handle_exchange_mig_info_req(
         &remote_information.key,
     )?;
     log::info!("Set MSK and report status\n");
-    exchange_information.key.clear();
-    remote_information.key.clear();
 
     let min_import_version = exchange_information.min_ver;
     let max_import_version = exchange_information.max_ver;

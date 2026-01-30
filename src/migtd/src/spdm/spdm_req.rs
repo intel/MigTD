@@ -772,8 +772,6 @@ async fn send_and_receive_sdm_exchange_migration_info(
     set_mig_version(mig_info, mig_ver)?;
     write_msk(mig_info, &remote_information.key)?;
     log::info!("Set MSK and report status\n");
-    exchange_information.key.clear();
-    remote_information.key.clear();
 
     Ok(())
 }

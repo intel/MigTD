@@ -946,8 +946,6 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         })?;
 
         log::info!(migration_request_id = info.mig_info.mig_request_id; "Set MSK and report status\n");
-        exchange_information.key.clear();
-        remote_information.key.clear();
     }
 
     #[cfg(feature = "spdm_attestation")]
