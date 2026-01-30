@@ -32,16 +32,16 @@ jobs:
           popd
 
       - name: Generate collateral (production)
-        run: ./tools/migtd-collateral-generator/target/release/migtd-collateral-generator -o config/collateral_production_fmspc.json
+        run: ./target/release/migtd-collateral-generator -o config/collateral_production_fmspc.json
 
       - name: Generate collateral (pre-production)
-        run: ./tools/migtd-collateral-generator/target/release/migtd-collateral-generator -o config/collateral_pre_production_fmspc.json --pre-production
+        run: ./target/release/migtd-collateral-generator -o config/collateral_pre_production_fmspc.json --pre-production
 
       - name: Generate policy (production)
-        run: ./tools/migtd-policy-generator/target/release/migtd-policy-generator -o config/policy_production_fmspc.json
+        run: ./target/release/migtd-policy-generator -o config/policy_production_fmspc.json
 
       - name: Generate policy (pre-production)
-        run: ./tools/migtd-policy-generator/target/release/migtd-policy-generator -o config/policy_pre_production_fmspc.json --pre-production
+        run: ./target/release/migtd-policy-generator -o config/policy_pre_production_fmspc.json --pre-production
 
       - name: Create Pull Request for Collateral
         uses: peter-evans/create-pull-request@v8
