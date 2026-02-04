@@ -668,12 +668,13 @@ async fn rebinding_new_prepare(
         MigrationResult::SecureSessionError
     })?;
 
-    let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
     if rebind_token.target_td_uuid != info.target_td_uuid {
         return Err(MigrationResult::InvalidParameter);
     }
 
+    // The TLS session is established; we can now extract servtd_ext from the peer certificates.
+    let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
     write_rebinding_session_token(&rebind_token.token)?;
     write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
     write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
