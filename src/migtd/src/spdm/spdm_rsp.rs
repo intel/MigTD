@@ -61,9 +61,10 @@ pub unsafe fn upcast_mut(inner: &mut ResponderContext) -> &mut ResponderContextE
 
 pub fn spdm_responder<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(
     stream: T,
-) -> Result<ResponderContextEx, SpdmStatus> {
+) -> Result<(ResponderContextEx, SpdmDeviceIoArc<T>), SpdmStatus> {
     let transport = MigtdTransport { transport: stream };
     let device_io = Arc::new(Mutex::new(transport));
+    let device_io_ref = device_io.clone();
 
     let rsp_capabilities = SpdmResponseCapabilityFlags::ENCRYPT_CAP
         | SpdmResponseCapabilityFlags::MAC_CAP
@@ -120,7 +121,7 @@ pub fn spdm_responder<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
         remote_policy: Vec::new(),
     };
 
-    Ok(responder_context_ex)
+    Ok((responder_context_ex, device_io_ref))
 }
 
 pub async fn spdm_responder_transfer_msk(
