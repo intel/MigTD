@@ -36,13 +36,13 @@ use crate::migration::MigrationResult;
 use crate::migration::MigtdMigrationInformation;
 use crate::spdm::vmcall_msg::VMCALL_SPDM_MESSAGE_HEADER_SIZE;
 
-pub struct MigtdTransport<T: AsyncRead + AsyncWrite + Unpin> {
+pub(crate) type SpdmDeviceIoArc<T> = Arc<Mutex<MigtdTransport<T>>>;
+pub struct MigtdTransport<T: AsyncRead + AsyncWrite + Unpin + Send> {
     pub transport: T,
 }
-unsafe impl<T: AsyncRead + AsyncWrite + Unpin> Send for MigtdTransport<T> {}
 
 #[async_trait]
-impl<T: AsyncRead + AsyncWrite + Unpin> SpdmDeviceIo for MigtdTransport<T> {
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T> {
     async fn send(&mut self, buffer: Arc<&[u8]>) -> SpdmResult {
         let mut sent = 0;
         while sent < buffer.len() {

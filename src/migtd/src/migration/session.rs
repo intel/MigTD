@@ -921,8 +921,10 @@ async fn migration_src_exchange_msk(
     info: &MigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> Result<()> {
+    use core::ops::DerefMut;
+
     const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
-    let mut spdm_requester = spdm::spdm_requester(transport).map_err(|_e| {
+    let (mut spdm_requester, device_io_ref) = spdm::spdm_requester(transport).map_err(|_e| {
         log::error!(
             "exchange_msk(): Failed in spdm_requester transport. Migration ID: {}\n",
             info.mig_info.mig_request_id
@@ -951,6 +953,10 @@ async fn migration_src_exchange_msk(
         e
     })?;
     log::info!("MSK exchange completed\n");
+
+    let mut transport_lock = device_io_ref.lock();
+    let transport = transport_lock.deref_mut();
+    shutdown_transport(&mut transport.transport, info.mig_info.mig_request_id).await?;
     Ok(())
 }
 
@@ -960,8 +966,10 @@ async fn migration_dst_exchange_msk(
     info: &MigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> Result<()> {
+    use core::ops::DerefMut;
+
     const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
-    let mut spdm_responder = spdm::spdm_responder(transport).map_err(|_e| {
+    let (mut spdm_responder, device_io_ref) = spdm::spdm_responder(transport).map_err(|_e| {
         log::error!(
             "exchange_msk(): Failed in spdm_responder transport. Migration ID: {}\n",
             info.mig_info.mig_request_id
@@ -991,6 +999,10 @@ async fn migration_dst_exchange_msk(
         e
     })?;
     log::info!("MSK exchange completed\n");
+
+    let mut transport_lock = device_io_ref.lock();
+    let transport = transport_lock.deref_mut();
+    shutdown_transport(&mut transport.transport, info.mig_info.mig_request_id).await?;
     Ok(())
 }
 
