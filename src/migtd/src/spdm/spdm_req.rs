@@ -147,7 +147,7 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangePubKeyReq,
-        element_count: VDM_MESSAGE_EXCHANGE_PUB_KEY_ELEMENT_COUNT,
+        element_count: VDM_MESSAGE_EXCHANGE_PUB_KEY_REQ_ELEMENT_COUNT,
     };
     cnt += vdm_exchange_pub_key
         .encode(&mut writer)
@@ -216,7 +216,7 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_PUB_KEY_ELEMENT_COUNT {
+    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_PUB_KEY_RSP_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_message.element_count
@@ -308,7 +308,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
-        element_count: VDM_MESSAGE_EXCHANGE_ATTEST_INFO_ELEMENT_COUNT,
+        element_count: VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT,
     };
 
     cnt += vdm_exchange_attest_info
@@ -462,7 +462,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_ATTEST_INFO_ELEMENT_COUNT {
+    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_RSP_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_message.element_count
@@ -620,7 +620,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeMigrationInfoReq,
-        element_count: VDM_MESSAGE_EXCHANGE_MIG_INFO_ELEMENT_COUNT,
+        element_count: VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_REQ_ELEMENT_COUNT,
     };
 
     cnt += vdm_exchange_migration_info
@@ -630,7 +630,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
     //Migration Export Version
     let mig_export_version_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigrationExportVersion,
-        length: VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_VERSION_SIZE,
+        length: VDM_MESSAGE_MIGRATION_EXPORT_VERSION_SIZE,
     };
     cnt += mig_export_version_element
         .encode(&mut writer)
@@ -645,11 +645,11 @@ async fn send_and_receive_sdm_exchange_migration_info(
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
     //Forward Migration Session Key
-    let mig_session_key_element = VdmMessageElement {
+    let forward_mig_session_key_element = VdmMessageElement {
         element_type: VdmMessageElementType::ForwardMigrationSessionKey,
-        length: VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_SESSION_KEY_SIZE,
+        length: VDM_MESSAGE_FORWARD_MIGRATION_SESSION_KEY_SIZE,
     };
-    cnt += mig_session_key_element
+    cnt += forward_mig_session_key_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     cnt += exchange_information
@@ -720,44 +720,44 @@ async fn send_and_receive_sdm_exchange_migration_info(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_MIG_INFO_ELEMENT_COUNT {
+    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_RSP_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_message.element_count
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    let mig_export_version_element =
+    let mig_import_version_element =
         VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if mig_export_version_element.element_type != VdmMessageElementType::MigrationImportVersion {
+    if mig_import_version_element.element_type != VdmMessageElementType::MigrationImportVersion {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
-            mig_export_version_element.element_type
+            mig_import_version_element.element_type
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if mig_export_version_element.length != VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_VERSION_SIZE {
+    if mig_import_version_element.length != VDM_MESSAGE_MIGRATION_IMPORT_VERSION_SIZE {
         error!(
             "Invalid VDM message element length: {:x?}\n",
-            mig_export_version_element.length
+            mig_import_version_element.length
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
     let min_import_version = u16::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let max_import_version = u16::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let mig_session_key_element =
+    let backward_mig_session_key_element =
         VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if mig_session_key_element.element_type != VdmMessageElementType::BackwardMigrationSessionKey {
+    if backward_mig_session_key_element.element_type != VdmMessageElementType::BackwardMigrationSessionKey {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
-            mig_session_key_element.element_type
+            backward_mig_session_key_element.element_type
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if mig_session_key_element.length != VDM_MESSAGE_EXCHANGE_MIG_INFO_MIGRATION_SESSION_KEY_SIZE {
+    if backward_mig_session_key_element.length != VDM_MESSAGE_BACKWARD_MIGRATION_SESSION_KEY_SIZE {
         error!(
             "Invalid VDM message element length: {:x?}\n",
-            mig_session_key_element.length
+            backward_mig_session_key_element.length
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
@@ -806,7 +806,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         major_version: VDM_MESSAGE_MAJOR_VERSION,
         minor_version: VDM_MESSAGE_MINOR_VERSION,
         op_code: VdmMessageOpCode::ExchangeRebindAttestInfoReq,
-        element_count: VDM_MESSAGE_EXCHANGE_ATTEST_INFO_WITH_HISTORY_INFO_ELEMENT_COUNT,
+        element_count: VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT,
     };
 
     cnt += vdm_exchange_attest_info
@@ -1012,7 +1012,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_message.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_ATTEST_INFO_ELEMENT_COUNT {
+    if vdm_message.element_count != VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_RSP_ELEMENT_COUNT {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
             vdm_message.element_count
@@ -1124,6 +1124,13 @@ pub async fn send_and_receive_sdm_rebind_info(
 
     let rebind_token = create_rebind_token(rebind_info)?;
     let token = rebind_token.token;
+    if token.len() as u16 != VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE {
+        error!(
+            "Rebind token size is invalid: {}\n",
+            token.len()
+        );
+        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+    }
 
     let mut payload = vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);
@@ -1143,7 +1150,7 @@ pub async fn send_and_receive_sdm_rebind_info(
     // Rebind session token
     let rebind_session_token_element = VdmMessageElement {
         element_type: VdmMessageElementType::RebindSessionToken,
-        length: token.len() as u16,
+        length: VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE,
     };
     cnt += rebind_session_token_element
         .encode(&mut writer)
