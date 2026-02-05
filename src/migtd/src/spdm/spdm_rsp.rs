@@ -312,7 +312,7 @@ pub fn handle_exchange_pub_key_req(
 
     let pub_key_element = VdmMessageElement {
         element_type: VdmMessageElementType::PubKeyMy,
-        length: my_pub_key.len() as u16,
+        length: my_pub_key.len() as u32,
     };
 
     cnt += pub_key_element
@@ -590,13 +590,9 @@ pub fn handle_exchange_mig_attest_info_req(
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
     //quote dst
-    if quote_dst.len() > u16::MAX as usize {
-        error!("Quote size is too large: {}\n", quote_dst.len());
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
-        length: quote_dst.len() as u16,
+        length: quote_dst.len() as u32,
     };
     cnt += quote_element
         .encode(&mut writer)
@@ -607,13 +603,9 @@ pub fn handle_exchange_mig_attest_info_req(
 
     //event log dst
     let event_log_dst = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    if event_log_dst.len() > u16::MAX as usize {
-        error!("Event log size is too large: {}\n", event_log_dst.len());
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
-        length: event_log_dst.len() as u16,
+        length: event_log_dst.len() as u32,
     };
     cnt += event_log_element
         .encode(&mut writer)
@@ -628,7 +620,7 @@ pub fn handle_exchange_mig_attest_info_req(
         digest_sha384(mig_policy_dst).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
-        length: mig_policy_dst_hash.len() as u16,
+        length: mig_policy_dst_hash.len() as u32,
     };
     cnt += mig_policy_element
         .encode(&mut writer)
@@ -709,9 +701,9 @@ pub fn handle_exchange_mig_info_req(
 
     let forward_mig_session_key_element =
         VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if forward_mig_session_key_element.element_type != VdmMessageElementType::ForwardMigrationSessionKey
-        || forward_mig_session_key_element.length
-            != VDM_MESSAGE_FORWARD_MIGRATION_SESSION_KEY_SIZE
+    if forward_mig_session_key_element.element_type
+        != VdmMessageElementType::ForwardMigrationSessionKey
+        || forward_mig_session_key_element.length != VDM_MESSAGE_FORWARD_MIGRATION_SESSION_KEY_SIZE
     {
         error!("invalid forward migration session key!\n");
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
@@ -856,7 +848,8 @@ pub fn handle_exchange_rebind_attest_info_req(
         error!("Invalid VDM message op_code: {:x?}\n", vdm_request.op_code);
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    if vdm_request.element_count != VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT
+    if vdm_request.element_count
+        != VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT
     {
         error!(
             "Invalid VDM message element_count: {:x?}\n",
@@ -1078,16 +1071,9 @@ pub fn handle_exchange_rebind_attest_info_req(
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
     let td_report_dst_bytes = td_report_dst.as_bytes();
 
-    if td_report_dst_bytes.len() > u16::MAX as usize {
-        error!(
-            "Td report size is too large: {}\n",
-            td_report_dst_bytes.len()
-        );
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
     let tdreport_element = VdmMessageElement {
         element_type: VdmMessageElementType::TdReportMy,
-        length: td_report_dst_bytes.len() as u16,
+        length: td_report_dst_bytes.len() as u32,
     };
     cnt += tdreport_element
         .encode(&mut writer)
@@ -1098,13 +1084,9 @@ pub fn handle_exchange_rebind_attest_info_req(
 
     //event log dst
     let event_log_dst = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    if event_log_dst.len() > u16::MAX as usize {
-        error!("Event log size is too large: {}\n", event_log_dst.len());
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
-        length: event_log_dst.len() as u16,
+        length: event_log_dst.len() as u32,
     };
     cnt += event_log_element
         .encode(&mut writer)
@@ -1119,7 +1101,7 @@ pub fn handle_exchange_rebind_attest_info_req(
         digest_sha384(mig_policy_dst).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
-        length: mig_policy_dst_hash.len() as u16,
+        length: mig_policy_dst_hash.len() as u32,
     };
     cnt += mig_policy_element
         .encode(&mut writer)
@@ -1201,8 +1183,7 @@ pub fn handle_exchange_rebind_info_req(
     let rebind_session_token_element =
         VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if rebind_session_token_element.element_type != VdmMessageElementType::RebindSessionToken
-        || rebind_session_token_element.length
-            != VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE
+        || rebind_session_token_element.length != VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE
     {
         error!("invalid rebind session token!\n");
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);

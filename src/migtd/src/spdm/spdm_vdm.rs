@@ -35,11 +35,11 @@ pub const VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 3;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_REQ_COUNT: u8 = 1;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_RSP_COUNT: u8 = 0;
 
-pub const VDM_MESSAGE_MIGRATION_EXPORT_VERSION_SIZE: u16 = 4;
-pub const VDM_MESSAGE_FORWARD_MIGRATION_SESSION_KEY_SIZE: u16 = 32;
-pub const VDM_MESSAGE_MIGRATION_IMPORT_VERSION_SIZE: u16 = 4;
-pub const VDM_MESSAGE_BACKWARD_MIGRATION_SESSION_KEY_SIZE: u16 = 32;
-pub const VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE: u16 = 32;
+pub const VDM_MESSAGE_MIGRATION_EXPORT_VERSION_SIZE: u32 = 4;
+pub const VDM_MESSAGE_FORWARD_MIGRATION_SESSION_KEY_SIZE: u32 = 32;
+pub const VDM_MESSAGE_MIGRATION_IMPORT_VERSION_SIZE: u32 = 4;
+pub const VDM_MESSAGE_BACKWARD_MIGRATION_SESSION_KEY_SIZE: u32 = 32;
+pub const VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE: u32 = 32;
 
 enum_builder! {
     @U8
@@ -130,7 +130,7 @@ impl Default for VdmMessageElementType {
 #[derive(Debug)]
 pub struct VdmMessageElement {
     pub element_type: VdmMessageElementType,
-    pub length: u16,
+    pub length: u32,
 }
 
 impl Codec for VdmMessageElement {
@@ -143,7 +143,7 @@ impl Codec for VdmMessageElement {
 
     fn read(r: &mut Reader<'_>) -> Option<Self> {
         let element_type = VdmMessageElementType::read(r)?;
-        let length = u16::read(r)?;
+        let length = u32::read(r)?;
         Some(VdmMessageElement {
             element_type,
             length,
