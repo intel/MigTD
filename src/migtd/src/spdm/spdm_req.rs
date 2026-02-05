@@ -155,7 +155,7 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
 
     let pub_key_element = VdmMessageElement {
         element_type: VdmMessageElementType::PubKeyMy,
-        length: my_pub_key.len() as u16,
+        length: my_pub_key.len() as u32,
     };
     cnt += pub_key_element
         .encode(&mut writer)
@@ -357,13 +357,10 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     #[cfg(not(feature = "policy_v2"))]
     let verified_report_local = res.unwrap();
 
-    if quote_src.len() > u16::MAX as usize {
-        error!("Quote size is too large: {}\n", quote_src.len());
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
+    //quote src
     let quote_element = VdmMessageElement {
         element_type: VdmMessageElementType::QuoteMy,
-        length: quote_src.len() as u16,
+        length: quote_src.len() as u32,
     };
     cnt += quote_element
         .encode(&mut writer)
@@ -374,13 +371,9 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     //event log src
     let event_log_src = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    if event_log_src.len() > u16::MAX as usize {
-        error!("Event log size is too large: {}\n", event_log_src.len());
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
-        length: event_log_src.len() as u16,
+        length: event_log_src.len() as u32,
     };
     cnt += event_log_element
         .encode(&mut writer)
@@ -396,7 +389,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
-        length: mig_policy_src_hash.len() as u16,
+        length: mig_policy_src_hash.len() as u32,
     };
     cnt += mig_policy_element
         .encode(&mut writer)
@@ -747,7 +740,9 @@ async fn send_and_receive_sdm_exchange_migration_info(
     let max_import_version = u16::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let backward_mig_session_key_element =
         VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if backward_mig_session_key_element.element_type != VdmMessageElementType::BackwardMigrationSessionKey {
+    if backward_mig_session_key_element.element_type
+        != VdmMessageElementType::BackwardMigrationSessionKey
+    {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             backward_mig_session_key_element.element_type
@@ -839,17 +834,9 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     let td_report_src = gen_tdreport(&report_data[..report_data_prefix_len + th1_len])
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
     let td_report_src_bytes = td_report_src.as_bytes();
-
-    if td_report_src_bytes.len() > u16::MAX as usize {
-        error!(
-            "Td report src size is too large: {}\n",
-            td_report_src_bytes.len()
-        );
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
     let tdreport_element = VdmMessageElement {
         element_type: VdmMessageElementType::TdReportMy,
-        length: td_report_src_bytes.len() as u16,
+        length: td_report_src_bytes.len() as u32,
     };
     cnt += tdreport_element
         .encode(&mut writer)
@@ -860,13 +847,9 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
 
     //event log src
     let event_log_src = get_event_log().ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-    if event_log_src.len() > u16::MAX as usize {
-        error!("Event log size is too large: {}\n", event_log_src.len());
-        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
-    }
     let event_log_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogMy,
-        length: event_log_src.len() as u16,
+        length: event_log_src.len() as u32,
     };
     cnt += event_log_element
         .encode(&mut writer)
@@ -882,7 +865,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
 
     let mig_policy_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyMy,
-        length: mig_policy_src_hash.len() as u16,
+        length: mig_policy_src_hash.len() as u32,
     };
     cnt += mig_policy_element
         .encode(&mut writer)
@@ -905,7 +888,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
 
     let servtd_ext_element = VdmMessageElement {
         element_type: VdmMessageElementType::SerVtdExt,
-        length: servtd_ext.as_bytes().len() as u16,
+        length: servtd_ext.as_bytes().len() as u32,
     };
     cnt += servtd_ext_element
         .encode(&mut writer)
@@ -918,7 +901,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     let tdreport_init = &init_migtd_data.init_report;
     let tdreport_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::TdReportInit,
-        length: tdreport_init.len() as u16,
+        length: tdreport_init.len() as u32,
     };
     cnt += tdreport_init_element
         .encode(&mut writer)
@@ -931,7 +914,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     let event_log_init = &init_migtd_data.init_event_log;
     let event_log_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogInit,
-        length: event_log_init.len() as u16,
+        length: event_log_init.len() as u32,
     };
     cnt += event_log_init_element
         .encode(&mut writer)
@@ -946,7 +929,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         digest_sha384(mig_policy_init).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
     let mig_policy_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyInit,
-        length: mig_policy_init_hash.len() as u16,
+        length: mig_policy_init_hash.len() as u32,
     };
     cnt += mig_policy_init_element
         .encode(&mut writer)
@@ -1124,11 +1107,8 @@ pub async fn send_and_receive_sdm_rebind_info(
 
     let rebind_token = create_rebind_token(rebind_info)?;
     let token = rebind_token.token;
-    if token.len() as u16 != VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE {
-        error!(
-            "Rebind token size is invalid: {}\n",
-            token.len()
-        );
+    if token.len() as u32 != VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE {
+        error!("Rebind token size is invalid: {}\n", token.len());
         return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
     }
 
