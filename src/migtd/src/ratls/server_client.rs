@@ -190,7 +190,7 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
-            "server rebinding EcdsaPk::new() failed with error {:?}\n",
+            "client rebinding EcdsaPk::new() failed with error {:?}\n",
             e
         );
         e
@@ -203,7 +203,7 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
         servtd_ext,
     )
     .map_err(|e| {
-        log::error!("server rebinding gen_cert() failed with error {:?}\n", e);
+        log::error!("client rebinding gen_cert() failed with error {:?}\n", e);
         e
     })?;
     let certs = vec![certs];
@@ -211,13 +211,13 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     let config = TlsConfig::new(certs, signing_key, verify_rebinding_new_cert, remote_policy)
         .map_err(|e| {
             log::error!(
-                "server rebinding TlsConfig::new() failed with error {:?}\n",
+                "client rebinding TlsConfig::new() failed with error {:?}\n",
                 e
             );
             e
         })?;
-    config.tls_server(stream).map_err(|e| {
-        log::error!("server rebinding tls_server() failed with error {:?}\n", e);
+    config.tls_client(stream).map_err(|e| {
+        log::error!("client rebinding tls_client() failed with error {:?}\n", e);
         e.into()
     })
 }
