@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use crate::alloc::string::ToString;
+#[cfg(not(test))]
 #[cfg(feature = "vmcall-raw")]
 use crate::driver::crash::update_guest_crash_reg_report;
+#[cfg(not(test))]
 #[cfg(feature = "vmcall-raw")]
 use alloc::format;
 
@@ -27,6 +29,7 @@ pub fn panic_with_guest_crash_reg_report(errorcode: u64, msg: &[u8]) {
         " non-UTF8 message".to_string()
     };
 
+    #[cfg(not(test))]
     #[cfg(feature = "vmcall-raw")]
     {
         let crash_message = format!(
