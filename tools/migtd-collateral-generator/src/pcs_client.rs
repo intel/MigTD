@@ -202,10 +202,48 @@ fn remove_header_case_insensitive(
     actual_key.and_then(|key| headers.remove(&key))
 }
 
+/// Initial retry delay in seconds after a transient failure.
+const INITIAL_RETRY_DELAY_SECS: u64 = 10;
+/// Maximum retry delay in seconds. Once the next delay would exceed this, error out.
+const MAX_RETRY_DELAY_SECS: u64 = 180;
+
 pub async fn fetch_data_from_url(url: &str) -> Result<PcsResponse> {
     let client = Client::new();
+
+    let mut delay = std::time::Duration::from_secs(INITIAL_RETRY_DELAY_SECS);
+    let max_delay = std::time::Duration::from_secs(MAX_RETRY_DELAY_SECS);
+    loop {
+        match send_request(&client, url).await {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                if delay > max_delay {
+                    eprintln!("Request to {} failed after retries: {}", url, e);
+                    return Err(e);
+                }
+                eprintln!(
+                    "Request to {} failed: {}. Retrying in {} seconds...",
+                    url,
+                    e,
+                    delay.as_secs()
+                );
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+        }
+    }
+}
+
+async fn send_request(client: &Client, url: &str) -> Result<PcsResponse> {
     let response = client.get(url).send().await?;
     let status = response.status().as_u16() as u32;
+
+    // Treat server errors (5xx), 429 (Too Many Requests) and 408 (Request
+    // Timeout) as transient failures so the retry loop in fetch_data_from_url
+    // will back off and try again.  Network/connection errors are already
+    // transient because they propagate as Err from reqwest.
+    if (500..600).contains(&status) || status == 429 || status == 408 {
+        return Err(anyhow!("Transient HTTP error {} from {}", status, url));
+    }
 
     let mut header_map = HashMap::new();
     for (key, value) in response.headers() {
