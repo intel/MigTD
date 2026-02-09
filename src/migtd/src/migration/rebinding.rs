@@ -156,7 +156,7 @@ impl InitData {
         let mut init_policy = None;
         let mut init_event_log = None;
         for _ in 0..num_entries {
-            let entry = MigtdDateEntry::read_from_bytes(&b[offset..])?;
+            let entry = MigtdDataEntry::read_from_bytes(&b[offset..])?;
             match entry.r#type {
                 MIGTD_DATA_TYPE_INIT_MIG_POLICY => init_policy = Some(entry.value),
                 MIGTD_DATA_TYPE_INIT_TD_REPORT => {
@@ -218,13 +218,13 @@ impl InitData {
     }
 }
 
-pub struct MigtdDateEntry<'a> {
+pub struct MigtdDataEntry<'a> {
     pub r#type: u32,
     pub length: u32,
     pub value: &'a [u8],
 }
 
-impl<'a> MigtdDateEntry<'a> {
+impl<'a> MigtdDataEntry<'a> {
     pub fn read_from_bytes(b: &'a [u8]) -> Option<Self> {
         if b.len() < 8 {
             return None;
