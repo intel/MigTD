@@ -34,7 +34,7 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-environment
         with:
-          rust-toolchain: '1.83.0' # for spdm-rs
+          rust-toolchain: '1.88.0' # for spdm-rs
 
       - name: Build library crates
         run: cargo xtask lib-build
