@@ -18,7 +18,7 @@ RUN apt-get update && \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install rustup and a fixed version of Rust.
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.83.0
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.88.0
 RUN rustup component add rust-src
 RUN cargo install cargo-xbuild
 RUN rustup target add x86_64-unknown-none

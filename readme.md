@@ -19,7 +19,7 @@ This package is the sample code to show the concept of Migration TD in TDX Migra
 
 * Install [Rust](https://www.rust-lang.org/tools/install):
 ```
-curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.83.0
+curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.88.0
 ```
 * Add Rust target required by MigTD:
 ```
