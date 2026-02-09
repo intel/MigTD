@@ -231,7 +231,7 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     })
 }
 
-fn gen_tdreport(public_key: &[u8]) -> Result<TdxReport> {
+pub fn gen_tdreport(public_key: &[u8]) -> Result<TdxReport> {
     let hash = digest_sha384(public_key).map_err(|e| {
         log::error!("Failed to compute SHA384 digest: {:?}\n", e);
         e
