@@ -55,8 +55,7 @@ const MIGTD_REBIND_OP_FINALIZE: u8 = 1;
 
 #[repr(C)]
 pub struct RebindingToken {
-    pub token: [u8; 32],
-    pub target_td_uuid: TargetTdUuid,
+    token: [u8; 32],
 }
 
 impl RebindingToken {
@@ -75,6 +74,10 @@ impl RebindingToken {
             );
             uinit.assume_init()
         })
+    }
+
+    pub fn token(&self) -> &[u8] {
+        &self.token
     }
 
     pub fn as_bytes(&self) -> &[u8] {
@@ -628,7 +631,7 @@ async fn rebinding_old_prepare(
         MigrationResult::SecureSessionError
     })?;
 
-    let rebind_token = create_rebind_token(info)?;
+    let rebind_token = create_rebind_token()?;
     tls_send_rebind_token(&mut ratls_client, &rebind_token).await?;
 
     approve_rebinding(info, &rebind_token)?;
@@ -670,9 +673,6 @@ async fn rebinding_new_prepare(
 
     let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
-    if rebind_token.target_td_uuid != info.target_td_uuid {
-        return Err(MigrationResult::InvalidParameter);
-    }
 
     write_rebinding_session_token(&rebind_token.token)?;
     write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
@@ -751,16 +751,13 @@ fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, Mig
     }
 }
 
-pub fn create_rebind_token(info: &RebindingInfo) -> Result<RebindingToken, MigrationResult> {
+pub fn create_rebind_token() -> Result<RebindingToken, MigrationResult> {
     let mut token = [0u8; 32];
     let rng = SystemRandom::new();
     rng.fill(&mut token)
         .map_err(|_| MigrationResult::InvalidParameter)?;
 
-    Ok(RebindingToken {
-        token,
-        target_td_uuid: info.target_td_uuid,
-    })
+    Ok(RebindingToken { token })
 }
 
 async fn tls_send_rebind_token(
