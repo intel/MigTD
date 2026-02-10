@@ -1105,8 +1105,8 @@ pub async fn send_and_receive_sdm_rebind_info(
     vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
     let vendor_id = VendorIDStruct { len: 4, vendor_id };
 
-    let rebind_token = create_rebind_token(rebind_info)?;
-    let token = rebind_token.token;
+    let rebind_token = create_rebind_token()?;
+    let token = rebind_token.token();
     if token.len() as u32 != VDM_MESSAGE_REBIND_SESSION_TOKEN_SIZE {
         error!("Rebind token size is invalid: {}\n", token.len());
         return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
