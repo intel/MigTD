@@ -22,6 +22,7 @@ pub const TDCS_FIELD_SERVTD_ATTR: u64 = 0x1910000300000202;
 /// Hash of SERVTD_EXT that the new Service TD 0 (i.e., rebound Service TD or MigTD on the
 /// destination platform) believes is the SERVTD_EXT for this TD.
 pub const TDCS_FIELD_SERVTD_ACCEPT_SERVTD_EXT_HASH: u64 = 0x1910000300000214;
+const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -133,7 +134,7 @@ pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), Migr
         tdcall_vm_write(
             TDCS_FIELD_SERVTD_ACCEPT_SERVTD_EXT_HASH + idx as u64,
             elem,
-            0,
+            TDCS_FIELD_WRITE_MASK,
         )?;
     }
 
