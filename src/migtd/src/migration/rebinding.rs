@@ -42,6 +42,7 @@ pub use tdx_tdcall::tdx::TargetTdUuid;
 pub const TDCS_FIELD_SERVTD_REBIND_ACCEPT_TOKEN: u64 = 0x191000030000021E;
 /// The intended SERVTD_ATTR for the Service TD about to be bound to the TD.
 pub const TDCS_FIELD_SERVTD_REBIND_ATTR: u64 = 0x1910000300000222;
+const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 
 const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
                                                        // FIXME: Need VMM provide socket information
@@ -699,7 +700,11 @@ pub fn write_rebinding_session_token(rebind_token: &[u8]) -> Result<(), Migratio
 
     for (idx, chunk) in rebind_token.chunks_exact(size_of::<u64>()).enumerate() {
         let elem = u64::from_le_bytes(chunk.try_into().unwrap());
-        tdcall_vm_write(TDCS_FIELD_SERVTD_REBIND_ACCEPT_TOKEN + idx as u64, elem, 0)?;
+        tdcall_vm_write(
+            TDCS_FIELD_SERVTD_REBIND_ACCEPT_TOKEN + idx as u64,
+            elem,
+            TDCS_FIELD_WRITE_MASK,
+        )?;
     }
 
     Ok(())
@@ -711,7 +716,7 @@ pub fn write_servtd_rebind_attr(servtd_attr: &[u8]) -> Result<(), MigrationResul
     }
 
     let elem = u64::from_le_bytes(servtd_attr.try_into().unwrap());
-    tdcall_vm_write(TDCS_FIELD_SERVTD_REBIND_ATTR, elem, 0)?;
+    tdcall_vm_write(TDCS_FIELD_SERVTD_REBIND_ATTR, elem, TDCS_FIELD_WRITE_MASK)?;
 
     Ok(())
 }
