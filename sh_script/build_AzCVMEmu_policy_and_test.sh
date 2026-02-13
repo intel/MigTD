@@ -204,9 +204,15 @@ POLICY_DATA_MERGED="$TEMP_DIR/policy_data_merged.json"
 
 # Output files
 OUTPUT_POLICY="$OUTPUT_DIR/policy_v2_signed.json"
+OUTPUT_POLICY_A="$OUTPUT_DIR/policy_v2_signed_a.json"
+OUTPUT_POLICY_B="$OUTPUT_DIR/policy_v2_signed_b.json"
 OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
+OUTPUT_CERT_CHAIN_A="$OUTPUT_DIR/policy_issuer_chain_a.pem"
+OUTPUT_CERT_CHAIN_B="$OUTPUT_DIR/policy_issuer_chain_b.pem"
 CERT_DIR="$TEMP_DIR/certs"
 PRIVATE_KEY="$CERT_DIR/policy_signing_pkcs8.key"
+PRIVATE_KEY_A="$CERT_DIR/policy_signing_a_pkcs8.key"
+PRIVATE_KEY_B="$CERT_DIR/policy_signing_b_pkcs8.key"
 
 # Cleanup on exit
 cleanup() {
@@ -270,39 +276,45 @@ generate_certificates() {
         -subj "$root_ca_subject" \
         -$hash_algo
 
-    echo "3. Generating policy signing private key..."
-    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name -out "$output_dir/policy_signing.key"
+    # Generate two leaf certs (a and b) from the same root CA with the same CN
+    # This exercises the peer cert chain validation / key rotation path
+    for suffix in a b; do
+        echo "3${suffix}. Generating policy signing private key (${suffix})..."
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name -out "$output_dir/policy_signing_${suffix}.key"
 
-    # Convert to PKCS8 format for json-signer
-    echo "4. Converting key to PKCS8 format..."
-    openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt \
-        -in "$output_dir/policy_signing.key" \
-        -out "$output_dir/policy_signing_pkcs8.key"
+        echo "4${suffix}. Converting key to PKCS8 format (${suffix})..."
+        openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt \
+            -in "$output_dir/policy_signing_${suffix}.key" \
+            -out "$output_dir/policy_signing_${suffix}_pkcs8.key"
 
-    echo "5. Generating certificate signing request..."
-    openssl req -new \
-        -key "$output_dir/policy_signing.key" \
-        -out "$output_dir/policy_signing.csr" \
-        -subj "$leaf_subject"
+        echo "5${suffix}. Generating certificate signing request (${suffix})..."
+        openssl req -new \
+            -key "$output_dir/policy_signing_${suffix}.key" \
+            -out "$output_dir/policy_signing_${suffix}.csr" \
+            -subj "$leaf_subject"
 
-    echo "6. Signing leaf certificate with root CA..."
-    openssl x509 -req \
-        -in "$output_dir/policy_signing.csr" \
-        -CA "$output_dir/root_ca.pem" \
-        -CAkey "$output_dir/root_ca.key" \
-        -CAcreateserial \
-        -out "$output_dir/policy_signing.pem" \
-        -days $cert_validity_days \
-        -$hash_algo \
-        -extensions v3_ca \
-        -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
+        echo "6${suffix}. Signing leaf certificate with root CA (${suffix})..."
+        openssl x509 -req \
+            -in "$output_dir/policy_signing_${suffix}.csr" \
+            -CA "$output_dir/root_ca.pem" \
+            -CAkey "$output_dir/root_ca.key" \
+            -CAcreateserial \
+            -out "$output_dir/policy_signing_${suffix}.pem" \
+            -days $cert_validity_days \
+            -$hash_algo \
+            -extensions v3_ca \
+            -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
 
-    # Create certificate chain (leaf + root)
-    echo "7. Creating certificate chain..."
-    cat "$output_dir/policy_signing.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain.pem"
+        echo "7${suffix}. Creating certificate chain (${suffix})..."
+        cat "$output_dir/policy_signing_${suffix}.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain_${suffix}.pem"
 
-    # Clean up CSR
-    rm -f "$output_dir/policy_signing.csr"
+        # Clean up CSR
+        rm -f "$output_dir/policy_signing_${suffix}.csr"
+    done
+
+    # Keep backward-compatible aliases (default to "a")
+    cp "$output_dir/policy_signing_a_pkcs8.key" "$output_dir/policy_signing_pkcs8.key"
+    cp "$output_dir/policy_issuer_chain_a.pem" "$output_dir/policy_issuer_chain.pem"
 }
 
 # Parse command line arguments
@@ -317,7 +329,11 @@ while [[ $# -gt 0 ]]; do
         --output-dir)
             OUTPUT_DIR="$2"
             OUTPUT_POLICY="$OUTPUT_DIR/policy_v2_signed.json"
+            OUTPUT_POLICY_A="$OUTPUT_DIR/policy_v2_signed_a.json"
+            OUTPUT_POLICY_B="$OUTPUT_DIR/policy_v2_signed_b.json"
             OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
+            OUTPUT_CERT_CHAIN_A="$OUTPUT_DIR/policy_issuer_chain_a.pem"
+            OUTPUT_CERT_CHAIN_B="$OUTPUT_DIR/policy_issuer_chain_b.pem"
             shift 2
             ;;
         --skip-test)
@@ -689,36 +705,53 @@ echo -e "${GREEN}✓ Policy data merged: $POLICY_DATA_MERGED${NC}"
 echo
 
 #
-# Step 10: Sign the final policy
+# Step 10: Sign the final policy with both leaf keys
 #
-echo -e "${BLUE}=== Step 10: Signing Final Policy ===${NC}"
-"$TOOLS_DIR/json-signer" \
-    --sign \
-    --name "policyData" \
-    --private-key "$PRIVATE_KEY" \
-    --input "$POLICY_DATA_MERGED" \
-    --output "$OUTPUT_POLICY"
+echo -e "${BLUE}=== Step 10: Signing Final Policy (two variants) ===${NC}"
+for suffix in a b; do
+    PRIVATE_KEY_CUR="$CERT_DIR/policy_signing_${suffix}_pkcs8.key"
+    OUTPUT_POLICY_CUR_VAR="OUTPUT_POLICY_$(echo $suffix | tr '[:lower:]' '[:upper:]')"
+    OUTPUT_POLICY_CUR="${!OUTPUT_POLICY_CUR_VAR}"
 
-echo -e "${GREEN}✓ Policy signed: $OUTPUT_POLICY${NC}"
+    "$TOOLS_DIR/json-signer" \
+        --sign \
+        --name "policyData" \
+        --private-key "$PRIVATE_KEY_CUR" \
+        --input "$POLICY_DATA_MERGED" \
+        --output "$OUTPUT_POLICY_CUR"
+
+    echo -e "${GREEN}✓ Policy signed (${suffix}): $OUTPUT_POLICY_CUR${NC}"
+done
+
+# Also keep a default signed policy (variant a) for backward compat
+cp "$OUTPUT_POLICY_A" "$OUTPUT_POLICY"
+
+echo -e "${GREEN}✓ Default policy: $OUTPUT_POLICY${NC}"
 echo
 
 #
-# Step 11: Copy certificate chain to output directory
+# Step 11: Copying Certificate Chains to output directory
 #
-echo -e "${BLUE}=== Step 11: Copying Certificate Chain ===${NC}"
-cp "$CERT_DIR/policy_issuer_chain.pem" "$OUTPUT_CERT_CHAIN"
+echo -e "${BLUE}=== Step 11: Copying Certificate Chains ===${NC}"
+cp "$CERT_DIR/policy_issuer_chain_a.pem" "$OUTPUT_CERT_CHAIN_A"
+cp "$CERT_DIR/policy_issuer_chain_b.pem" "$OUTPUT_CERT_CHAIN_B"
+cp "$OUTPUT_CERT_CHAIN_A" "$OUTPUT_CERT_CHAIN"
 
-echo -e "${GREEN}✓ Certificate chain copied: $OUTPUT_CERT_CHAIN${NC}"
+echo -e "${GREEN}✓ Certificate chain A: $OUTPUT_CERT_CHAIN_A${NC}"
+echo -e "${GREEN}✓ Certificate chain B: $OUTPUT_CERT_CHAIN_B${NC}"
+echo -e "${GREEN}✓ Default certificate chain: $OUTPUT_CERT_CHAIN${NC}"
 echo
 
 #
-# Step 12: Securely delete private key
+# Step 12: Securely delete private keys
 #
-echo -e "${BLUE}=== Step 12: Cleaning Up Private Key ===${NC}"
-if [ -f "$PRIVATE_KEY" ]; then
-    shred -u "$PRIVATE_KEY" 2>/dev/null || rm -f "$PRIVATE_KEY"
-    echo -e "${GREEN}✓ Private key securely deleted${NC}"
-fi
+echo -e "${BLUE}=== Step 12: Cleaning Up Private Keys ===${NC}"
+for keyfile in "$PRIVATE_KEY_A" "$PRIVATE_KEY_B" "$PRIVATE_KEY"; do
+    if [ -f "$keyfile" ]; then
+        shred -u "$keyfile" 2>/dev/null || rm -f "$keyfile"
+    fi
+done
+echo -e "${GREEN}✓ Private keys securely deleted${NC}"
 echo
 
 #
@@ -727,8 +760,12 @@ echo
 echo -e "${GREEN}=== Build Complete ===${NC}"
 echo
 echo "Generated files:"
-echo "  📄 Policy: $OUTPUT_POLICY"
-echo "  📄 Certificate chain: $OUTPUT_CERT_CHAIN"
+echo "  📄 Policy (source/a): $OUTPUT_POLICY_A"
+echo "  📄 Policy (dest/b):   $OUTPUT_POLICY_B"
+echo "  📄 Policy (default):  $OUTPUT_POLICY"
+echo "  📄 Cert chain (a): $OUTPUT_CERT_CHAIN_A"
+echo "  📄 Cert chain (b): $OUTPUT_CERT_CHAIN_B"
+echo "  📄 Cert chain (default): $OUTPUT_CERT_CHAIN"
 echo
 
 if [ "$USE_MOCK_REPORT" = true ]; then
@@ -748,7 +785,10 @@ echo
 #
 # Step 13: Test the policy (optional)
 #
-TEST_CMD="./migtdemu.sh --policy-v2 --policy-file $OUTPUT_POLICY --policy-issuer-chain-file $OUTPUT_CERT_CHAIN --debug --both"
+# Pass --skip-policy-generation: this script already generated the policy
+# files, so migtdemu.sh must not re-run the generator (which would clobber
+# the variants we want to test).
+TEST_CMD="./migtdemu.sh --policy-v2 --src-policy-file $OUTPUT_POLICY_A --src-policy-issuer-chain-file $OUTPUT_CERT_CHAIN_A --dst-policy-file $OUTPUT_POLICY_B --dst-policy-issuer-chain-file $OUTPUT_CERT_CHAIN_B --skip-policy-generation --debug --both"
 if [ "$USE_MOCK_REPORT" = true ]; then
     TEST_CMD="$TEST_CMD --mock-report"
 

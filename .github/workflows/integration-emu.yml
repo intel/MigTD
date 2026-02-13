@@ -92,6 +92,27 @@ jobs:
             test-command: "./migtdemu.sh --mock-report --mock-quote-retry --features igvm-attest --both --no-sudo --log-level info"
             artifact-name: "mock-quote-retry-test-logs"
 
+          - test-name: "Policy v2 Key Rotation (Mock Report)"
+            test-type: "policy-v2-key-rotation"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --src-policy-file ./config/AzCVMEmu/policy_v2_signed_a.json --src-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_a.pem --dst-policy-file ./config/AzCVMEmu/policy_v2_signed_b.json --dst-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_b.pem --mock-report --both --no-sudo --log-level info"
+            artifact-name: "policy-v2-key-rotation-test-logs"
+
+          - test-name: "Policy v2 Key Rotation with IGVM Attest"
+            test-type: "policy-v2-key-rotation-igvm"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --src-policy-file ./config/AzCVMEmu/policy_v2_signed_a.json --src-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_a.pem --dst-policy-file ./config/AzCVMEmu/policy_v2_signed_b.json --dst-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_b.pem --mock-report --features igvm-attest --both --no-sudo --log-level info"
+            artifact-name: "policy-v2-key-rotation-igvm-test-logs"
+
+          - test-name: "SPDM Policy v2 Key Rotation (Mock Report)"
+            test-type: "spdm-policy-v2-key-rotation"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --src-policy-file ./config/AzCVMEmu/policy_v2_signed_a.json --src-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_a.pem --dst-policy-file ./config/AzCVMEmu/policy_v2_signed_b.json --dst-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_b.pem --mock-report --features spdm_attestation --both --no-sudo --log-level info"
+            artifact-name: "spdm-policy-v2-key-rotation-test-logs"
+
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -215,6 +236,35 @@ jobs:
               echo "Certificate chain file generated"
             fi
           fi
+
+          # Check key rotation files for key rotation tests
+          if [[ "${{ matrix.test-type }}" == "policy-v2-key-rotation" || "${{ matrix.test-type }}" == "policy-v2-key-rotation-igvm" || "${{ matrix.test-type }}" == "spdm-policy-v2-key-rotation" ]]; then
+            echo ""
+            echo "=== Key Rotation Artifacts ==="
+            FAIL=0
+            for variant in a b; do
+              POLICY="config/AzCVMEmu/policy_v2_signed_${variant}.json"
+              CHAIN="config/AzCVMEmu/policy_issuer_chain_${variant}.pem"
+              if [[ -f "$POLICY" ]]; then
+                POLICY_SIZE=$(wc -c < "$POLICY")
+                echo "Policy (${variant}): ${POLICY_SIZE} bytes"
+              else
+                echo "❌ Missing policy file: $POLICY"
+                FAIL=1
+              fi
+              if [[ -f "$CHAIN" ]]; then
+                echo "Certificate chain (${variant}): present"
+              else
+                echo "❌ Missing certificate chain: $CHAIN"
+                FAIL=1
+              fi
+            done
+            if [[ "$FAIL" -eq 1 ]]; then
+              echo "❌ Key rotation artifacts incomplete"
+              exit 1
+            fi
+            echo "✅ Key rotation artifacts generated successfully"
+          fi
           
           # Check for core dumps (skip-ra test)
           if [[ "${{ matrix.test-type }}" == "skip-ra" ]]; then
@@ -267,7 +317,11 @@ jobs:
             *.log
             core*
             config/AzCVMEmu/policy_v2_signed.json
+            config/AzCVMEmu/policy_v2_signed_a.json
+            config/AzCVMEmu/policy_v2_signed_b.json
             config/AzCVMEmu/policy_issuer_chain.pem
+            config/AzCVMEmu/policy_issuer_chain_a.pem
+            config/AzCVMEmu/policy_issuer_chain_b.pem
             target/release/migtd
           retention-days: 7
           if-no-files-found: ignore
