@@ -83,6 +83,9 @@ pub enum Error {
     /// CRL number extension missing
     CrlNumberNotFound,
 
+    /// Peer certificate chain validation failed
+    PeerCertChainValidation(String),
+
     /// Unexpected error that should not happen
     Unexpected,
 }
@@ -260,6 +263,55 @@ fn verify_signature_with_algorithm(
     }
 }
 
+/// Validates a peer's certificate chain against the local certificate chain.
+///
+/// Performs the following checks:
+/// 1. Verifies the peer chain's internal signature integrity
+/// 2. Root CA must match between local and peer chains
+/// 3. Leaf certificate Subject Name must match
+pub fn validate_peer_cert_chain(local_chain_pem: &[u8], peer_chain_pem: &[u8]) -> Result<()> {
+    let local_chain = extract_cert_chain_from_pem(local_chain_pem)?;
+    let peer_chain = extract_cert_chain_from_pem(peer_chain_pem)?;
+
+    // 1. Verify the peer chain's own signature integrity
+    verify_certificate_chain(&peer_chain)?;
+
+    // 2. Root CA must match (DER byte comparison)
+    check_root_ca_match(&local_chain, &peer_chain)?;
+
+    // Parse leaf certs for subject name check
+    let local_leaf = x509::Certificate::from_der(local_chain[0].as_ref())
+        .map_err(|_| Error::ParseCertificate)?;
+    let peer_leaf =
+        x509::Certificate::from_der(peer_chain[0].as_ref()).map_err(|_| Error::ParseCertificate)?;
+
+    // 3. Leaf certificate Subject Name must match
+    if local_leaf.tbs_certificate.subject != peer_leaf.tbs_certificate.subject {
+        return Err(Error::PeerCertChainValidation(
+            "Leaf certificate Subject Name mismatch between local and peer chains".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn check_root_ca_match(
+    local_chain: &[CertificateDer<'_>],
+    peer_chain: &[CertificateDer<'_>],
+) -> Result<()> {
+    // extract_cert_chain_from_pem guarantees non-empty chains
+    let local_root = local_chain.last().unwrap();
+    let peer_root = peer_chain.last().unwrap();
+
+    if local_root.as_ref() != peer_root.as_ref() {
+        return Err(Error::PeerCertChainValidation(
+            "Root CA mismatch between local and peer certificate chains".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +367,133 @@ rPSb+wS9KsT0dcF2DU5F12BycQ==
 
         let cert_chain = extract_cert_chain_from_pem(test_pem).unwrap();
         assert!(verify_certificate_chain(&cert_chain).is_ok());
+    }
+
+    // Test chain for peer cert chain validation tests:
+    // Leaf: CN=MigTD Info Issuer, expires 2026-09-05
+    // Intermediate: CN=MigTD Intermediate CA, expires 2030-09-04
+    // Root: CN=MigTD Root CA, expires 2035-09-03
+    fn test_chain() -> &'static [u8] {
+        b"-----BEGIN CERTIFICATE-----
+MIICVzCCAd6gAwIBAgIUVKXleE/7DfWQZ7seyT3TqMXwAqcwCgYIKoZIzj0EAwMw
+dDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEiMCAGA1UECgwZTWlnVEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwV
+TWlnVEQgSW50ZXJtZWRpYXRlIENBMB4XDTI1MDkwNTA1NTI1M1oXDTI2MDkwNTA1
+NTI1M1owYzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50
+YSBDbGFyYTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRowGAYDVQQDDBFNaWdURCBJ
+bmZvIElzc3VlcjB2MBAGByqGSM49AgEGBSuBBAAiA2IABL1rH/Pc4KUchfNLqm2z
+Wc1FC7RfBI4xGUSU/hBnRDmEj5HKWdN2p7YIeUn+z0RiYXUxr5nHed+pvaD2CZ1b
+y2wymsVZQpWIwtf8shfePFJcQrHsYsmmvvwi5ocOXe6ZkaNCMEAwHQYDVR0OBBYE
+FHIbR1J8L+HjJNaHdXioZJ5r9zrSMB8GA1UdIwQYMBaAFJYGgWjSezCJ0vsgGDCl
+W1a/KQLdMAoGCCqGSM49BAMDA2cAMGQCMCshcjFfbTVDx6XJL+ERXKqfTJdhK1oH
+tMQ+m74KW6AfKZt0lqZ5eeFXc/RFW8pKpQIwHsObyRhFH6OaFqxw+oItj2qCRUlz
+cCnHD8l/TBHhUoubb2OMLoENlBLECLtFHV2X
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICVDCCAdqgAwIBAgIUY4sE3O7mKGtP/otJ0s4WQtwn4ZswCgYIKoZIzj0EAwMw
+XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
+MB4XDTI1MDkwNTA1NDQ0M1oXDTMwMDkwNDA1NDQ0M1owdDELMAkGA1UEBhMCVVMx
+CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEiMCAGA1UECgwZTWln
+VEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwVTWlnVEQgSW50ZXJtZWRp
+YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEhf4d4GTrO4NhJ24aG5A3i4Qu
+mwGZ+Jsfo3siVVy1/vke9tN+ylkZlR5M2bl4O4y2eeUMGrzwSu84L/7crgqnnZsH
+XrOQslNsSYJzB+YrbeJ1GBG+oDnCxvYgLTvCDtDio0IwQDAdBgNVHQ4EFgQUlgaB
+aNJ7MInS+yAYMKVbVr8pAt0wHwYDVR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8
+FY0wCgYIKoZIzj0EAwMDaAAwZQIwHoKqUxUqI2Zw8omp82svEjmN477njoK9YtOU
+XtukW4+7RkU6VqSR6ND/9H83PMrLAjEAkPcCM/8QG3yZL1pxvKv87JwOIMJd5eUu
+QDT7gy1UxPCjOETC2ygJyjJdYxBbXQrr
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICTzCCAdagAwIBAgIUeUyrqFAE0stc3jxOpGo12mTasB0wCgYIKoZIzj0EAwMw
+XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
+MB4XDTI1MDkwNTA1NDIxNVoXDTM1MDkwMzA1NDIxNVowXzELMAkGA1UEBhMCVVMx
+CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEVMBMGA1UECgwMTWln
+VEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENBMHYwEAYHKoZIzj0CAQYF
+K4EEACIDYgAEDnCmBt1r87/4VTwChvkyyrbfL79z5cx0NrVN4Gmp6HvpndL95MCd
+ArnSdslXL/WmupFbxzy+a6mP4jdmR3oC7KyEaCKftOAct+Pz/e1KVI+QA3arR3IK
+xW5TYzSQpoMdo1MwUTAdBgNVHQ4EFgQUpXzUSS/yVomZP8e814EZVbC8FY0wHwYD
+VR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8FY0wDwYDVR0TAQH/BAUwAwEB/zAK
+BggqhkjOPQQDAwNnADBkAjBLN5JiAwPChO4RWfAMy+XjUbllaTFTxRqwCRliwx0v
+f4aNNQ6Vrzv3pYXXmwl0CaoCMGFKKLm6EVwvQcILpSL3JpkfcKMfsUlJgdkVlF/W
+rPSb+wS9KsT0dcF2DU5F12BycQ==
+-----END CERTIFICATE-----
+"
+    }
+
+    // Extract only root CA cert (last in chain)
+    fn root_ca_only() -> &'static [u8] {
+        b"-----BEGIN CERTIFICATE-----
+MIICTzCCAdagAwIBAgIUeUyrqFAE0stc3jxOpGo12mTasB0wCgYIKoZIzj0EAwMw
+XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
+MB4XDTI1MDkwNTA1NDIxNVoXDTM1MDkwMzA1NDIxNVowXzELMAkGA1UEBhMCVVMx
+CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEVMBMGA1UECgwMTWln
+VEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENBMHYwEAYHKoZIzj0CAQYF
+K4EEACIDYgAEDnCmBt1r87/4VTwChvkyyrbfL79z5cx0NrVN4Gmp6HvpndL95MCd
+ArnSdslXL/WmupFbxzy+a6mP4jdmR3oC7KyEaCKftOAct+Pz/e1KVI+QA3arR3IK
+xW5TYzSQpoMdo1MwUTAdBgNVHQ4EFgQUpXzUSS/yVomZP8e814EZVbC8FY0wHwYD
+VR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8FY0wDwYDVR0TAQH/BAUwAwEB/zAK
+BggqhkjOPQQDAwNnADBkAjBLN5JiAwPChO4RWfAMy+XjUbllaTFTxRqwCRliwx0v
+f4aNNQ6Vrzv3pYXXmwl0CaoCMGFKKLm6EVwvQcILpSL3JpkfcKMfsUlJgdkVlF/W
+rPSb+wS9KsT0dcF2DU5F12BycQ==
+-----END CERTIFICATE-----
+"
+    }
+
+    // Intermediate CA cert (different root from test_chain) for root CA mismatch test
+    fn different_root_chain() -> &'static [u8] {
+        // Use intermediate cert as "root" to simulate different root CA
+        b"-----BEGIN CERTIFICATE-----
+MIICVDCCAdqgAwIBAgIUY4sE3O7mKGtP/otJ0s4WQtwn4ZswCgYIKoZIzj0EAwMw
+XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
+MB4XDTI1MDkwNTA1NDQ0M1oXDTMwMDkwNDA1NDQ0M1owdDELMAkGA1UEBhMCVVMx
+CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEiMCAGA1UECgwZTWln
+VEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwVTWlnVEQgSW50ZXJtZWRp
+YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEhf4d4GTrO4NhJ24aG5A3i4Qu
+mwGZ+Jsfo3siVVy1/vke9tN+ylkZlR5M2bl4O4y2eeUMGrzwSu84L/7crgqnnZsH
+XrOQslNsSYJzB+YrbeJ1GBG+oDnCxvYgLTvCDtDio0IwQDAdBgNVHQ4EFgQUlgaB
+aNJ7MInS+yAYMKVbVr8pAt0wHwYDVR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8
+FY0wCgYIKoZIzj0EAwMDaAAwZQIwHoKqUxUqI2Zw8omp82svEjmN477njoK9YtOU
+XtukW4+7RkU6VqSR6ND/9H83PMrLAjEAkPcCM/8QG3yZL1pxvKv87JwOIMJd5eUu
+QDT7gy1UxPCjOETC2ygJyjJdYxBbXQrr
+-----END CERTIFICATE-----
+"
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_same_chain() {
+        let chain = test_chain();
+        assert!(validate_peer_cert_chain(chain, chain).is_ok());
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_root_ca_mismatch() {
+        let chain = test_chain();
+        let diff = different_root_chain();
+        let result = validate_peer_cert_chain(chain, diff);
+        assert!(result.is_err());
+        match result {
+            Err(Error::PeerCertChainValidation(msg)) => {
+                assert!(msg.contains("Root CA mismatch"));
+            }
+            _ => panic!("Expected PeerCertChainValidation error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_subject_name_mismatch() {
+        let chain = test_chain();
+        let root = root_ca_only();
+        let result = validate_peer_cert_chain(chain, root);
+        assert!(result.is_err());
+        match result {
+            Err(Error::PeerCertChainValidation(msg)) => {
+                assert!(msg.contains("Subject Name mismatch"));
+            }
+            _ => panic!("Expected PeerCertChainValidation error"),
+        }
     }
 }

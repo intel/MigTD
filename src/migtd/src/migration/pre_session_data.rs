@@ -8,8 +8,23 @@ use async_io::{AsyncRead, AsyncWrite};
 
 type Result<T> = core::result::Result<T, MigrationResult>;
 
+/// Extension trait that logs an error (with the supplied context) before
+/// propagating it. Intended for use with `?` to keep call sites concise.
+pub(crate) trait LogErr<T, E> {
+    fn log_err(self, ctx: &str) -> core::result::Result<T, E>;
+}
+
+impl<T, E: core::fmt::Debug> LogErr<T, E> for core::result::Result<T, E> {
+    fn log_err(self, ctx: &str) -> core::result::Result<T, E> {
+        self.map_err(|e| {
+            log::error!("{} error: {:?}\n", ctx, e);
+            e
+        })
+    }
+}
+
 #[repr(C)]
-pub(super) struct PreSessionMessage {
+struct PreSessionMessage {
     pub r#type: u8,
     pub reserved: [u8; 3],
     pub length: u32, // Length in bytes of the message payload
@@ -117,6 +132,9 @@ pub(super) async fn receive_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
     data: &mut [u8],
 ) -> Result<()> {
+    // The underlying transport (vsock/vmcall_raw/virtio_serial) is VMM-mediated
+    // and blocks until data is available or returns an error — it does not
+    // return 0 (EOF) like a POSIX socket would.
     let mut recvd = 0;
     while recvd < data.len() {
         let n = transport.read(&mut data[recvd..]).await.map_err(|e| {
@@ -319,53 +337,98 @@ pub(super) async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
         .ok_or(MigrationResult::InvalidParameter)
 }
 
+/// Encode `(policy, issuer_chain)` into the peer-data blob.
+///
+/// Format: `[u32 LE policy_len][policy][u32 LE chain_len][issuer_chain]`.
+/// Returns `None` if either length exceeds `u32::MAX`.
+pub(crate) fn encode_peer_data(policy: &[u8], issuer_chain: &[u8]) -> Option<Vec<u8>> {
+    let policy_len = u32::try_from(policy.len()).ok()?;
+    let chain_len = u32::try_from(issuer_chain.len()).ok()?;
+
+    let mut blob = Vec::with_capacity(8 + policy.len() + issuer_chain.len());
+    blob.extend_from_slice(&policy_len.to_le_bytes());
+    blob.extend_from_slice(policy);
+    blob.extend_from_slice(&chain_len.to_le_bytes());
+    blob.extend_from_slice(issuer_chain);
+    Some(blob)
+}
+
+/// Decode a peer-data blob produced by [`encode_peer_data`].
+///
+/// Returns borrowed `(policy, issuer_chain)` slices. Rejects trailing bytes.
+pub(crate) fn decode_peer_data(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    if data.len() < 4 {
+        return None;
+    }
+    let policy_len = u32::from_le_bytes(data[..4].try_into().ok()?) as usize;
+    let chain_len_offset = 4usize.checked_add(policy_len)?;
+    if data.len() < chain_len_offset.checked_add(4)? {
+        return None;
+    }
+    let policy = &data[4..chain_len_offset];
+    let chain_len = u32::from_le_bytes(
+        data[chain_len_offset..chain_len_offset + 4]
+            .try_into()
+            .ok()?,
+    ) as usize;
+    let chain_offset = chain_len_offset + 4;
+    let end = chain_offset.checked_add(chain_len)?;
+    // Require exact length — reject trailing bytes.
+    if data.len() != end {
+        return None;
+    }
+    let issuer_chain = &data[chain_offset..end];
+    Some((policy, issuer_chain))
+}
+
+/// Build the local peer-data blob from configured policy and issuer chain.
 #[cfg(feature = "policy_v2")]
-pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
+pub(crate) fn local_peer_data() -> Option<Vec<u8>> {
+    let policy = crate::config::get_policy()?;
+    let issuer_chain = crate::config::get_policy_issuer_chain()?;
+    encode_peer_data(policy, issuer_chain)
+}
+
+/// Exchange peer-data blobs (policy + issuer chain) with the remote.
+///
+/// Returns the peer's blob, validated to be well-formed with non-empty
+/// policy and issuer chain.
+#[cfg(feature = "policy_v2")]
+pub(crate) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
-    pre_session_data: &[u8],
 ) -> Result<Vec<u8>> {
-    let version = exchange_hello_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
+    let version = exchange_hello_packet(transport)
+        .await
+        .log_err("pre_session_data_exchange: exchange_hello_packet")?;
     log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
 
-    send_pre_session_data_packet(pre_session_data, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
+    let local_blob = local_peer_data().ok_or_else(|| {
+        log::error!("pre_session_data_exchange: failed to build local peer_data blob\n");
+        MigrationResult::InvalidParameter
     })?;
 
-    Ok(remote_policy)
+    send_pre_session_data_packet(&local_blob, transport)
+        .await
+        .log_err("pre_session_data_exchange: send_pre_session_data_packet")?;
+    let peer_blob = receive_pre_session_data_packet(transport)
+        .await
+        .log_err("pre_session_data_exchange: receive_pre_session_data_packet")?;
+
+    let (peer_policy, peer_issuer_chain) = decode_peer_data(&peer_blob).ok_or_else(|| {
+        log::error!("pre_session_data_exchange: malformed peer_data blob\n");
+        MigrationResult::InvalidParameter
+    })?;
+    if peer_policy.is_empty() || peer_issuer_chain.is_empty() {
+        log::error!("pre_session_data_exchange: Received empty policy or issuer chain from peer\n");
+        return Err(MigrationResult::InvalidParameter);
+    }
+
+    send_start_session_packet(transport)
+        .await
+        .log_err("pre_session_data_exchange: send_start_session_packet")?;
+    receive_start_session_packet(transport)
+        .await
+        .log_err("pre_session_data_exchange: receive_start_session_packet")?;
+
+    Ok(peer_blob)
 }

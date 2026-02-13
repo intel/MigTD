@@ -73,6 +73,7 @@ mod v2 {
     use crate::config::get_policy_issuer_chain;
     use crate::event_log::{parse_events, verify_event_log};
     use crate::mig_policy::get_rtmrs_from_suppl_data;
+    use crate::migration::pre_session_data::LogErr;
     use crate::migration::servtd_ext::ServtdExt;
 
     const SERVTD_ATTR_IGNORE_ATTRIBUTES: u64 = 0x1_0000_0000;
@@ -100,7 +101,7 @@ mod v2 {
         let raw = RawPolicyData::deserialize_from_json(policy_json)?;
 
         // Get the root CA from collaterals and set it for quote verification
-        let verified_policy = raw.verify(cert_chain, None, None)?;
+        let verified_policy = raw.verify(cert_chain)?;
         let root_ca_der = pem_cert_to_der(verified_policy.get_collaterals().root_ca.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
         attestation::root_ca::set_ca(root_ca_der.as_ref())
@@ -136,20 +137,17 @@ mod v2 {
         policy_peer: &[u8],
         event_log_peer: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        let (policy_peer, peer_issuer_chain) =
+            crate::migration::pre_session_data::decode_peer_data(policy_peer)
+                .ok_or(PolicyError::InvalidParameter)?;
         if is_src {
-            authenticate_migration_dest(
-                quote_peer,
-                event_log_peer,
-                policy_peer,
-                policy_issuer_chain,
-            )
+            authenticate_migration_dest(quote_peer, event_log_peer, policy_peer, peer_issuer_chain)
         } else {
             authenticate_migration_source(
                 quote_peer,
                 event_log_peer,
                 policy_peer,
-                policy_issuer_chain,
+                peer_issuer_chain,
             )
         }
     }
@@ -223,13 +221,14 @@ mod v2 {
         event_log_dst: &[u8],
         mig_policy_dst: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-
+        let (mig_policy_dst, peer_issuer_chain) =
+            crate::migration::pre_session_data::decode_peer_data(mig_policy_dst)
+                .ok_or(PolicyError::InvalidParameter)?;
         let (evaluation_data_dst, verified_policy_dst, tdx_report) = authenticate_rebinding_common(
             tdreport_dst,
             event_log_dst,
             mig_policy_dst,
-            policy_issuer_chain,
+            peer_issuer_chain,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -263,15 +262,16 @@ mod v2 {
         init_tdinfo: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-
+        let (mig_policy_src, peer_issuer_chain) =
+            crate::migration::pre_session_data::decode_peer_data(mig_policy_src)
+                .ok_or(PolicyError::InvalidParameter)?;
         // Verify quote src / event log src / policy src
         let (evaluation_data_src, _verified_policy_src, tdx_report) =
             authenticate_rebinding_common(
                 tdreport_src,
                 event_log_src,
                 mig_policy_src,
-                policy_issuer_chain,
+                peer_issuer_chain,
             )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
@@ -377,26 +377,46 @@ mod v2 {
         Ok(rtmrs)
     }
 
+    /// Verify a peer's migration policy and event log, then validate peer cert chains.
     fn verify_policy_and_event_log<'p>(
         event_log: &[u8],
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
         rtmrs: &[[u8; SHA384_DIGEST_SIZE]; 4],
     ) -> Result<VerifiedPolicy<'p>, PolicyError> {
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
         let unverified_policy = RawPolicyData::deserialize_from_json(mig_policy)?;
 
         // 1. Verify the event log integrity
         verify_event_log(event_log, rtmrs).map_err(|_| PolicyError::InvalidEventLog)?;
 
-        // 2. Verify the integrity of migration policy, with the issuer chains from local policy
-        let verified_policy = unverified_policy.verify(
-            policy_issuer_chain,
-            Some(policy.servtd_identity_issuer_chain.as_bytes()),
-            Some(policy.servtd_tcb_mapping_issuer_chain.as_bytes()),
-        )?;
+        // 2. Verify the peer policy using the peer's issuer chain
+        let verified_policy = unverified_policy.verify(policy_issuer_chain)?;
 
-        // 3. Check the integrity of the policy with its event log
+        // 3. Validate that peer's chains share the same root CA and leaf
+        //    subject name as our local chains.
+        let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let local_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        crypto::validate_peer_cert_chain(
+            local_chain,
+            verified_policy.policy_issuer_chain.as_bytes(),
+        )
+        .log_err("Peer policy cert chain validation")
+        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+
+        crypto::validate_peer_cert_chain(
+            local_policy.servtd_identity_issuer_chain.as_bytes(),
+            verified_policy.servtd_identity_issuer_chain.as_bytes(),
+        )
+        .log_err("Peer identity cert chain validation")
+        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        crypto::validate_peer_cert_chain(
+            local_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
+            verified_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
+        )
+        .log_err("Peer tcb mapping cert chain validation")
+        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+
+        // 4. Check the integrity of the policy with its event log
         let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
         check_policy_integrity(mig_policy, &events)?;
 
@@ -828,18 +848,20 @@ mod v2 {
     /// reuse it for SPDM-level bindings (e.g., REPORTDATA / TH1).
     pub fn authenticate_migration_source_with_init_tdinfo(
         quote_src: &[u8],
-        mig_policy_src: &[u8],
+        peer_data: &[u8],
         event_log_src: &[u8],
         init_tdinfo: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        let (mig_policy_src, peer_issuer_chain) =
+            crate::migration::pre_session_data::decode_peer_data(peer_data)
+                .ok_or(PolicyError::InvalidParameter)?;
 
         let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
             quote_src,
             event_log_src,
             mig_policy_src,
-            policy_issuer_chain,
+            peer_issuer_chain,
         )?;
 
         let relative_reference = get_local_tcb_evaluation_info()?;

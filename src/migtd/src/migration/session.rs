@@ -810,7 +810,7 @@ async fn migration_src_exchange_msk(
     info: &MigrationInformation,
     exchange_information: &ExchangeInformation,
     remote_information: &mut ExchangeInformation,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<()> {
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
@@ -818,7 +818,7 @@ async fn migration_src_exchange_msk(
     let mut ratls_client = ratls::client(
         transport,
         #[cfg(feature = "policy_v2")]
-        remote_policy,
+        peer_data,
     )
     .map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
@@ -872,7 +872,7 @@ async fn migration_dst_exchange_msk(
     info: &MigrationInformation,
     exchange_information: &ExchangeInformation,
     remote_information: &mut ExchangeInformation,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<()> {
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
@@ -880,7 +880,7 @@ async fn migration_dst_exchange_msk(
     let mut ratls_server = ratls::server(
         transport,
         #[cfg(feature = "policy_v2")]
-        remote_policy,
+        peer_data,
     )
     .map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
@@ -931,7 +931,7 @@ async fn migration_dst_exchange_msk(
 async fn migration_src_exchange_msk(
     transport: TransportType,
     info: &MigrationInformation,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<()> {
     use core::ops::DerefMut;
 
@@ -949,7 +949,7 @@ async fn migration_src_exchange_msk(
             &mut spdm_requester,
             &info.mig_info,
             #[cfg(feature = "policy_v2")]
-            remote_policy,
+            peer_data,
         ),
     )
     .await
@@ -976,7 +976,7 @@ async fn migration_src_exchange_msk(
 async fn migration_dst_exchange_msk(
     transport: TransportType,
     info: &MigrationInformation,
-    #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<()> {
     use core::ops::DerefMut;
 
@@ -995,7 +995,7 @@ async fn migration_dst_exchange_msk(
             &mut spdm_responder,
             &info.mig_info,
             #[cfg(feature = "policy_v2")]
-            remote_policy,
+            peer_data,
         ),
     )
     .await
@@ -1041,15 +1041,13 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     )
     .await?;
 
-    // Exchange policy before TLS because of the message size limitation of TLS protocol.
+    // Exchange policy and issuer chain before TLS because of the message size limitation of TLS protocol.
     #[cfg(feature = "policy_v2")]
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60);
     #[cfg(feature = "policy_v2")]
-    let policy = crate::config::get_policy().ok_or(MigrationResult::InvalidParameter)?;
-    #[cfg(feature = "policy_v2")]
-    let remote_policy = Box::pin(with_timeout(
+    let peer_data = Box::pin(with_timeout(
         PRE_SESSION_TIMEOUT,
-        pre_session_data_exchange(&mut transport, policy),
+        pre_session_data_exchange(&mut transport),
     ))
     .await
     .map_err(|e| {
@@ -1078,7 +1076,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 &exchange_information,
                 &mut remote_information,
                 #[cfg(feature = "policy_v2")]
-                remote_policy,
+                peer_data,
             )
             .await?;
         } else {
@@ -1088,7 +1086,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 &exchange_information,
                 &mut remote_information,
                 #[cfg(feature = "policy_v2")]
-                remote_policy,
+                peer_data,
             )
             .await?;
         }
@@ -1125,7 +1123,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 transport,
                 info,
                 #[cfg(feature = "policy_v2")]
-                remote_policy,
+                peer_data,
             )
             .await?;
         } else {
@@ -1133,7 +1131,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 transport,
                 info,
                 #[cfg(feature = "policy_v2")]
-                remote_policy,
+                peer_data,
             )
             .await?;
         }
