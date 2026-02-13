@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, string::ToString, vec::Vec};
 use core::{
     cmp::Ordering,
     convert::{TryFrom, TryInto},
@@ -173,6 +173,8 @@ pub struct VerifiedPolicy<'a> {
     pub servtd_identity_issuer_chain: String,
     pub servtd_tcb_mapping: TdTcbMapping,
     pub servtd_tcb_mapping_issuer_chain: String,
+    /// The policy signing certificate chain (PEM) used to verify this policy.
+    pub policy_issuer_chain: String,
 }
 
 impl VerifiedPolicy<'_> {
@@ -215,25 +217,23 @@ impl<'a> RawPolicyData<'a> {
         Ok(policy_data.collaterals)
     }
 
-    pub fn verify<'c>(
-        &self,
-        policy_issuer_chain: &'c [u8],
-        servtd_identity_issuer_chain: Option<&'c [u8]>,
-        servtd_tcb_mapping_issuer_chain: Option<&'c [u8]>,
-    ) -> Result<VerifiedPolicy<'a>, PolicyError> {
-        // Step 1: Deserialize raw policy and verify signature
-        let policy_data = self.verify_policy_data_signature(policy_issuer_chain)?;
+    /// Verify the policy signature and servtd collateral using the given issuer chain.
+    pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
+        let policy_issuer_chain = core::str::from_utf8(issuer_chain)
+            .map_err(|_| PolicyError::InvalidPolicy)?
+            .to_string();
 
-        // Step 2: Verify and deserialize servtd collateral
+        // Step 1: Verify signature over raw policy data
+        let policy_data = self.verify_policy_data_signature(issuer_chain)?;
+
+        // Step 2: Verify servtd collateral signatures using their own embedded chains
         let servtd_collateral = &policy_data.servtd_collateral;
-        let servtd_identity = servtd_collateral.servtd_identity.verify_signature(
-            servtd_identity_issuer_chain
-                .unwrap_or(servtd_collateral.servtd_identity_issuer_chain.as_bytes()),
-        )?;
-        let servtd_tcb_mapping = servtd_collateral.servtd_tcb_mapping.verify_signature(
-            servtd_tcb_mapping_issuer_chain
-                .unwrap_or(servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes()),
-        )?;
+        let servtd_identity = servtd_collateral
+            .servtd_identity
+            .verify_signature(servtd_collateral.servtd_identity_issuer_chain.as_bytes())?;
+        let servtd_tcb_mapping = servtd_collateral
+            .servtd_tcb_mapping
+            .verify_signature(servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes())?;
 
         let servtd_identity_issuer_chain = servtd_collateral.servtd_identity_issuer_chain.clone();
         let servtd_tcb_mapping_issuer_chain =
@@ -250,6 +250,7 @@ impl<'a> RawPolicyData<'a> {
             servtd_identity_issuer_chain,
             servtd_tcb_mapping,
             servtd_tcb_mapping_issuer_chain,
+            policy_issuer_chain,
         })
     }
 
@@ -858,7 +859,7 @@ mod test {
         let policy = RawPolicyData::deserialize_from_json(policy_data).unwrap();
         let issuer_chain =
             include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
-        policy.verify(issuer_chain, None, None).unwrap();
+        policy.verify(issuer_chain).unwrap();
     }
 
     #[test]

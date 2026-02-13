@@ -25,7 +25,7 @@ use zeroize::Zeroize;
 pub async fn spdm_requester_rebind_old(
     spdm_requester: &mut RequesterContext,
     rebind_info: &MigtdMigrationInformation,
-    remote_policy: Vec<u8>,
+    peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     // `send_and_receive_pub_key` (called below) encodes the requester's
     // ephemeral ECDSA private key into
@@ -33,7 +33,7 @@ pub async fn spdm_requester_rebind_old(
     // asymmetric signing callback can read it. That buffer is a plain
     // `[u8; SIZE]` with no automatic cleanup, so wipe it on every return
     // path here.
-    let result = spdm_requester_rebind_old_inner(spdm_requester, rebind_info, remote_policy).await;
+    let result = spdm_requester_rebind_old_inner(spdm_requester, rebind_info, peer_data).await;
     spdm_requester.common.app_context_data_buffer.zeroize();
     result
 }
@@ -41,7 +41,7 @@ pub async fn spdm_requester_rebind_old(
 async fn spdm_requester_rebind_old_inner(
     spdm_requester: &mut RequesterContext,
     rebind_info: &MigtdMigrationInformation,
-    remote_policy: Vec<u8>,
+    peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     Box::pin(spdm_requester.send_receive_spdm_version()).await?;
     Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
@@ -58,7 +58,7 @@ async fn spdm_requester_rebind_old_inner(
         spdm_requester,
         rebind_info,
         session_id,
-        remote_policy,
+        peer_data,
     ))
     .await?;
 
@@ -78,9 +78,9 @@ async fn spdm_requester_rebind_old_inner(
 pub async fn spdm_responder_rebind_new<'a>(
     spdm_responder_ex: &mut ResponderContextEx<'a>,
     rebind_info: &'a MigtdMigrationInformation,
-    remote_policy: Vec<u8>,
+    peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
-    spdm_responder_ex.remote_policy = remote_policy;
+    spdm_responder_ex.peer_data = peer_data;
     spdm_responder_ex.info = ResponderContextExInfo::RebindInformation(rebind_info);
 
     let spdm_responder = &mut spdm_responder_ex.responder_context;

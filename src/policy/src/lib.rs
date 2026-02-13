@@ -53,6 +53,7 @@ pub enum PolicyError {
     TdReportVerification,
     QuoteGeneration,
     GetTdxReport,
+    PeerCertChainValidation,
 }
 
 pub struct Report<'a> {

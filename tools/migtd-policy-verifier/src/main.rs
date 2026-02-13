@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     let policy = RawPolicyData::deserialize_from_json(&policy_bytes)
         .map_err(|e| anyhow::anyhow!("Failed to parse policy: {:?}", e))?;
     policy
-        .verify(&cert_chain_bytes, None, None)
+        .verify(&cert_chain_bytes)
         .map_err(|e| anyhow::anyhow!("Policy verification failed: {:?}", e))?;
 
     println!("Policy signature and issuer chain verified successfully.");
