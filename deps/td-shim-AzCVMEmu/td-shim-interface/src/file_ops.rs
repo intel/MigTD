@@ -141,17 +141,18 @@ pub fn init_file_based_emulation_with_real_files(policy_path: &str, root_ca_path
     policy_loaded && root_ca_loaded
 }
 
-/// Initialize file-based emulation with immediate file loading including policy issuer chain
+/// Initialize file-based emulation with policy and issuer chain only
 ///
-/// This function loads the policy, root CA, and policy issuer chain files immediately
-/// from the filesystem and stores them in the emulation buffers. It calls the base
-/// implementation and adds policy issuer chain loading.
+/// With policy_v2 the root CA is embedded in the policy collaterals, so this
+/// loads only the policy and the issuer chain files from the filesystem.
 #[cfg(feature = "policy_v2")]
 pub fn init_file_based_emulation_with_policy_chain(
     policy_path: &str,
-    root_ca_path: &str,
     policy_issuer_chain_path: &str,
 ) -> bool {
-    init_file_based_emulation_with_real_files(policy_path, root_ca_path)
-        && crate::td_uefi_pi::fv::load_policy_issuer_chain_from_file(policy_issuer_chain_path)
+    crate::td_uefi_pi::fv::set_file_reader(real_file_reader);
+    let policy_loaded = crate::td_uefi_pi::fv::load_policy_from_file(policy_path);
+    let chain_loaded =
+        crate::td_uefi_pi::fv::load_policy_issuer_chain_from_file(policy_issuer_chain_path);
+    policy_loaded && chain_loaded
 }

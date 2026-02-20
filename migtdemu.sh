@@ -396,7 +396,9 @@ fi
 
 # Check if configuration files exist
 check_file "$POLICY_FILE" "Policy"
-check_file "$ROOT_CA_FILE" "Root CA"
+if [[ "$USE_POLICY_V2" != true ]]; then
+    check_file "$ROOT_CA_FILE" "Root CA"
+fi
 if [[ "$USE_POLICY_V2" == true ]]; then
     check_file "$POLICY_ISSUER_CHAIN_FILE" "Policy Issuer Chain"
 fi
@@ -500,8 +502,12 @@ echo "  Destination: ${DEST_IP}:${DEST_PORT}"
 echo "  Request ID: $REQUEST_ID"
 echo "  CPU affinity: $NUM_CPUS (using: $TASKSET_CMD)"
 echo "  Policy file: $POLICY_FILE"
-echo "  Root CA file: $ROOT_CA_FILE"
-echo "  Policy Issuer Chain file: $POLICY_ISSUER_CHAIN_FILE"
+if [[ "$USE_POLICY_V2" != true ]]; then
+    echo "  Root CA file: $ROOT_CA_FILE"
+fi
+if [[ "$USE_POLICY_V2" == true ]]; then
+    echo "  Policy Issuer Chain file: $POLICY_ISSUER_CHAIN_FILE"
+fi
 if [[ -n "$MOCK_QUOTE_FILE" ]]; then
     echo "  Mock Quote file: $MOCK_QUOTE_FILE"
 fi
@@ -534,7 +540,10 @@ if [[ "$RUN_BOTH" == true ]]; then
     DEST_ARGS=("--role" "destination" "--request-id" "$REQUEST_ID")
 
     # Build environment variable list for destination
-    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_destination.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_destination.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    if [[ "$USE_POLICY_V2" != true ]]; then
+        DEST_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
+    fi
     if [[ -n "$TSS2_TCTI_AUTO" ]]; then
         DEST_ENV_VARS+=("TSS2_TCTI=$TSS2_TCTI_AUTO")
     fi
@@ -571,7 +580,10 @@ if [[ "$RUN_BOTH" == true ]]; then
     )
 
     # Build environment variable list for source
-    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_source.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_source.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    if [[ "$USE_POLICY_V2" != true ]]; then
+        SRC_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
+    fi
     if [[ -n "$TSS2_TCTI_AUTO" ]]; then
         SRC_ENV_VARS+=("TSS2_TCTI=$TSS2_TCTI_AUTO")
     fi
@@ -621,7 +633,10 @@ else
     echo -e "${BLUE}Starting MigTD in $ROLE mode...${NC}"
 
     # Build environment variable list
-    ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    if [[ "$USE_POLICY_V2" != true ]]; then
+        ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
+    fi
     if [[ -n "$TSS2_TCTI_AUTO" ]]; then
         ENV_VARS+=("TSS2_TCTI=$TSS2_TCTI_AUTO")
     fi

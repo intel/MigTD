@@ -1,0 +1,20 @@
+[package]
+name = "tdx-mock-data"
+version = "0.1.0"
+edition = "2021"
+authors = ["Microsoft Corporation"]
+description = "Mock TD quote and report data for testing"
+license = "BSD-2-Clause-Patent"
+
+[dependencies]
+# Use the original tdx-tdcall for types
+tdx-tdcall = { path = "../../td-shim/tdx-tdcall" }
+log = { version = "0.4", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+
+[features]
+default = []
+
+[lib]
+name = "tdx_mock_data"
+path = "src/lib.rs"
