@@ -130,7 +130,6 @@ pub mod tdreport {
 // Add td_call emulation support
 pub fn td_call(args: &mut TdcallArgs) -> u64 {
     const TDVMCALL_SYS_RD: u64 = 0x0000b;
-    const TDVMCALL_TDINFO: u64 = 0x00001;
 
     match args.rax {
         0x00001 => {

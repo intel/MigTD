@@ -926,7 +926,6 @@ pub fn tdvmcall_get_quote(buffer: &mut [u8]) -> Result<(), original_tdx_tdcall::
     //    - GET_COLLATERAL_REQ (type=2): Collateral request
     //    - GET_QUOTE_REQ (type=0): Quote request with QGS header + TDREPORT
     const SERVTD_HEADER_SIZE: usize = 4;
-    const TDREPORT_SIZE: usize = 1024;
     const QGS_MSG_HEADER_SIZE: usize = 16; // qgs_msg_header_t size
 
     // QGS message types and version from qgs_msg_lib.h
@@ -1099,7 +1098,6 @@ fn handle_collateral_request(
     //     ... size fields ...   // 20-47 (7 * u32)
     //     u8[] collaterals;     // 48+
     // }
-    const MSG_HEADER_SIZE: usize = 16;
     const GET_COLLATERAL_RESPONSE_HEADER: usize = 48; // MsgHeader + version fields + size fields
     const SERVTD_HEADER_SIZE: usize = 4;
 
@@ -1181,7 +1179,7 @@ fn handle_collateral_request(
 /// - `has_qgs_header`: If true, the request has SERVTD_HEADER + QGS message before TDREPORT
 fn handle_quote_request(
     buffer: &mut [u8],
-    in_len: usize,
+    _in_len: usize,
     has_qgs_header: bool,
 ) -> Result<(), original_tdx_tdcall::TdVmcallError> {
     use original_tdx_tdcall::TdVmcallError;
