@@ -17,10 +17,10 @@ use migtd::migration::logging::{
     create_logarea, enable_logarea, init_vmm_logger, u8_to_levelfilter,
 };
 use migtd::migration::session::{exchange_msk, report_status};
-use migtd::migration::{MigrationResult, MigtdMigrationInformation};
+use migtd::migration::MigrationResult;
 
 use tdx_tdcall_emu::tdreport_emu::tdcall_report_emulated;
-use tdx_tdcall_emu::tdx_emu::set_emulated_start_migration;
+use tdx_tdcall_emu::tdx_emu::{set_emulated_start_migration, set_emulated_start_rebinding};
 use tdx_tdcall_emu::{init_tcp_emulation_with_mode, start_tcp_server_sync, TcpEmulationMode};
 
 // Import shared functions from main.rs
@@ -179,6 +179,7 @@ fn parse_commandline_args() {
     let mut destination_ip: Option<String> = None;
     let mut destination_port: Option<u16> = None;
     let mut help_requested = false;
+    let mut operation: &str = "migration";
 
     let mut i = 1;
     while i < args.len() {
@@ -211,6 +212,30 @@ fn parse_commandline_args() {
                     process::exit(1);
                 }
             },
+            "--operation" | "-o" if i + 1 < args.len() => {
+                match args[i + 1].to_lowercase().as_str() {
+                    "migration" | "mig" => {
+                        operation = "migration";
+                        i += 2;
+                    }
+                    "rebind-prepare" | "rebind_prepare" | "rp" => {
+                        operation = "rebind-prepare";
+                        i += 2;
+                    }
+                    "rebind-finalize" | "rebind_finalize" | "rf" => {
+                        operation = "rebind-finalize";
+                        i += 2;
+                    }
+                    _ => {
+                        println!(
+                            "Invalid operation: {}. Use 'migration', 'rebind-prepare', or 'rebind-finalize'",
+                            args[i + 1]
+                        );
+                        print_usage();
+                        process::exit(1);
+                    }
+                }
+            }
             "--uuid" | "-u" if i + 4 < args.len() => {
                 if let (Ok(u1), Ok(u2), Ok(u3), Ok(u4)) = (
                     args[i + 1].parse::<u32>(),
@@ -275,29 +300,13 @@ fn parse_commandline_args() {
         std::process::exit(0);
     }
 
-    // Create migration information using the same pattern as in data.rs
-    let mig_info = unsafe {
-        // Create a zero-initialized structure and then set the fields
-        let mut info: MigtdMigrationInformation = core::mem::zeroed();
-        info.mig_request_id = mig_request_id;
-        info.migration_source = if is_source { 1 } else { 0 };
-        info.target_td_uuid = [
-            target_td_uuid[0] as u64,
-            target_td_uuid[1] as u64,
-            target_td_uuid[2] as u64,
-            target_td_uuid[3] as u64,
-        ];
-        info.binding_handle = binding_handle;
-        // Note: mig_policy_id and communication_id don't exist when vmcall-raw feature is enabled
-        info
-    };
-
-    log::info!("Migration information:\n");
+    log::info!("Migration Request information:\n");
     log::info!("  Request ID: {}\n", mig_request_id);
     log::info!(
         "  Role: {}",
         if is_source { "Source" } else { "Destination" }
     );
+    log::info!("  Operation: {}\n", operation);
     log::info!("  Target TD UUID: {:?}\n", target_td_uuid);
     log::info!("  Binding Handle: {:#x}\n", binding_handle);
 
@@ -362,14 +371,48 @@ fn parse_commandline_args() {
         }
     }
 
-    // Queue all three requests: EnableLogArea → GetReportData → StartMigration
-    log::info!("Setting up migration flow (EnableLogArea → GetReportData → StartMigration)\n");
-    set_emulated_start_migration(
-        mig_info.mig_request_id,
-        mig_info.migration_source as u8,
-        mig_info.target_td_uuid,
-        mig_info.binding_handle,
-    );
+    let td_uuid = [
+        target_td_uuid[0] as u64,
+        target_td_uuid[1] as u64,
+        target_td_uuid[2] as u64,
+        target_td_uuid[3] as u64,
+    ];
+    let rebinding_src = if is_source { 1u8 } else { 0u8 };
+
+    // Queue emulated requests based on selected operation
+    match operation {
+        "migration" => {
+            log::info!(
+                "Setting up migration flow (EnableLogArea → GetReportData → StartMigration)\n"
+            );
+            set_emulated_start_migration(mig_request_id, rebinding_src, td_uuid, binding_handle);
+        }
+        "rebind-prepare" => {
+            log::info!(
+                "Setting up rebind-prepare flow (EnableLogArea → GetMigtdData → StartRebinding)\n"
+            );
+            set_emulated_start_rebinding(
+                mig_request_id,
+                rebinding_src,
+                0, // MIGTD_REBIND_OP_PREPARE
+                td_uuid,
+                binding_handle,
+            );
+        }
+        "rebind-finalize" => {
+            log::info!(
+                "Setting up rebind-finalize flow (EnableLogArea → GetMigtdData → StartRebinding)\n"
+            );
+            set_emulated_start_rebinding(
+                mig_request_id,
+                rebinding_src,
+                1, // MIGTD_REBIND_OP_FINALIZE
+                td_uuid,
+                binding_handle,
+            );
+        }
+        _ => unreachable!(),
+    }
 }
 
 fn print_usage() {
@@ -387,6 +430,7 @@ fn print_usage() {
     println!(
         "  --role, -m ROLE            Set role as 'source' or 'destination' (default: source)"
     );
+    println!("  --operation, -o OP         Set operation: 'migration' (default), 'rebind-prepare', or 'rebind-finalize'");
     println!("  --uuid, -u U1 U2 U3 U4     Set target TD UUID as four integers (default: 1 2 3 4)");
     println!("  --binding, -b HANDLE       Set binding handle as hex or decimal (default: 0x1234)");
     println!("  --dest-ip, -d IP           Set destination IP address for connection (default: 127.0.0.1)");
@@ -401,6 +445,11 @@ fn print_usage() {
     println!("  ./migtd --role source --request-id 42");
     println!("  ./migtd -m destination -r 42 -b 0x5678");
     println!("  ./migtd --role source --dest-ip 192.168.1.100 --dest-port 8001");
+    println!();
+    println!("  # Rebinding:");
+    println!("  ./migtd --role source --operation rebind-prepare --request-id 42");
+    println!("  ./migtd -m destination -o rebind-prepare -r 42");
+    println!("  ./migtd --role source --operation rebind-finalize --request-id 42");
 }
 
 fn handle_pre_mig_emu() -> i32 {
@@ -556,9 +605,76 @@ fn handle_pre_mig_emu() -> i32 {
                             // Continue to process next request (migration)
                         }
                         #[cfg(all(feature = "policy_v2"))]
-                        WaitForRequestResponse::StartRebinding(_)
-                        | WaitForRequestResponse::GetMigtdData(_) => {
-                            unimplemented!();
+                        WaitForRequestResponse::StartRebinding(rebinding_info) => {
+                            use migtd::migration::rebinding::start_rebinding;
+
+                            log::info!(migration_request_id = rebinding_info.mig_request_id; "Processing StartRebinding request\n");
+                            let mut data = Vec::new();
+                            let status = start_rebinding(&rebinding_info, &mut data)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
+
+                            let status_code_u8 = status as u8;
+                            if status_code_u8 == MigrationResult::Success as u8 {
+                                log::info!(migration_request_id = rebinding_info.mig_request_id; "Successfully completed rebinding\n");
+                            } else {
+                                log::error!(migration_request_id = rebinding_info.mig_request_id;
+                                    "Failure during rebinding status code: {:x}\n", status_code_u8);
+                            }
+
+                            let _ = report_status(
+                                status_code_u8,
+                                rebinding_info.mig_request_id,
+                                &data,
+                            )
+                            .await
+                            .map_err(|e| {
+                                log::error!(migration_request_id = rebinding_info.mig_request_id;
+                                    "Failed to report status for StartRebinding: {:?}\n", e);
+                            });
+                            log::trace!(migration_request_id = rebinding_info.mig_request_id;
+                                "ReportStatus for rebinding completed\n");
+
+                            if status_code_u8 == MigrationResult::Success as u8 {
+                                log::info!(migration_request_id = rebinding_info.mig_request_id; "Rebinding successful!\n");
+                                return 0;
+                            } else {
+                                let status_code = status_code_u8 as i32;
+                                log::error!(migration_request_id = rebinding_info.mig_request_id;
+                                    "Rebinding failed with code: {}\n", status_code);
+                                return status_code;
+                            }
+                        }
+                        #[cfg(all(feature = "policy_v2"))]
+                        WaitForRequestResponse::GetMigtdData(wfr_info) => {
+                            use migtd::migration::session::get_migtd_data;
+
+                            log::info!(migration_request_id = wfr_info.mig_request_id; "Processing GetMigtdData request\n");
+                            let mut data = Vec::new();
+                            let status = get_migtd_data(
+                                &wfr_info.reportdata,
+                                &mut data,
+                                wfr_info.mig_request_id,
+                            )
+                            .await
+                            .map(|_| MigrationResult::Success)
+                            .unwrap_or_else(|e| e);
+
+                            let status_code_u8 = status as u8;
+                            let _ = report_status(
+                                status_code_u8,
+                                wfr_info.mig_request_id,
+                                &data,
+                            )
+                            .await;
+                            if status_code_u8 == MigrationResult::Success as u8 {
+                                log::trace!(migration_request_id = wfr_info.mig_request_id; "Successfully completed get migtd data\n");
+                            } else {
+                                log::error!(migration_request_id = wfr_info.mig_request_id;
+                                    "Failure during get migtd data status code: {:x}\n", status_code_u8);
+                            }
+                            // Continue to process next request
                         }
                     }
                 }

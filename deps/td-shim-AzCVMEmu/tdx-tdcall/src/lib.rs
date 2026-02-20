@@ -37,8 +37,8 @@ mod collateral_data;
 
 // Re-export TDX emulation functions
 pub use tdx_emu::{
-    connect_tcp_client, init_tcp_emulation_with_mode, start_tcp_server_sync, tcp_receive_data,
-    tcp_send_data, TcpEmulationMode,
+    connect_tcp_client, init_tcp_emulation_with_mode, set_emulated_start_rebinding,
+    start_tcp_server_sync, tcp_receive_data, tcp_send_data, TcpEmulationMode,
 };
 
 // Re-export the emulated functions
