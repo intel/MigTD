@@ -63,6 +63,13 @@ pub enum EmuMigRequest {
         target_td_uuid: [u64; 4],
         binding_handle: u64,
     },
+    StartRebinding {
+        request_id: u64,
+        rebinding_src: u8,
+        operation: u8,
+        target_td_uuid: [u64; 4],
+        binding_handle: u64,
+    },
     GetReportData {
         request_id: u64,
         reportdata: [u8; 64],
@@ -70,6 +77,10 @@ pub enum EmuMigRequest {
     EnableLogArea {
         request_id: u64,
         log_max_level: u8,
+    },
+    GetMigtdData {
+        request_id: u64,
+        reportdata: [u8; 64],
     },
 }
 
@@ -153,6 +164,44 @@ pub fn set_emulated_enable_log_area(request_id: u64, log_max_level: u8) {
     set_emulated_mig_request(EmuMigRequest::EnableLogArea {
         request_id,
         log_max_level,
+    });
+}
+
+/// Helper: Set a complete rebinding flow with EnableLogArea, GetReportData, and StartRebinding
+/// Automatically queues all three requests in sequence
+pub fn set_emulated_start_rebinding(
+    request_id: u64,
+    rebinding_src: u8,
+    operation: u8,
+    target_td_uuid: [u64; 4],
+    binding_handle: u64,
+) {
+    let enable_log_request_id = request_id | 0x8000_0000_0000_0000;
+    let get_report_request_id = request_id | 0x4000_0000_0000_0000;
+
+    // Step 1: Queue EnableLogArea with Info level (3)
+    set_emulated_mig_request(EmuMigRequest::EnableLogArea {
+        request_id: enable_log_request_id,
+        log_max_level: 3,
+    });
+
+    // Step 2: Queue GetMigtdData with default reportdata
+    let mut reportdata = [0u8; 64];
+    reportdata[0..8].copy_from_slice(&request_id.to_le_bytes());
+    reportdata[8..23].copy_from_slice(b"MIGTD_REBINDING"); // 15 bytes
+    reportdata[23] = 0;
+    set_emulated_mig_request(EmuMigRequest::GetMigtdData {
+        request_id: get_report_request_id,
+        reportdata,
+    });
+
+    // Step 3: Queue the StartRebinding request with original request_id
+    set_emulated_mig_request(EmuMigRequest::StartRebinding {
+        request_id,
+        rebinding_src,
+        operation,
+        target_td_uuid,
+        binding_handle,
     });
 }
 
@@ -582,6 +631,101 @@ pub fn tdvmcall_migtd_waitforrequest(
                     "tdvmcall_migtd_waitforrequest: EnableLogArea request_id={} log_max_level={}",
                     request_id,
                     log_max_level
+                );
+            }
+            EmuMigRequest::StartRebinding {
+                request_id,
+                rebinding_src,
+                operation,
+                target_td_uuid,
+                binding_handle,
+            } => {
+                // DataStatusOperation::StartRebinding = 2
+                // RebindingInfo layout (56 bytes minimum):
+                //   [0..8]   mig_request_id (u64)
+                //   [8]      rebinding_src (u8)
+                //   [9]      has_init_data (u8) - 0 for emulation
+                //   [10]     operation (u8)
+                //   [11..16] reserved [0; 5]
+                //   [16..48] target_td_uuid ([u64; 4])
+                //   [48..56] binding_handle (u64)
+                const START_REBINDING_PAYLOAD_LEN: usize = 56;
+                let status = 0x0000_0000_0000_0201u64; // byte[0]=1 (success), byte[1]=2 (StartRebinding)
+                let length = START_REBINDING_PAYLOAD_LEN as u32;
+
+                if data_buffer.len() < HEADER_LEN + START_REBINDING_PAYLOAD_LEN {
+                    error!(
+                        "waitforrequest buffer too small for StartRebinding: have={} need={}",
+                        data_buffer.len(),
+                        HEADER_LEN + START_REBINDING_PAYLOAD_LEN
+                    );
+                    return Err(TdVmcallError::Other);
+                }
+
+                data_buffer[0..8].copy_from_slice(&status.to_le_bytes());
+                data_buffer[8..12].copy_from_slice(&length.to_le_bytes());
+
+                let payload =
+                    &mut data_buffer[HEADER_LEN..HEADER_LEN + START_REBINDING_PAYLOAD_LEN];
+
+                // mig_request_id
+                payload[0..8].copy_from_slice(&request_id.to_le_bytes());
+                // rebinding_src
+                payload[8] = rebinding_src;
+                // has_init_data = 0 (no inline init data in emulation; fetched locally)
+                payload[9] = 0;
+                // operation
+                payload[10] = operation;
+                // reserved [5 bytes]
+                for b in &mut payload[11..16] {
+                    *b = 0;
+                }
+                // target_td_uuid [u64; 4]
+                let mut off = 16usize;
+                for v in target_td_uuid.iter() {
+                    payload[off..off + 8].copy_from_slice(&v.to_le_bytes());
+                    off += 8;
+                }
+                // binding_handle
+                payload[48..56].copy_from_slice(&binding_handle.to_le_bytes());
+
+                log::info!(
+                    "tdvmcall_migtd_waitforrequest: StartRebinding request_id={} src={} op={}",
+                    request_id,
+                    rebinding_src,
+                    operation
+                );
+            }
+            EmuMigRequest::GetMigtdData {
+                request_id,
+                reportdata,
+            } => {
+                // DataStatusOperation::GetMigtdData = 5
+                let status = 0x0000_0000_0000_0501u64; // byte[0]=1 (success), byte[1]=5 (GetMigtdData)
+                let length = REPORT_DATA_PAYLOAD_LEN as u32;
+
+                if data_buffer.len() < HEADER_LEN + REPORT_DATA_PAYLOAD_LEN {
+                    error!(
+                        "waitforrequest buffer too small for GetMigtdData: have={} need={}",
+                        data_buffer.len(),
+                        HEADER_LEN + REPORT_DATA_PAYLOAD_LEN
+                    );
+                    return Err(TdVmcallError::Other);
+                }
+
+                data_buffer[0..8].copy_from_slice(&status.to_le_bytes());
+                data_buffer[8..12].copy_from_slice(&length.to_le_bytes());
+
+                let payload = &mut data_buffer[HEADER_LEN..HEADER_LEN + REPORT_DATA_PAYLOAD_LEN];
+
+                // mig_request_id
+                payload[0..8].copy_from_slice(&request_id.to_le_bytes());
+                // reportdata [u8; 64]
+                payload[8..72].copy_from_slice(&reportdata);
+
+                log::info!(
+                    "tdvmcall_migtd_waitforrequest: GetMigtdData request_id={}",
+                    request_id,
                 );
             }
         }

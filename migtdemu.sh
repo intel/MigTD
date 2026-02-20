@@ -18,6 +18,7 @@ DEFAULT_DEST_IP="127.0.0.1"
 DEFAULT_DEST_PORT="8001"
 DEFAULT_BUILD_MODE="release"
 DEFAULT_NUM_CPUS="1"
+DEFAULT_OPERATION="migrate"    # migrate, rebind-prepare, or rebind-finalize
 USE_SUDO=true
 RUN_BOTH=false
 SKIP_RA=false
@@ -25,6 +26,8 @@ USE_MOCK_REPORT=false
 EXTRA_FEATURES=""
 USE_POLICY_V2=false
 MOCK_QUOTE_FILE=""  # Optional mock quote file path
+EXPLICIT_POLICY_FILE=false
+EXPLICIT_POLICY_ISSUER_CHAIN=false
 DEFAULT_RUST_BACKTRACE="1"
 # Default RUST_LOG: verbose in debug, info in release; can be overridden by env
 DEFAULT_RUST_LOG_DEBUG="debug"
@@ -46,6 +49,7 @@ show_usage() {
     echo "Options:"
     echo "  -r, --role ROLE              Set role as 'source' or 'destination' (default: source)"
     echo "  -i, --request-id ID          Set migration request ID (default: 1)"
+    echo "  -o, --operation OP           Set operation: 'migrate' (default), 'rebind-prepare', or 'rebind-finalize'"
     echo "  -d, --dest-ip IP             Set destination IP address (default: 127.0.0.1)"
     echo "  -p, --dest-port PORT         Set destination port (default: 8001)"
     echo "  --policy-file FILE           Set policy file path (default: config/policy.json)"
@@ -83,6 +87,10 @@ show_usage() {
     echo "    the actual migration, ensuring logging is enabled and a TD report is generated."
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
+    echo "  - Rebinding operations (rebind-prepare, rebind-finalize) always require policy_v2, which"
+    echo "    is enabled automatically. Default policy files for rebinding are in config/AzCVMEmu/."
+    echo "  - The 'rebind-prepare' operation performs the actual rebinding handshake (TLS,"
+    echo "    token exchange, and approval). 'rebind-finalize' clears the session token."
     echo
     echo "Examples:"
     echo "  # Migration testing (includes EnableLogArea → GetReportData → StartMigration)"
@@ -98,12 +106,19 @@ show_usage() {
     echo "  $0 --features igvm-attest            # Build with IGVM attestation feature"
     echo "  $0 --features igvm-attest --mock-report --both # Build with both IGVM attest and mock report mode"
     echo "  $0 --features spdm_attestation       # Build with extra SPDM attestation feature"
-    echo "  \$0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both     # Run both with policy v2 in debug mode"
-    echo "  \$0 --log-level debug --role source   # Run with debug log level"
-    echo "  \$0 --log-level warn --release        # Run with warn log level in release mode"
-    echo "  \$0 --num-cpus 2 --both               # Run with 2 CPUs (0-1)"
-    echo "  \$0 --num-cpus 4 --both               # Run with 4 CPUs (0-3)"
-    echo "  \$0 --num-cpus 3 --both               # Run with 3 CPUs (0-2)"
+    echo "  $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both     # Run both with policy v2 in debug mode"
+    echo "  $0 --log-level debug --role source   # Run with debug log level"
+    echo "  $0 --log-level warn --release        # Run with warn log level in release mode"
+    echo "  $0 --num-cpus 2 --both               # Run with 2 CPUs (0-1)"
+    echo "  $0 --num-cpus 4 --both               # Run with 4 CPUs (0-3)"
+    echo "  $0 --num-cpus 3 --both               # Run with 3 CPUs (0-2)"
+    echo
+    echo "  # Rebinding examples:"
+    echo "  $0 --operation rebind-prepare --skip-ra --both              # Rebind-prepare with skip RA"
+    echo "  $0 --operation rebind-prepare --mock-report --both          # Rebind-prepare with mock report"
+    echo "  $0 --operation rebind-finalize --mock-report --both         # Rebind-finalize with mock report"
+    echo "  $0 --operation rebind-prepare --role destination --mock-report  # Run only rebind destination"
+    echo "  $0 --operation rebind-prepare --debug --log-level trace --mock-report --both  # Debug rebind"
 }
 
 # Function to check if file exists
@@ -198,9 +213,10 @@ DEST_IP="$DEFAULT_DEST_IP"
 DEST_PORT="$DEFAULT_DEST_PORT"
 POLICY_FILE="$DEFAULT_POLICY_FILE"
 ROOT_CA_FILE="$DEFAULT_ROOT_CA_FILE"
-POLICY_ISSUER_CHAIN_FILE=""  # No default - mandatory when using --policy-v2
+POLICY_ISSUER_CHAIN_FILE=""  # No default - mandatory when using --policy-v2 for migrate
 BUILD_MODE="$DEFAULT_BUILD_MODE"
 NUM_CPUS="$DEFAULT_NUM_CPUS"
+OPERATION="$DEFAULT_OPERATION"
 CUSTOM_LOG_LEVEL=""
 
 while [[ $# -gt 0 ]]; do
@@ -213,6 +229,10 @@ while [[ $# -gt 0 ]]; do
             REQUEST_ID="$2"
             shift 2
             ;;
+        -o|--operation)
+            OPERATION="$2"
+            shift 2
+            ;;
         -d|--dest-ip)
             DEST_IP="$2"
             shift 2
@@ -223,6 +243,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --policy-file)
             POLICY_FILE="$2"
+            EXPLICIT_POLICY_FILE=true
             shift 2
             ;;
         --root-ca-file)
@@ -231,6 +252,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --policy-issuer-chain-file)
             POLICY_ISSUER_CHAIN_FILE="$2"
+            EXPLICIT_POLICY_ISSUER_CHAIN=true
             shift 2
             ;;
         --debug)
@@ -293,6 +315,27 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate operation
+if [[ "$OPERATION" != "migrate" && "$OPERATION" != "rebind-prepare" && "$OPERATION" != "rebind-finalize" ]]; then
+    echo -e "${RED}Error: Operation must be 'migrate', 'rebind-prepare', or 'rebind-finalize', got: $OPERATION${NC}" >&2
+    exit 1
+fi
+
+# Detect rebind mode
+IS_REBIND=false
+if [[ "$OPERATION" == "rebind-prepare" || "$OPERATION" == "rebind-finalize" ]]; then
+    IS_REBIND=true
+    # Rebinding always requires policy_v2
+    USE_POLICY_V2=true
+    # Use rebind-specific defaults when not explicitly set
+    if [[ "$EXPLICIT_POLICY_FILE" != true ]]; then
+        POLICY_FILE="./config/AzCVMEmu/policy_v2_signed.json"
+    fi
+    if [[ "$EXPLICIT_POLICY_ISSUER_CHAIN" != true ]]; then
+        POLICY_ISSUER_CHAIN_FILE="./config/AzCVMEmu/policy_issuer_chain.pem"
+    fi
+fi
+
 # Automatically enable mock-report mode when mock-quote-file is specified
 if [[ -n "$MOCK_QUOTE_FILE" && "$USE_MOCK_REPORT" != true ]]; then
     echo -e "${YELLOW}Note: --mock-quote-file specified, automatically enabling --mock-report${NC}"
@@ -343,8 +386,8 @@ if [[ "$RUN_BOTH" != true ]]; then
     fi
 fi
 
-# Validate policy v2 requirements
-if [[ "$USE_POLICY_V2" == true ]]; then
+# Validate policy v2 requirements (skip for rebind — it auto-configures)
+if [[ "$USE_POLICY_V2" == true && "$IS_REBIND" != true ]]; then
     if [[ "$POLICY_FILE" == "$DEFAULT_POLICY_FILE" ]]; then
         echo -e "${RED}Error: When using --policy-v2, you must explicitly specify a policy file with --policy-file${NC}" >&2
         echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
@@ -359,6 +402,36 @@ fi
 
 # Change to MigTD directory
 cd "$(dirname "$0")"
+
+# Generate policy from mock report data so measurements match the hardcoded mock
+# TD report used at runtime. Only used for rebind operations with --mock-report.
+generate_policy_from_mock_report() {
+    local policy_script="./sh_script/build_AzCVMEmu_policy_and_test.sh"
+    if [[ ! -x "$policy_script" ]]; then
+        echo -e "${RED}Error: Policy builder script not found: $policy_script${NC}" >&2
+        exit 1
+    fi
+
+    echo -e "${BLUE}=== Generating policy from mock report data ===${NC}"
+    local gen_args=("--mock-report" "--skip-test")
+    if [[ -n "$MOCK_QUOTE_FILE" ]]; then
+        gen_args+=("--mock-quote-file" "$MOCK_QUOTE_FILE")
+    fi
+    if [[ -n "$EXTRA_FEATURES" ]]; then
+        gen_args+=("--extra-features" "$EXTRA_FEATURES")
+    fi
+
+    if ! "$policy_script" "${gen_args[@]}"; then
+        echo -e "${RED}Error: Failed to generate policy from mock report data${NC}" >&2
+        exit 1
+    fi
+    echo -e "${GREEN}Policy generated successfully from mock report data${NC}"
+    echo
+}
+
+if [[ "$IS_REBIND" == true && "$USE_MOCK_REPORT" == true ]]; then
+    generate_policy_from_mock_report
+fi
 
 # Build features string based on configuration
 build_features_string() {
@@ -481,6 +554,7 @@ echo -e "${BLUE}Setting up environment variables...${NC}"
 # Display configuration
 echo -e "${GREEN}Configuration:${NC}"
 echo "  Build mode: $BUILD_MODE"
+echo "  Operation: $OPERATION"
 if [[ "$USE_POLICY_V2" == true ]]; then
     echo "  Policy version: v2"
 else
@@ -536,11 +610,27 @@ if [[ "$SKIP_RA" != true && "$USE_MOCK_REPORT" != true && -e /dev/tpmrm0 ]]; the
 fi
 
 if [[ "$RUN_BOTH" == true ]]; then
+    if [[ "$IS_REBIND" == true ]]; then
+        echo -e "${BLUE}=== Running rebinding ($OPERATION) with both sides ===${NC}"
+    fi
+    echo
     echo -e "${BLUE}Starting destination in background...${NC}"
     DEST_ARGS=("--role" "destination" "--request-id" "$REQUEST_ID")
+    if [[ "$IS_REBIND" == true ]]; then
+        DEST_ARGS+=("--operation" "$OPERATION")
+    fi
+
+    # Choose log file names based on operation
+    if [[ "$IS_REBIND" == true ]]; then
+        DEST_LOG_FILE="migtd_rebind_destination.log"
+        DEST_OUT_LOG="dest_rebind.out.log"
+    else
+        DEST_LOG_FILE="migtd_destination.log"
+        DEST_OUT_LOG="dest.out.log"
+    fi
 
     # Build environment variable list for destination
-    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_destination.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$DEST_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
     if [[ "$USE_POLICY_V2" != true ]]; then
         DEST_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
     fi
@@ -551,19 +641,18 @@ if [[ "$RUN_BOTH" == true ]]; then
         DEST_ENV_VARS+=("MOCK_QUOTE_FILE=$MOCK_QUOTE_FILE")
     fi
 
-    # Start destination and redirect output
     (
         set -x
         run_cmd "${DEST_ENV_VARS[@]}" -- "$MIGTD_BINARY" "${DEST_ARGS[@]}"
-    ) > dest.out.log 2>&1 &
+    ) > "$DEST_OUT_LOG" 2>&1 &
     DEST_PID=$!
-    echo -e "${GREEN}Destination started with PID ${DEST_PID}. Logs: dest.out.log${NC}"
+    echo -e "${GREEN}Destination started with PID ${DEST_PID}. Logs: ${DEST_OUT_LOG}${NC}"
 
     # Ensure destination is listening
     if ! wait_for_port "$DEST_IP" "$DEST_PORT" 20; then
         echo -e "${RED}Destination didn't start listening on ${DEST_IP}:${DEST_PORT}.${NC}" >&2
-        echo -e "${YELLOW}Last 50 lines of dest.out.log:${NC}"
-        tail -n 50 dest.out.log || true
+        echo -e "${YELLOW}Last 50 lines of ${DEST_OUT_LOG}:${NC}"
+        tail -n 50 "$DEST_OUT_LOG" || true
         kill "$DEST_PID" >/dev/null 2>&1 || true
         exit 1
     fi
@@ -578,9 +667,19 @@ if [[ "$RUN_BOTH" == true ]]; then
         "--dest-ip" "$DEST_IP"
         "--dest-port" "$DEST_PORT"
     )
+    if [[ "$IS_REBIND" == true ]]; then
+        SRC_ARGS+=("--operation" "$OPERATION")
+    fi
+
+    # Choose source log file name based on operation
+    if [[ "$IS_REBIND" == true ]]; then
+        SRC_LOG_FILE="migtd_rebind_source.log"
+    else
+        SRC_LOG_FILE="migtd_source.log"
+    fi
 
     # Build environment variable list for source
-    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=migtd_source.log" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$SRC_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
     if [[ "$USE_POLICY_V2" != true ]]; then
         SRC_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
     fi
@@ -616,12 +715,19 @@ if [[ "$RUN_BOTH" == true ]]; then
     fi
 
     if [[ "$SRC_EXIT_CODE" -ne 0 ]]; then
+        if [[ "$IS_REBIND" == true ]]; then
+            echo
+            echo -e "${RED}✗✗✗ FAILURE: Rebinding ($OPERATION) failed (source exit code: $SRC_EXIT_CODE) ✗✗✗${NC}"
+        fi
         echo -e "${RED}Source run failed. Last 100 lines of destination log:${NC}"
-        tail -n 100 dest.out.log || true
+        tail -n 100 "$DEST_OUT_LOG" || true
         exit $SRC_EXIT_CODE
+    elif [[ "$IS_REBIND" == true ]]; then
+        echo
+        echo -e "${GREEN}✓✓✓ SUCCESS: Rebinding ($OPERATION) completed! ✓✓✓${NC}"
     fi
 else
-    # Single role run (migration mode)
+    # Single role run
     MIGTD_ARGS=(
         "--role" "$ROLE"
         "--request-id" "$REQUEST_ID"
@@ -629,8 +735,15 @@ else
     if [[ "$ROLE" == "source" ]]; then
         MIGTD_ARGS+=("--dest-ip" "$DEST_IP" "--dest-port" "$DEST_PORT")
     fi
+    if [[ "$IS_REBIND" == true ]]; then
+        MIGTD_ARGS+=("--operation" "$OPERATION")
+    fi
 
-    echo -e "${BLUE}Starting MigTD in $ROLE mode...${NC}"
+    if [[ "$IS_REBIND" == true ]]; then
+        echo -e "${BLUE}Starting MigTD rebinding ($OPERATION) in $ROLE mode...${NC}"
+    else
+        echo -e "${BLUE}Starting MigTD in $ROLE mode...${NC}"
+    fi
 
     # Build environment variable list
     ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
