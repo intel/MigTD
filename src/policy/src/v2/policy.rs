@@ -298,9 +298,12 @@ impl<'a> PolicyData<'a> {
         &self,
         value: &PolicyEvaluationInfo,
         relative_reference: &PolicyEvaluationInfo,
+        skip_global: bool,
     ) -> Result<(), PolicyError> {
         match self.forward_policy.as_ref() {
-            Some(policy) => Self::evaluate_policy_block(policy, value, relative_reference),
+            Some(policy) => {
+                Self::evaluate_policy_block(policy, value, relative_reference, skip_global)
+            }
             None => Ok(()),
         }
     }
@@ -309,9 +312,12 @@ impl<'a> PolicyData<'a> {
         &self,
         value: &PolicyEvaluationInfo,
         relative_reference: &PolicyEvaluationInfo,
+        skip_global: bool,
     ) -> Result<(), PolicyError> {
         match self.backward_policy.as_ref() {
-            Some(policy) => Self::evaluate_policy_block(policy, value, relative_reference),
+            Some(policy) => {
+                Self::evaluate_policy_block(policy, value, relative_reference, skip_global)
+            }
             None => Ok(()),
         }
     }
@@ -320,9 +326,12 @@ impl<'a> PolicyData<'a> {
         &self,
         value: &PolicyEvaluationInfo,
         relative_reference: &PolicyEvaluationInfo,
+        skip_global: bool,
     ) -> Result<(), PolicyError> {
         match self.policy.as_ref() {
-            Some(policy) => Self::evaluate_policy_block(policy, value, relative_reference),
+            Some(policy) => {
+                Self::evaluate_policy_block(policy, value, relative_reference, skip_global)
+            }
             None => Ok(()),
         }
     }
@@ -331,11 +340,15 @@ impl<'a> PolicyData<'a> {
         block: &Vec<PolicyTypes>,
         value: &PolicyEvaluationInfo,
         relative_reference: &PolicyEvaluationInfo,
+        skip_global: bool,
     ) -> Result<(), PolicyError> {
         for policy_type in block {
             match policy_type {
-                PolicyTypes::Global(global) => global.evaluate(value, relative_reference)?,
+                PolicyTypes::Global(global) if !skip_global => {
+                    global.evaluate(value, relative_reference)?
+                }
                 PolicyTypes::Servtd(migtd) => migtd.evaluate(value, relative_reference)?,
+                _ => {}
             }
         }
         Ok(())
