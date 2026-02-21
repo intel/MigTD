@@ -41,7 +41,7 @@ lazy_static! {
     /// Emulated pending migration request info for waitforrequest
     static ref MIG_REQUEST: Mutex<Vec<EmuMigRequest>> = Mutex::new(Vec::new());
     /// Emulated MSK/TDCS field storage keyed by (binding_handle, target_uuid, field_identifier)
-    static ref MSK_FIELDS: Mutex<HashMap<(u64, [u64;4], u64), u64>> = Mutex::new(HashMap::new());
+    static ref BOUND_FIELDS: Mutex<HashMap<(u64, [u64;4], u64), u64>> = Mutex::new(HashMap::new());
     /// Emulated global-scope SYS fields keyed by field_identifier
     static ref SYS_FIELDS: Mutex<HashMap<u64, u64>> = Mutex::new(HashMap::new());
     /// Emulated td-scope metadata fields keyed by field_identifier
@@ -167,8 +167,8 @@ pub fn set_emulated_enable_log_area(request_id: u64, log_max_level: u8) {
     });
 }
 
-/// Helper: Set a complete rebinding flow with EnableLogArea, GetReportData, and StartRebinding
-/// Automatically queues all three requests in sequence
+/// Helper: Set a complete rebinding flow with EnableLogArea, GetMigtdData,
+/// StartRebinding, and ServTD field population.
 pub fn set_emulated_start_rebinding(
     request_id: u64,
     rebinding_src: u8,
@@ -203,6 +203,78 @@ pub fn set_emulated_start_rebinding(
         target_td_uuid,
         binding_handle,
     });
+
+    // Step 4: Populate ServTD extension fields from TD report data
+    populate_servtd_fields(binding_handle, target_td_uuid);
+}
+
+/// Record ServTD extension data derived from the TD report.
+///
+/// In real TDX hardware, these fields are maintained by the TDX module in the
+/// target TD's TDCS. For emulation, we compute them from the TD report
+/// (either mock or vTPM-based) so that `verify_servtd_hash` in the policy
+/// check passes.
+fn populate_servtd_fields(binding_handle: u64, target_td_uuid: [u64; 4]) {
+    use crate::tdreport_emu::tdcall_report_emulated;
+    use sha2::{Digest, Sha384};
+
+    let dummy_data = [0u8; 64];
+    let report = match tdcall_report_emulated(&dummy_data) {
+        Ok(r) => r,
+        Err(e) => {
+            error!("AzCVMEmu: Failed to generate TD report for ServTD fields: {:?}", e);
+            return;
+        }
+    };
+
+    // Get td_info as raw bytes (same as td-shim's as_bytes() implementation)
+    let td_info_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &report.tdinfo as *const _ as *const u8,
+            core::mem::size_of_val(&report.tdinfo),
+        )
+    };
+    let info_hash: [u8; 48] = Sha384::digest(td_info_bytes).into();
+
+    const SERVTD_TYPE_MIGTD: u16 = 0;
+    let servtd_attr: u64 = 0;
+
+    let mut buffer = [0u8; 48 + 2 + 8];
+    buffer[..48].copy_from_slice(&info_hash);
+    buffer[48..50].copy_from_slice(&SERVTD_TYPE_MIGTD.to_le_bytes());
+    buffer[50..58].copy_from_slice(&servtd_attr.to_le_bytes());
+
+    let servtd_info_hash: [u8; 48] = Sha384::digest(&buffer).into();
+
+    let write_field = |field_base: u64, data: &[u8], elem_size: usize| {
+        for (idx, chunk) in data.chunks(elem_size).enumerate() {
+            let mut bytes = [0u8; 8];
+            bytes[..chunk.len()].copy_from_slice(chunk);
+            let val = u64::from_le_bytes(bytes);
+            let key = (binding_handle, target_td_uuid, field_base + idx as u64);
+            BOUND_FIELDS.lock().insert(key, val);
+        }
+    };
+
+    // TDCS field identifiers (from servtd_ext.rs)
+    const TDCS_FIELD_SERVTD_INIT_SERVTD_INFO_HASH: u64 = 0x191000030000020E;
+    const TDCS_FIELD_SERVTD_INIT_ATTR: u64 = 0x191000030000020D;
+    const TDCS_FIELD_INIT_CPUSVN: u64 = 0x1110000300000060;
+    const TDCS_FIELD_INIT_TEE_TCB_SVN: u64 = 0x1110000300000062;
+    const TDCS_FIELD_INIT_TEE_MODEL: u64 = 0x1110000200000064;
+    const TDCS_FIELD_SERVTD_INFO_HASH: u64 = 0x1910000300000207;
+    const TDCS_FIELD_SERVTD_ATTR: u64 = 0x1910000300000202;
+
+    write_field(TDCS_FIELD_SERVTD_INIT_SERVTD_INFO_HASH, &servtd_info_hash, 8);
+    write_field(TDCS_FIELD_SERVTD_INIT_ATTR, &servtd_attr.to_le_bytes(), 8);
+    write_field(TDCS_FIELD_INIT_CPUSVN, &report.report_mac.cpusvn, 8);
+    // tee_tcb_svn is at offset 8 in tee_tcb_info (after valid[8])
+    write_field(TDCS_FIELD_INIT_TEE_TCB_SVN, &report.tee_tcb_info[8..24], 8);
+    write_field(TDCS_FIELD_INIT_TEE_MODEL, &[0u8; 12], 4);
+    write_field(TDCS_FIELD_SERVTD_INFO_HASH, &servtd_info_hash, 8);
+    write_field(TDCS_FIELD_SERVTD_ATTR, &servtd_attr.to_le_bytes(), 8);
+
+    warn!("AzCVMEmu: Populated ServTD extension fields for rebinding");
 }
 
 /// Set TCP address and mode for emulation
@@ -892,7 +964,7 @@ pub fn tdcall_servtd_rd(
         ],
         field_identifier,
     );
-    let val = MSK_FIELDS.lock().get(&key).copied().unwrap_or(0);
+    let val = BOUND_FIELDS.lock().get(&key).copied().unwrap_or(0);
     warn!(
         "AzCVMEmu: tdcall_servtd_rd emulated: bh=0x{:x} field=0x{:x} uuid=[{:x},{:x},{:x},{:x}] => 0x{:x}",
         binding_handle, field_identifier, key.1[0], key.1[1], key.1[2], key.1[3], val
@@ -928,7 +1000,7 @@ pub fn tdcall_servtd_wr(
         "AzCVMEmu: tdcall_servtd_wr emulated: bh=0x{:x} field=0x{:x} uuid=[{:x},{:x},{:x},{:x}] <= 0x{:x}",
         binding_handle, field_identifier, key.1[0], key.1[1], key.1[2], key.1[3], data
     );
-    MSK_FIELDS.lock().insert(key, data);
+    BOUND_FIELDS.lock().insert(key, data);
     Ok(ServtdRWResult {
         content: data,
         uuid: key.1,

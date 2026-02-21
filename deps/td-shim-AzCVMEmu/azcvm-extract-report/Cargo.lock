@@ -1267,6 +1267,7 @@ dependencies = [
  "interrupt-emu",
  "lazy_static",
  "log",
+ "sha2",
  "spin",
  "tdx-mock-data",
  "tdx-tdcall",
