@@ -188,12 +188,16 @@ mod v2 {
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        policy
-            .policy_data
-            .evaluate_policy_common(&evaluation_data_dst, &relative_reference)?;
-        policy
-            .policy_data
-            .evaluate_policy_forward(&evaluation_data_dst, &relative_reference)?;
+        policy.policy_data.evaluate_policy_common(
+            &evaluation_data_dst,
+            &relative_reference,
+            false,
+        )?;
+        policy.policy_data.evaluate_policy_forward(
+            &evaluation_data_dst,
+            &relative_reference,
+            false,
+        )?;
 
         // Verify the destination's policy against local policy
         verified_policy_dst
@@ -218,9 +222,11 @@ mod v2 {
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        policy
-            .policy_data
-            .evaluate_policy_backward(&evaluation_data_src, &relative_reference)?;
+        policy.policy_data.evaluate_policy_backward(
+            &evaluation_data_src,
+            &relative_reference,
+            false,
+        )?;
 
         Ok(suppl_data)
     }
@@ -242,9 +248,11 @@ mod v2 {
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        policy
-            .policy_data
-            .evaluate_policy_forward(&evaluation_data_dst, &relative_reference)?;
+        policy.policy_data.evaluate_policy_forward(
+            &evaluation_data_dst,
+            &relative_reference,
+            true,
+        )?;
 
         // Verify the destination's policy against local policy
         verified_policy_dst
@@ -299,15 +307,19 @@ mod v2 {
 
         let relative_reference =
             get_init_tcb_evaluation_info(&init_tdreport, &verified_policy_init)?;
-        policy
-            .policy_data
-            .evaluate_policy_common(&evaluation_data_src, &relative_reference)?;
+        policy.policy_data.evaluate_policy_common(
+            &evaluation_data_src,
+            &relative_reference,
+            true,
+        )?;
 
         // If backward policy exists, evaluate the migration src based on it.
         let relative_reference = get_local_tcb_evaluation_info()?;
-        policy
-            .policy_data
-            .evaluate_policy_backward(&evaluation_data_src, &relative_reference)?;
+        policy.policy_data.evaluate_policy_backward(
+            &evaluation_data_src,
+            &relative_reference,
+            true,
+        )?;
 
         Ok(tdx_report.as_bytes().to_vec())
     }
