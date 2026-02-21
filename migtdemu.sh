@@ -18,7 +18,7 @@ DEFAULT_DEST_IP="127.0.0.1"
 DEFAULT_DEST_PORT="8001"
 DEFAULT_BUILD_MODE="release"
 DEFAULT_NUM_CPUS="1"
-DEFAULT_OPERATION="migrate"    # migrate, rebind-prepare, or rebind-finalize
+DEFAULT_OPERATION="migration"    # migration, rebind-prepare, or rebind-finalize
 USE_SUDO=true
 RUN_BOTH=false
 SKIP_RA=false
@@ -49,7 +49,7 @@ show_usage() {
     echo "Options:"
     echo "  -r, --role ROLE              Set role as 'source' or 'destination' (default: source)"
     echo "  -i, --request-id ID          Set migration request ID (default: 1)"
-    echo "  -o, --operation OP           Set operation: 'migrate' (default), 'rebind-prepare', or 'rebind-finalize'"
+    echo "  -o, --operation OP           Set operation: 'migration' (default), 'rebind-prepare', or 'rebind-finalize'"
     echo "  -d, --dest-ip IP             Set destination IP address (default: 127.0.0.1)"
     echo "  -p, --dest-port PORT         Set destination port (default: 8001)"
     echo "  --policy-file FILE           Set policy file path (default: config/policy.json)"
@@ -88,7 +88,7 @@ show_usage() {
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
     echo "  - Rebinding operations (rebind-prepare, rebind-finalize) always require policy_v2, which"
-    echo "    is enabled automatically. Default policy files for rebinding are in config/AzCVMEmu/."
+    echo "    is enabled automatically. You must explicitly specify --policy-file and --policy-issuer-chain-file."
     echo "  - The 'rebind-prepare' operation performs the actual rebinding handshake (TLS,"
     echo "    token exchange, and approval). 'rebind-finalize' clears the session token."
     echo
@@ -113,12 +113,12 @@ show_usage() {
     echo "  $0 --num-cpus 4 --both               # Run with 4 CPUs (0-3)"
     echo "  $0 --num-cpus 3 --both               # Run with 3 CPUs (0-2)"
     echo
-    echo "  # Rebinding examples:"
-    echo "  $0 --operation rebind-prepare --skip-ra --both              # Rebind-prepare with skip RA"
-    echo "  $0 --operation rebind-prepare --mock-report --both          # Rebind-prepare with mock report"
-    echo "  $0 --operation rebind-finalize --mock-report --both         # Rebind-finalize with mock report"
-    echo "  $0 --operation rebind-prepare --role destination --mock-report  # Run only rebind destination"
-    echo "  $0 --operation rebind-prepare --debug --log-level trace --mock-report --both  # Debug rebind"
+    echo "  # Rebinding examples (--policy-file and --policy-issuer-chain-file are always required):"
+    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
+    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
+    echo "  $0 --operation rebind-finalize --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
+    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --role destination --mock-report"
+    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --log-level trace --mock-report --both"
 }
 
 # Function to check if file exists
@@ -213,7 +213,7 @@ DEST_IP="$DEFAULT_DEST_IP"
 DEST_PORT="$DEFAULT_DEST_PORT"
 POLICY_FILE="$DEFAULT_POLICY_FILE"
 ROOT_CA_FILE="$DEFAULT_ROOT_CA_FILE"
-POLICY_ISSUER_CHAIN_FILE=""  # No default - mandatory when using --policy-v2 for migrate
+POLICY_ISSUER_CHAIN_FILE=""  # No default - mandatory when using --policy-v2 for migration
 BUILD_MODE="$DEFAULT_BUILD_MODE"
 NUM_CPUS="$DEFAULT_NUM_CPUS"
 OPERATION="$DEFAULT_OPERATION"
@@ -316,8 +316,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate operation
-if [[ "$OPERATION" != "migrate" && "$OPERATION" != "rebind-prepare" && "$OPERATION" != "rebind-finalize" ]]; then
-    echo -e "${RED}Error: Operation must be 'migrate', 'rebind-prepare', or 'rebind-finalize', got: $OPERATION${NC}" >&2
+if [[ "$OPERATION" != "migration" && "$OPERATION" != "rebind-prepare" && "$OPERATION" != "rebind-finalize" ]]; then
+    echo -e "${RED}Error: Operation must be 'migration', 'rebind-prepare', or 'rebind-finalize', got: $OPERATION${NC}" >&2
     exit 1
 fi
 
@@ -327,13 +327,6 @@ if [[ "$OPERATION" == "rebind-prepare" || "$OPERATION" == "rebind-finalize" ]]; 
     IS_REBIND=true
     # Rebinding always requires policy_v2
     USE_POLICY_V2=true
-    # Use rebind-specific defaults when not explicitly set
-    if [[ "$EXPLICIT_POLICY_FILE" != true ]]; then
-        POLICY_FILE="./config/AzCVMEmu/policy_v2_signed.json"
-    fi
-    if [[ "$EXPLICIT_POLICY_ISSUER_CHAIN" != true ]]; then
-        POLICY_ISSUER_CHAIN_FILE="./config/AzCVMEmu/policy_issuer_chain.pem"
-    fi
 fi
 
 # Automatically enable mock-report mode when mock-quote-file is specified
@@ -386,25 +379,12 @@ if [[ "$RUN_BOTH" != true ]]; then
     fi
 fi
 
-# Validate policy v2 requirements (skip for rebind — it auto-configures)
-if [[ "$USE_POLICY_V2" == true && "$IS_REBIND" != true ]]; then
-    if [[ "$POLICY_FILE" == "$DEFAULT_POLICY_FILE" ]]; then
-        echo -e "${RED}Error: When using --policy-v2, you must explicitly specify a policy file with --policy-file${NC}" >&2
-        echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
-        exit 1
-    fi
-    if [[ -z "$POLICY_ISSUER_CHAIN_FILE" ]]; then
-        echo -e "${RED}Error: When using --policy-v2, you must specify a policy issuer chain file with --policy-issuer-chain-file${NC}" >&2
-        echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
-        exit 1
-    fi
-fi
-
 # Change to MigTD directory
 cd "$(dirname "$0")"
 
 # Generate policy from mock report data so measurements match the hardcoded mock
-# TD report used at runtime. Only used for rebind operations with --mock-report.
+# TD report used at runtime. Used when policy_v2 is active with --mock-report
+# and no explicit policy/chain files were provided.
 generate_policy_from_mock_report() {
     local policy_script="./sh_script/build_AzCVMEmu_policy_and_test.sh"
     if [[ ! -x "$policy_script" ]]; then
@@ -429,8 +409,27 @@ generate_policy_from_mock_report() {
     echo
 }
 
-if [[ "$IS_REBIND" == true && "$USE_MOCK_REPORT" == true ]]; then
+# Auto-generate policy when using policy_v2 with mock-report and no explicit
+# policy/chain files were provided.
+if [[ "$USE_POLICY_V2" == true && "$USE_MOCK_REPORT" == true && "$EXPLICIT_POLICY_FILE" != true ]]; then
     generate_policy_from_mock_report
+    # Use the generated output paths
+    POLICY_FILE="./config/AzCVMEmu/policy_v2_signed.json"
+    POLICY_ISSUER_CHAIN_FILE="./config/AzCVMEmu/policy_issuer_chain.pem"
+fi
+
+# Validate policy v2 requirements
+if [[ "$USE_POLICY_V2" == true ]]; then
+    if [[ "$POLICY_FILE" == "$DEFAULT_POLICY_FILE" ]]; then
+        echo -e "${RED}Error: When using --policy-v2, you must explicitly specify a policy file with --policy-file${NC}" >&2
+        echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
+        exit 1
+    fi
+    if [[ -z "$POLICY_ISSUER_CHAIN_FILE" ]]; then
+        echo -e "${RED}Error: When using --policy-v2, you must specify a policy issuer chain file with --policy-issuer-chain-file${NC}" >&2
+        echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
+        exit 1
+    fi
 fi
 
 # Build features string based on configuration
@@ -610,24 +609,14 @@ if [[ "$SKIP_RA" != true && "$USE_MOCK_REPORT" != true && -e /dev/tpmrm0 ]]; the
 fi
 
 if [[ "$RUN_BOTH" == true ]]; then
-    if [[ "$IS_REBIND" == true ]]; then
-        echo -e "${BLUE}=== Running rebinding ($OPERATION) with both sides ===${NC}"
-    fi
+    echo -e "${BLUE}=== Running  ($OPERATION) with both sides ===${NC}"
     echo
     echo -e "${BLUE}Starting destination in background...${NC}"
     DEST_ARGS=("--role" "destination" "--request-id" "$REQUEST_ID")
-    if [[ "$IS_REBIND" == true ]]; then
-        DEST_ARGS+=("--operation" "$OPERATION")
-    fi
+    DEST_ARGS+=("--operation" "$OPERATION")
 
-    # Choose log file names based on operation
-    if [[ "$IS_REBIND" == true ]]; then
-        DEST_LOG_FILE="migtd_rebind_destination.log"
-        DEST_OUT_LOG="dest_rebind.out.log"
-    else
-        DEST_LOG_FILE="migtd_destination.log"
-        DEST_OUT_LOG="dest.out.log"
-    fi
+    DEST_LOG_FILE="migtd_${OPERATION}_destination.log"
+    DEST_OUT_LOG="dest_${OPERATION}_out.log"
 
     # Build environment variable list for destination
     DEST_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$DEST_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
@@ -667,16 +656,9 @@ if [[ "$RUN_BOTH" == true ]]; then
         "--dest-ip" "$DEST_IP"
         "--dest-port" "$DEST_PORT"
     )
-    if [[ "$IS_REBIND" == true ]]; then
-        SRC_ARGS+=("--operation" "$OPERATION")
-    fi
 
-    # Choose source log file name based on operation
-    if [[ "$IS_REBIND" == true ]]; then
-        SRC_LOG_FILE="migtd_rebind_source.log"
-    else
-        SRC_LOG_FILE="migtd_source.log"
-    fi
+    SRC_ARGS+=("--operation" "$OPERATION")
+    SRC_LOG_FILE="migtd_${OPERATION}_source.log"
 
     # Build environment variable list for source
     SRC_ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$SRC_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
@@ -715,16 +697,14 @@ if [[ "$RUN_BOTH" == true ]]; then
     fi
 
     if [[ "$SRC_EXIT_CODE" -ne 0 ]]; then
-        if [[ "$IS_REBIND" == true ]]; then
-            echo
-            echo -e "${RED}✗✗✗ FAILURE: Rebinding ($OPERATION) failed (source exit code: $SRC_EXIT_CODE) ✗✗✗${NC}"
-        fi
+        echo
+        echo -e "${RED}✗✗✗ FAILURE: ($OPERATION) failed (source exit code: $SRC_EXIT_CODE) ✗✗✗${NC}"
         echo -e "${RED}Source run failed. Last 100 lines of destination log:${NC}"
         tail -n 100 "$DEST_OUT_LOG" || true
         exit $SRC_EXIT_CODE
-    elif [[ "$IS_REBIND" == true ]]; then
+    else
         echo
-        echo -e "${GREEN}✓✓✓ SUCCESS: Rebinding ($OPERATION) completed! ✓✓✓${NC}"
+        echo -e "${GREEN}✓✓✓ SUCCESS: ($OPERATION) completed! ✓✓✓${NC}"
     fi
 else
     # Single role run
@@ -735,15 +715,9 @@ else
     if [[ "$ROLE" == "source" ]]; then
         MIGTD_ARGS+=("--dest-ip" "$DEST_IP" "--dest-port" "$DEST_PORT")
     fi
-    if [[ "$IS_REBIND" == true ]]; then
-        MIGTD_ARGS+=("--operation" "$OPERATION")
-    fi
+    MIGTD_ARGS+=("--operation" "$OPERATION")
 
-    if [[ "$IS_REBIND" == true ]]; then
-        echo -e "${BLUE}Starting MigTD rebinding ($OPERATION) in $ROLE mode...${NC}"
-    else
-        echo -e "${BLUE}Starting MigTD in $ROLE mode...${NC}"
-    fi
+    echo -e "${BLUE}Starting MigTD  ($OPERATION) in $ROLE mode...${NC}"
 
     # Build environment variable list
     ENV_VARS=("MIGTD_POLICY_FILE=$POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
