@@ -244,6 +244,22 @@ fn calculate_shared_page_nums(reqbufferhdrlen: usize) -> Result<usize> {
 }
 
 #[cfg(feature = "vmcall-raw")]
+fn try_accept_request(
+    mig_request_id: u64,
+    response: WaitForRequestResponse,
+) -> Poll<Result<WaitForRequestResponse>> {
+    let inserted = REQUESTS.lock().insert(mig_request_id);
+    if inserted {
+        VMCALL_MIG_REPORTSTATUS_FLAGS
+            .lock()
+            .insert(mig_request_id, AtomicBool::new(false));
+        Poll::Ready(Ok(response))
+    } else {
+        Poll::Pending
+    }
+}
+
+#[cfg(feature = "vmcall-raw")]
 pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
     let mut reqbufferhdr = RequestDataBufferHeader {
         datastatus: 0,
@@ -314,10 +330,6 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
             let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
             let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
 
-            VMCALL_MIG_REPORTSTATUS_FLAGS
-                .lock()
-                .insert(mig_request_id, AtomicBool::new(false));
-
             let wfr_info = MigtdMigrationInformation {
                 mig_request_id,
                 migration_source: slice[8],
@@ -328,26 +340,13 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
 
             let wfr_info = MigrationInformation { mig_info: wfr_info };
 
-            if REQUESTS.lock().contains(&mig_request_id) {
-                Poll::Pending
-            } else {
-                REQUESTS.lock().insert(mig_request_id);
-                Poll::Ready(Ok(WaitForRequestResponse::StartMigration(wfr_info)))
-            }
+            try_accept_request(mig_request_id, WaitForRequestResponse::StartMigration(wfr_info))
         } else if operation == DataStatusOperation::StartRebinding as u8 {
             #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
             match RebindingInfo::read_from_bytes(&data_buffer[reqbufferhdrlen..]) {
                 Some(rebinding_info) => {
-                    VMCALL_MIG_REPORTSTATUS_FLAGS
-                        .lock()
-                        .insert(rebinding_info.mig_request_id, AtomicBool::new(false));
-
-                    if REQUESTS.lock().contains(&rebinding_info.mig_request_id) {
-                        Poll::Pending
-                    } else {
-                        REQUESTS.lock().insert(rebinding_info.mig_request_id);
-                        Poll::Ready(Ok(WaitForRequestResponse::StartRebinding(rebinding_info)))
-                    }
+                    let req_id = rebinding_info.mig_request_id;
+                    try_accept_request(req_id, WaitForRequestResponse::StartRebinding(rebinding_info))
                 }
                 None => {
                     if data_length >= size_of::<u64>() as u32 {
@@ -390,21 +389,12 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 reportdata = slice[8..72].try_into().unwrap();
             }
 
-            VMCALL_MIG_REPORTSTATUS_FLAGS
-                .lock()
-                .insert(mig_request_id, AtomicBool::new(false));
-
             let wfr_info = ReportInfo {
                 mig_request_id,
                 reportdata,
             };
 
-            if REQUESTS.lock().contains(&mig_request_id) {
-                Poll::Pending
-            } else {
-                REQUESTS.lock().insert(mig_request_id);
-                Poll::Ready(Ok(WaitForRequestResponse::GetTdReport(wfr_info)))
-            }
+            try_accept_request(mig_request_id, WaitForRequestResponse::GetTdReport(wfr_info))
         } else if operation == DataStatusOperation::EnableLogArea as u8 {
             let expected_datalength = size_of::<EnableLogAreaInfo>();
             if data_length != expected_datalength as u32 {
@@ -421,22 +411,13 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
             let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
             let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
 
-            VMCALL_MIG_REPORTSTATUS_FLAGS
-                .lock()
-                .insert(mig_request_id, AtomicBool::new(false));
-
             let wfr_info = EnableLogAreaInfo {
                 mig_request_id,
                 log_max_level: slice[8],
                 reserved: slice[9..16].try_into().unwrap(),
             };
 
-            if REQUESTS.lock().contains(&mig_request_id) {
-                Poll::Pending
-            } else {
-                REQUESTS.lock().insert(mig_request_id);
-                Poll::Ready(Ok(WaitForRequestResponse::EnableLogArea(wfr_info)))
-            }
+            try_accept_request(mig_request_id, WaitForRequestResponse::EnableLogArea(wfr_info))
         } else if operation == DataStatusOperation::GetMigtdData as u8 {
             #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
             {
@@ -461,20 +442,12 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                     reportdata = slice[8..72].try_into().unwrap();
                 }
 
-                VMCALL_MIG_REPORTSTATUS_FLAGS
-                    .lock()
-                    .insert(mig_request_id, AtomicBool::new(false));
-
                 let wfr_info = MigtdDataInfo {
                     mig_request_id,
                     reportdata,
                 };
-                if REQUESTS.lock().contains(&mig_request_id) {
-                    Poll::Pending
-                } else {
-                    REQUESTS.lock().insert(mig_request_id);
-                    Poll::Ready(Ok(WaitForRequestResponse::GetMigtdData(wfr_info)))
-                }
+
+                try_accept_request(mig_request_id, WaitForRequestResponse::GetMigtdData(wfr_info))
             }
             #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
             {
