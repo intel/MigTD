@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 az-tdx-vtpm = { version = "=0.8.0", git = "https://github.com/kinvolk/azure-cvm-tooling", package = "az-tdx-vtpm", default-features = false, features = ["attester"] }
 tdx-tdcall-emu = { path = "../tdx-tdcall", features = ["mock_report_tools"] }
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
