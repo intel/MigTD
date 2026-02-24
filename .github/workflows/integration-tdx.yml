@@ -36,6 +36,11 @@ jobs:
 
       # - name: Install tools for sgx lib
       #   run:  sudo dnf group install 'Development Tools' | sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgcon
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: audit
+
       - name: Clean test repository
         run: |
           sudo rm -rf sh_script/test/
@@ -89,6 +94,11 @@ jobs:
     runs-on: [self-hosted, tdx]
 
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
+        with:
+          egress-policy: audit
+
       - name: Clean test repository
         run: |
           sudo rm -rf sh_script/test/
