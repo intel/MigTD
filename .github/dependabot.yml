@@ -21,3 +21,8 @@ updates:
     directory: /container
     schedule:
       interval: daily
+
+  - package-ecosystem: cargo
+    directory: /deps/td-shim-AzCVMEmu/azcvm-extract-report
+    schedule:
+      interval: daily
