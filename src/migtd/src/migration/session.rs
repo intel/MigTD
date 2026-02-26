@@ -1179,7 +1179,7 @@ pub fn write_msk(mig_info: &MigtdMigrationInformation, msk: &MigrationSessionKey
             &mig_info.target_td_uuid,
         )
         .map_err(|e| {
-            log::error!(migration_request_id = mig_info.mig_request_id; "write_msk: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, idx = {}, value = {}\n", e, mig_info.binding_handle, idx, msk.fields[idx]);
+            log::error!(migration_request_id = mig_info.mig_request_id; "write_msk: tdcall_servtd_wr failed with error: {:?} for mig_info.binding_handle = {}, idx = {}\n", e, mig_info.binding_handle, idx);
             MigrationResult::TdxModuleError
         })?;
     }
