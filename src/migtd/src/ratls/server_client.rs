@@ -186,7 +186,7 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     init_policy_hash: &[u8],
     init_td_report: &[u8],
     init_event_log: &[u8],
-    servtd_ext: &ServtdExt,
+    servtd_ext: Option<&ServtdExt>,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
@@ -411,7 +411,7 @@ fn create_certificate_for_rebinding_old(
     init_policy_hash: &[u8],
     init_tdreport: &[u8],
     init_event_log: &[u8],
-    servtd_ext: &ServtdExt,
+    servtd_ext: Option<&ServtdExt>,
 ) -> Result<Vec<u8>> {
     let pub_key = signing_key.public_key().map_err(|e| {
         log::error!(
@@ -462,111 +462,114 @@ fn create_certificate_for_rebinding_old(
             e
         })?;
 
-    // If policy_v2 feature is enabled, add policy extension
     #[cfg(feature = "policy_v2")]
-    let x509_builder = x509_builder
-        .add_extension(
-            Extension::new(EXTNID_MIGTD_POLICY_HASH, Some(false), Some(&policy_hash)).map_err(
-                |e| {
+    let x509_builder = {
+        let mut builder = x509_builder
+            .add_extension(
+                Extension::new(EXTNID_MIGTD_POLICY_HASH, Some(false), Some(&policy_hash)).map_err(
+                    |e| {
+                        log::error!(
+                            "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                            e
+                        );
+                        e
+                    },
+                )?,
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.\n",
+                    e
+                );
+                e
+            })?;
+
+        if let Some(ext) = servtd_ext {
+            builder = builder
+                .add_extension(
+                    Extension::new(EXTNID_MIGTD_SERVTD_EXT, Some(false), Some(ext.as_bytes()))
+                        .map_err(|e| {
+                            log::error!(
+                                "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                                e
+                            );
+                            e
+                        })?,
+                )
+                .map_err(|e| {
+                    log::error!(
+                        "gen_cert policy_v2 add_extension for servtd_ext failed with error {:?}.\n",
+                        e
+                    );
+                    e
+                })?;
+        }
+
+        builder
+            .add_extension(
+                Extension::new(
+                    EXTNID_MIGTD_TDREPORT_INIT,
+                    Some(false),
+                    Some(&init_tdreport),
+                )
+                .map_err(|e| {
                     log::error!(
                         "gen_cert policy_v2 add_extension failed with error {:?}.\n",
                         e
                     );
                     e
-                },
-            )?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.\n",
-                e
-            );
-            e
-        })?
-        .add_extension(
-            Extension::new(
-                EXTNID_MIGTD_SERVTD_EXT,
-                Some(false),
-                Some(servtd_ext.as_bytes()),
+                })?,
             )
             .map_err(|e| {
                 log::error!(
-                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                    "gen_cert policy_v2 add_extension for tdreport init failed with error {:?}.\n",
                     e
                 );
                 e
-            })?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert policy_v2 add_extension for servtd_ext failed with error {:?}.\n",
-                e
-            );
-            e
-        })?
-        .add_extension(
-            Extension::new(
-                EXTNID_MIGTD_TDREPORT_INIT,
-                Some(false),
-                Some(&init_tdreport),
+            })?
+            .add_extension(
+                Extension::new(
+                    EXTNID_MIGTD_EVENT_LOG_INIT,
+                    Some(false),
+                    Some(&init_event_log),
+                )
+                .map_err(|e| {
+                    log::error!(
+                        "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                        e
+                    );
+                    e
+                })?,
             )
             .map_err(|e| {
                 log::error!(
-                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                    "gen_cert policy_v2 add_extension for event log init failed with error {:?}.\n",
                     e
                 );
                 e
-            })?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert policy_v2 add_extension for tdreport init failed with error {:?}.\n",
-                e
-            );
-            e
-        })?
-        .add_extension(
-            Extension::new(
-                EXTNID_MIGTD_EVENT_LOG_INIT,
-                Some(false),
-                Some(&init_event_log),
+            })?
+            .add_extension(
+                Extension::new(
+                    EXTNID_MIGTD_INIT_POLICY_HASH,
+                    Some(false),
+                    Some(&init_policy_hash),
+                )
+                .map_err(|e| {
+                    log::error!(
+                        "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                        e
+                    );
+                    e
+                })?,
             )
             .map_err(|e| {
                 log::error!(
-                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
-                    e
-                );
-                e
-            })?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert policy_v2 add_extension for event log init failed with error {:?}.\n",
-                e
-            );
-            e
-        })?
-        .add_extension(
-            Extension::new(
-                EXTNID_MIGTD_INIT_POLICY_HASH,
-                Some(false),
-                Some(&init_policy_hash),
-            )
-            .map_err(|e| {
-                log::error!(
-                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
-                    e
-                );
-                e
-            })?,
-        )
-        .map_err(|e| {
-            log::error!(
                 "gen_cert policy_v2 add_extension for init policy hash failed with error {:?}.\n",
                 e
             );
-            e
-        })?;
+                e
+            })?
+    };
 
     let x509_cert_der = sign_tls_tbs(x509_builder, &signing_key)?;
     Ok(x509_cert_der)
@@ -1007,10 +1010,7 @@ mod verify {
                 log::error!("Failed to find init policy hash extension.\n");
                 CryptoError::ParseCertificate
             })?;
-        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
-            log::error!("Failed to find servtd ext extension.\n");
-            CryptoError::ParseCertificate
-        })?;
+        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT);
 
         let remote_policy_size = u32::from_le_bytes(
             pre_session_data

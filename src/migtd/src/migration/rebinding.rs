@@ -604,7 +604,7 @@ async fn rebinding_old_prepare(
     data: &mut Vec<u8>,
     remote_policy: Vec<u8>,
 ) -> Result<(), MigrationResult> {
-    let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
+    let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid);
     let init_policy_hash = digest_sha384(&init_migtd_data.init_policy)?;
 
     // TLS client
@@ -614,7 +614,7 @@ async fn rebinding_old_prepare(
         &init_policy_hash,
         &init_migtd_data.init_report,
         &init_migtd_data.init_event_log,
-        &servtd_ext,
+        servtd_ext.as_ref(),
     )
     .map_err(|_| {
         #[cfg(feature = "vmcall-raw")]
@@ -675,10 +675,17 @@ async fn rebinding_new_prepare(
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
 
     // The TLS session is established; we can now extract servtd_ext from the peer certificates.
-    let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
+    let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs());
     write_rebinding_session_token(&rebind_token.token)?;
-    write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
-    write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
+    if let Some(ext) = &servtd_ext {
+        write_servtd_rebind_attr(&ext.cur_servtd_attr)?;
+    }
+    write_approved_servtd_ext_hash(
+        servtd_ext
+            .map(|ext| ext.calculate_approved_servtd_ext_hash())
+            .transpose()?
+            .as_deref(),
+    )?;
 
     shutdown_transport(ratls_server.transport_mut(), info.mig_request_id).await?;
     Ok(())
@@ -689,7 +696,7 @@ async fn rebinding_new_finalize(
     _data: &mut Vec<u8>,
 ) -> Result<(), MigrationResult> {
     write_rebinding_session_token(&[0u8; 32])?;
-    write_approved_servtd_ext_hash(&[0u8; SHA384_DIGEST_SIZE])?;
+    write_approved_servtd_ext_hash(Some(&[0u8; SHA384_DIGEST_SIZE]))?;
     Ok(())
 }
 
@@ -733,28 +740,19 @@ pub fn approve_rebinding(
     Ok(())
 }
 
-fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, MigrationResult> {
-    if let Some(cert_chain) = certs {
-        if cert_chain.is_empty() {
-            return Err(MigrationResult::SecureSessionError);
-        }
-
-        let cert = Certificate::from_der(cert_chain[0])
-            .map_err(|_| MigrationResult::SecureSessionError)?;
-
-        let extensions = cert
-            .tbs_certificate
-            .extensions
-            .as_ref()
-            .ok_or(MigrationResult::SecureSessionError)?;
-
-        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT)
-            .ok_or(MigrationResult::SecureSessionError)?;
-
-        ServtdExt::read_from_bytes(servtd_ext).ok_or(MigrationResult::InvalidParameter)
-    } else {
-        Err(MigrationResult::SecureSessionError)
+fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Option<ServtdExt> {
+    let cert_chain = certs.as_ref()?;
+    if cert_chain.is_empty() {
+        return None;
     }
+
+    let cert = Certificate::from_der(cert_chain[0]).ok()?;
+
+    let extensions = cert.tbs_certificate.extensions.as_ref()?;
+
+    let servtd_ext_bytes = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT)?;
+
+    ServtdExt::read_from_bytes(servtd_ext_bytes)
 }
 
 pub fn create_rebind_token() -> Result<RebindingToken, MigrationResult> {
