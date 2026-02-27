@@ -9,6 +9,11 @@ use tdx_tdcall::tdx::{tdcall_servtd_rd, tdcall_vm_write};
 
 use crate::migration::MigrationResult;
 
+/// Target TD’s ATTRIBUTES field in TDCS (readable via TDG.SERVTD.RD)
+pub const TDCS_FIELD_ATTRIBUTES: u64 = 0x1110000300000000;
+/// Bit 17 of ATTRIBUTES indicates SERVTD_EXT support
+const ATTRIBUTES_SERVTDEXT_BIT: u64 = 1 << 17;
+
 /// SERVTD_EXT_STRUCT fields in target TD’s TDCS
 pub const TDCS_FIELD_SERVTD_INIT_SERVTD_INFO_HASH: u64 = 0x191000030000020E;
 pub const TDCS_FIELD_SERVTD_INIT_ATTR: u64 = 0x191000030000020D;
@@ -75,10 +80,25 @@ pub struct TeeModel {
     reservtd: [u8; 8],
 }
 
-pub fn read_servtd_ext(
-    binding_handle: u64,
-    target_td_uuid: &[u64],
-) -> Result<ServtdExt, MigrationResult> {
+/// Try to read ServtdExt from the target TD's TDCS.
+/// Returns `None` if the target TD does not support SERVTD_EXT
+/// (i.e., TDCS.ATTRIBUTES.SERVTDEXT bit 17 is zero).
+pub fn read_servtd_ext(binding_handle: u64, target_td_uuid: &[u64]) -> Option<ServtdExt> {
+    // Check TDCS.ATTRIBUTES bit 17 (SERVTDEXT) to determine support.
+    let attributes = tdcall_servtd_rd(binding_handle, TDCS_FIELD_ATTRIBUTES, target_td_uuid)
+        .map_err(|e| {
+            log::error!("Failed to read TDCS.ATTRIBUTES: {e:?}\n");
+            e
+        })
+        .ok()?;
+    if (attributes.content & ATTRIBUTES_SERVTDEXT_BIT) == 0 {
+        log::info!(
+            "Target TD does not support SERVTD_EXT (ATTRIBUTES=0x{:x}).\n",
+            attributes.content
+        );
+        return None;
+    }
+
     let read_field =
         |field_base: u64, elem_size: usize, buf: &mut [u8]| -> Result<(), MigrationResult> {
             for (idx, chunk) in buf.chunks_mut(elem_size).enumerate() {
@@ -99,19 +119,24 @@ pub fn read_servtd_ext(
     let mut cur_servtd_info_hash = [0u8; 48];
     let mut cur_servtd_attr = [0u8; 8];
 
-    read_field(
+    if read_field(
         TDCS_FIELD_SERVTD_INIT_SERVTD_INFO_HASH,
         8,
         &mut init_servtd_info_hash,
-    )?;
-    read_field(TDCS_FIELD_SERVTD_INIT_ATTR, 8, &mut init_attr)?;
-    read_field(TDCS_FIELD_INIT_CPUSVN, 8, &mut init_cpusvn)?;
-    read_field(TDCS_FIELD_INIT_TEE_TCB_SVN, 8, &mut init_tee_tcb_svn)?;
-    read_field(TDCS_FIELD_INIT_TEE_MODEL, 4, &mut init_tee_model)?;
-    read_field(TDCS_FIELD_SERVTD_INFO_HASH, 8, &mut cur_servtd_info_hash)?;
-    read_field(TDCS_FIELD_SERVTD_ATTR, 8, &mut cur_servtd_attr)?;
+    )
+    .is_err()
+        || read_field(TDCS_FIELD_SERVTD_INIT_ATTR, 8, &mut init_attr).is_err()
+        || read_field(TDCS_FIELD_INIT_CPUSVN, 8, &mut init_cpusvn).is_err()
+        || read_field(TDCS_FIELD_INIT_TEE_TCB_SVN, 8, &mut init_tee_tcb_svn).is_err()
+        || read_field(TDCS_FIELD_INIT_TEE_MODEL, 4, &mut init_tee_model).is_err()
+        || read_field(TDCS_FIELD_SERVTD_INFO_HASH, 8, &mut cur_servtd_info_hash).is_err()
+        || read_field(TDCS_FIELD_SERVTD_ATTR, 8, &mut cur_servtd_attr).is_err()
+    {
+        log::error!("Failed to read SERVTD_EXT fields.\n");
+        return None;
+    }
 
-    Ok(ServtdExt {
+    Some(ServtdExt {
         init_servtd_info_hash,
         init_attr,
         init_cpusvn,
@@ -124,12 +149,20 @@ pub fn read_servtd_ext(
     })
 }
 
-pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), MigrationResult> {
-    if servtd_ext_hash.len() != SHA384_DIGEST_SIZE {
+/// Write the approved SERVTD_EXT hash to the target TD's TDCS.
+/// If `servtd_ext_hash` is `None`, this is a no-op (target TD does not support SERVTD_EXT).
+pub fn write_approved_servtd_ext_hash(
+    servtd_ext_hash: Option<&[u8]>,
+) -> Result<(), MigrationResult> {
+    let hash = match servtd_ext_hash {
+        Some(h) => h,
+        None => return Ok(()),
+    };
+    if hash.len() != SHA384_DIGEST_SIZE {
         return Err(MigrationResult::InvalidParameter);
     }
 
-    for (idx, chunk) in servtd_ext_hash.chunks_exact(size_of::<u64>()).enumerate() {
+    for (idx, chunk) in hash.chunks_exact(size_of::<u64>()).enumerate() {
         let elem = u64::from_le_bytes(chunk.try_into().unwrap());
         tdcall_vm_write(
             TDCS_FIELD_SERVTD_ACCEPT_SERVTD_EXT_HASH + idx as u64,
@@ -141,6 +174,7 @@ pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), Migr
     Ok(())
 }
 
+#[cfg(test)]
 mod test {
     use super::ServtdExt;
 

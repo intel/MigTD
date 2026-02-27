@@ -922,7 +922,7 @@ pub fn handle_exchange_rebind_attest_info_req(
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let mig_policy_hash_src_vec = mig_policy_hash_src.to_vec();
 
-    // SERVTD_EXT
+    // SERVTD_EXT (may be zero-length if target TD does not support SERVTD_EXT)
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
         error!(
@@ -931,10 +931,14 @@ pub fn handle_exchange_rebind_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     };
-    let servtd_ext = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let servtd_ext_vec = servtd_ext.to_vec();
+    let servtd_ext_vec = if vdm_element.length > 0 {
+        let servtd_ext = reader
+            .take(vdm_element.length as usize)
+            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        Some(servtd_ext.to_vec())
+    } else {
+        None
+    };
 
     // TD report init
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
@@ -1033,7 +1037,7 @@ pub fn handle_exchange_rebind_attest_info_req(
             init_policy,
             &event_log_init_vec,
             &td_report_init_vec,
-            &servtd_ext_vec,
+            servtd_ext_vec.as_deref(),
         );
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
@@ -1049,7 +1053,9 @@ pub fn handle_exchange_rebind_attest_info_req(
 
     unsafe {
         let spdm_responder_ex = upcast_mut(responder_context);
-        spdm_responder_ex.servtd_ext = ServtdExt::read_from_bytes(&servtd_ext_vec);
+        spdm_responder_ex.servtd_ext = servtd_ext_vec
+            .as_ref()
+            .and_then(|v| ServtdExt::read_from_bytes(v));
     };
 
     let mut writer = Writer::init(vendor_defined_rsp_payload);
@@ -1193,14 +1199,14 @@ pub fn handle_exchange_rebind_info_req(
 
     let servtd_ext = unsafe {
         let spdm_responder_ex = upcast_mut(responder_context);
-        spdm_responder_ex
-            .servtd_ext
-            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?
+        spdm_responder_ex.servtd_ext
     };
 
     write_rebinding_session_token(&token)?;
-    write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
-    write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
+    if let Some(ext) = servtd_ext {
+        write_approved_servtd_ext_hash(Some(&ext.calculate_approved_servtd_ext_hash()?))?;
+        write_servtd_rebind_attr(&ext.cur_servtd_attr)?;
+    }
     token.zeroize();
 
     let mut writer = Writer::init(vendor_defined_rsp_payload);

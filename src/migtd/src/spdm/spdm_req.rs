@@ -883,19 +883,21 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     }
     let init_migtd_data = rebind_info.init_migtd_data.as_ref().unwrap();
 
-    let servtd_ext = read_servtd_ext(binding_handle, target_td_uuid)
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+    let servtd_ext = read_servtd_ext(binding_handle, target_td_uuid);
 
+    let servtd_ext_bytes = servtd_ext.as_ref().map(|ext| ext.as_bytes());
     let servtd_ext_element = VdmMessageElement {
         element_type: VdmMessageElementType::SerVtdExt,
-        length: servtd_ext.as_bytes().len() as u32,
+        length: servtd_ext_bytes.map_or(0, |b| b.len()) as u32,
     };
     cnt += servtd_ext_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer
-        .extend_from_slice(servtd_ext.as_bytes())
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    if let Some(bytes) = servtd_ext_bytes {
+        cnt += writer
+            .extend_from_slice(bytes)
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
 
     //TD report init
     let tdreport_init = &init_migtd_data.init_report;
