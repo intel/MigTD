@@ -37,7 +37,7 @@ jobs:
           submodules: recursive
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478
         with:
           scan-type: 'fs'
           scanners: 'vuln'
