@@ -1213,6 +1213,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "tdx-mock-data"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "sha2",
+ "tdx-tdcall",
+]
+
+[[package]]
 name = "tdx-tdcall"
 version = "0.2.3"
 dependencies = [
@@ -1234,7 +1243,9 @@ dependencies = [
  "interrupt-emu",
  "lazy_static",
  "log",
+ "sha2",
  "spin",
+ "tdx-mock-data",
  "tdx-tdcall",
  "tokio",
  "zerocopy 0.7.35",

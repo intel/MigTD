@@ -10,6 +10,10 @@ license = "BSD-2-Clause-Patent"
 # Original tdx-tdcall for non-emulated functions
 original-tdx-tdcall = { package = "tdx-tdcall", path = "../../td-shim/tdx-tdcall" }
 
+# Shared mock data for testing
+tdx-mock-data = { path = "../tdx-mock-data", optional = true }
+sha2 = { version = "0.10", default-features = false }
+
 # Core dependencies for emulation
 tokio = { version = "1.0", features = ["net", "sync", "time", "rt", "rt-multi-thread", "io-util"], default-features = false }
 log = { version = "0.4", default-features = false }
@@ -26,9 +30,8 @@ interrupt-emu = { path = "../interrupt-emu", package = "interrupt-emu" }
 
 [features]
 default = []
-no-std = []
-test_mock_report = []
-mock_report_tools = []
+test_mock_report = ["tdx-mock-data"]
+mock_report_tools = ["tdx-mock-data"]
 
 [lib]
 name = "tdx_tdcall_emu"
