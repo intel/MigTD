@@ -125,6 +125,11 @@ pub fn get_quote_igvm(td_report: &[u8]) -> Result<Vec<u8>, Error> {
         return Err(Error::GetQuote);
     }
 
+    if quote_size == 0 {
+        log::error!("Unexpected quote size: 0\n");
+        return Err(Error::GetQuote);
+    }
+
     // Validate we have enough data in the buffer
     if header_size + quote_size as usize > get_quote_blob.len() {
         log::error!(
