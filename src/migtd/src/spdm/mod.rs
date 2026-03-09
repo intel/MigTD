@@ -117,11 +117,13 @@ pub fn gen_quote_spdm(report_data: &[u8]) -> Result<Vec<u8>, MigrationResult> {
     // Generate the TD Report that contains the public key hash as nonce
     let mut additional_data = [0u8; 64];
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
-    let td_report = tdx_tdcall::tdreport::tdcall_report(&additional_data)?;
 
-    let res = attestation::get_quote(td_report.as_bytes())
-        .map_err(|_| MigrationResult::MutualAttestationError)?;
-    Ok(res)
+    let (quote, _report) = crate::quote::get_quote_with_retry(&additional_data).map_err(|e| {
+        log::error!("get_quote_with_retry failed: {:?}\n", e);
+        MigrationResult::MutualAttestationError
+    })?;
+
+    Ok(quote)
 }
 
 /// Verify that the peer's quote contains the expected REPORTDATA.
