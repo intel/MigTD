@@ -3,7 +3,12 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 #[cfg(feature = "policy_v2")]
-use crate::migration::pre_session_data::pre_session_data_exchange;
+use crate::migration::pre_session_data::{
+    dest_pre_session_data_exchange, source_pre_session_data_exchange,
+};
+#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+use crate::migration::servtd_ext::read_servtd_ext;
+
 #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
 use crate::migration::rebinding::RebindingInfo;
 use crate::migration::transport::setup_transport;
@@ -310,29 +315,19 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         let operation: u8 = data_status_bytes[1];
         log::trace!("wait_for_request: Received operation {} with data length {}\n", operation, data_length);
         if operation == DataStatusOperation::StartMigration as u8 {
-            // data_length should be MigtdMigrationInformation
-            let expected_datalength = size_of::<MigtdMigrationInformation>();
-            if data_length != expected_datalength as u32 {
-                if data_length >= size_of::<u64>() as u32 {
-                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
-                } else {
-                    log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
-                }
-                return Poll::Pending;
-            }
             let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-            let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-
-            let wfr_info = MigtdMigrationInformation {
-                mig_request_id,
-                migration_source: slice[8],
-                _pad: slice[9..16].try_into().unwrap(),
-                target_td_uuid: parse_uuid(&slice[16..48]),
-                binding_handle: u64::from_le_bytes(slice[48..56].try_into().unwrap()),
+            let wfr_info = match MigtdMigrationInformation::read_from_bytes(slice) {
+                Some(info) => info,
+                None => {
+                    log::error!(
+                        "wait_for_request: StartMigration operation invalid data, len: {}",
+                        data_length
+                    );
+                    return Poll::Pending;
+                }
             };
 
+            let mig_request_id = wfr_info.mig_request_id;
             let wfr_info = MigrationInformation { mig_info: wfr_info };
 
             try_accept_request(mig_request_id, WaitForRequestResponse::StartMigration(wfr_info))
@@ -755,14 +750,27 @@ async fn migration_src_exchange_msk(
     exchange_information: &ExchangeInformation,
     remote_information: &mut ExchangeInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
+    #[cfg(all(feature = "policy_v2", feature = "vmcall-raw"))] init_migtd_data: &InitData,
 ) -> Result<()> {
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
+    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+    let servtd_ext = read_servtd_ext(info.mig_info.binding_handle, &info.mig_info.target_td_uuid)
+        .inspect(|_| {
+        #[cfg(feature = "vmcall-raw")]
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "migration_src_exchange_msk(): Failed to get SERVTD_EXT.\n"
+        );
+    })?;
     // TLS client
     let mut ratls_client = ratls::client(
         transport,
         #[cfg(feature = "policy_v2")]
         remote_policy,
+        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        &init_migtd_data,
+        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        &servtd_ext,
     )
     .map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
@@ -976,29 +984,6 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     // Exchange policy firstly because of the message size limitation of TLS protocol
     #[cfg(feature = "policy_v2")]
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
-    #[cfg(feature = "policy_v2")]
-    let policy = crate::config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    #[cfg(feature = "policy_v2")]
-    let remote_policy = Box::pin(with_timeout(
-        PRE_SESSION_TIMEOUT,
-        pre_session_data_exchange(&mut transport, policy),
-    ))
-    .await
-    .map_err(|e| {
-        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: pre_session_data_exchange timeout error: {:?}\n",
-            e
-        );
-        e
-    })?
-    .map_err(|e| {
-        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: pre_session_data_exchange error: {:?}\n", e);
-        e
-    })?;
 
     #[cfg(not(feature = "spdm_attestation"))]
     {
@@ -1011,6 +996,36 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
 
         // Establish TLS layer connection and negotiate the MSK
         if info.is_src() {
+            #[cfg(all(feature = "policy_v2", feature = "vmcall-raw"))]
+            let local_data =
+                InitData::get_from_local(&[0u8; 64]).ok_or(MigrationResult::InvalidParameter)?;
+            #[cfg(all(feature = "policy_v2", feature = "vmcall-raw"))]
+            let init_migtd_data = info
+                .mig_info
+                .init_migtd_data
+                .as_ref()
+                .or(Some(&local_data))
+                .ok_or(MigrationResult::InvalidParameter)?;
+            #[cfg(feature = "policy_v2")]
+            let remote_policy = Box::pin(with_timeout(
+                PRE_SESSION_TIMEOUT,
+                source_pre_session_data_exchange(&mut transport,
+                    #[cfg(feature = "vmcall-raw")]
+                    &init_migtd_data.init_policy
+                ),
+            ))
+            .await
+            .map_err(|e| {
+                log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: source_pre_session_data_exchange timeout error: {:?}\n",
+                    e
+                );
+                e
+            })?
+            .map_err(|e| {
+                log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: source_pre_session_data_exchange error: {:?}\n", e);
+                e
+            })?;
+
             migration_src_exchange_msk(
                 transport,
                 info,
@@ -1018,9 +1033,28 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 &mut remote_information,
                 #[cfg(feature = "policy_v2")]
                 remote_policy,
+                #[cfg(all(feature = "policy_v2", feature = "vmcall-raw"))]
+                init_migtd_data,
             )
             .await?;
         } else {
+            #[cfg(feature = "policy_v2")]
+            let remote_policy = Box::pin(with_timeout(
+                PRE_SESSION_TIMEOUT,
+                dest_pre_session_data_exchange(&mut transport),
+            ))
+            .await
+            .map_err(|e| {
+                log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: dest_pre_session_data_exchange timeout error: {:?}\n",
+                    e
+                );
+                e
+            })?
+            .map_err(|e| {
+                log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: dest_pre_session_data_exchange error: {:?}\n", e);
+                e
+            })?;
+
             migration_dst_exchange_msk(
                 transport,
                 info,
