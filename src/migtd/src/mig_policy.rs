@@ -115,10 +115,11 @@ mod v2 {
     /// quote and verifying it against the policy collaterals.
     pub fn get_local_tcb_evaluation_info() -> Result<PolicyEvaluationInfo, PolicyError> {
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-        let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
-            .map_err(|_| PolicyError::GetTdxReport)?;
-        let quote = attestation::get_quote(tdx_report.as_bytes())
-            .map_err(|_| PolicyError::QuoteGeneration)?;
+        let (quote, _report) =
+            crate::quote::get_quote_with_retry(&[0u8; 64]).map_err(|err| match err {
+                crate::quote::QuoteError::ReportGenerationFailed => PolicyError::GetTdxReport,
+                _ => PolicyError::QuoteGeneration,
+            })?;
         let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
         setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
     }
