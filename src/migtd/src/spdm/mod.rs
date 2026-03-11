@@ -13,13 +13,16 @@ mod vmcall_msg;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use codec::Codec;
 use codec::Reader;
 use codec::Writer;
+use log::error;
 use spdmlib::common::SpdmDeviceIo;
 use spdmlib::error::*;
+use spdmlib::protocol::{SpdmDigestStruct, SPDM_MAX_HASH_SIZE};
 use spin::Mutex;
 use zeroize::Zeroize;
 use zeroize::ZeroizeOnDrop;
@@ -145,6 +148,48 @@ pub fn verify_peer_report_data(
     }
 
     Ok(())
+}
+
+/// Build report data by concatenating a prefix and the TH1 digest.
+///
+/// Returns a `Vec<u8>` containing `prefix || th1.data[..th1.data_size]`.
+pub fn build_report_data(prefix: &[u8], th1: &SpdmDigestStruct) -> SpdmResult<Vec<u8>> {
+    let th1_len = th1.data_size as usize;
+    if th1_len > SPDM_MAX_HASH_SIZE {
+        error!("th1 length is too large: {}\n", th1_len);
+        return Err(SPDM_STATUS_BUFFER_FULL);
+    }
+    let mut report_data = vec![0u8; prefix.len() + th1_len];
+    report_data[..prefix.len()].copy_from_slice(prefix);
+    report_data[prefix.len()..].copy_from_slice(&th1.data[..th1_len]);
+    Ok(report_data)
+}
+
+/// Verify a quote, returning the supplemental data on success.
+///
+/// When the `test_disable_ra_and_accept_all` feature is enabled, verification
+/// is bypassed and an empty `Vec` is returned.
+pub fn spdm_verify_quote(#[allow(unused_variables)] quote: &[u8]) -> SpdmResult<Vec<u8>> {
+    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
+    let res = attestation::verify_quote(quote);
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    let res: Result<Vec<u8>, ()> = Ok(vec![]);
+
+    res.map_err(|_| {
+        error!("Quote verification failed!\n");
+        SPDM_STATUS_INVALID_MSG_FIELD
+    })
+}
+
+/// Verify that the peer's REPORTDATA is bound to the expected prefix and TH1.
+pub fn verify_report_data_binding(
+    supplemental_data: &[u8],
+    peer_prefix: &[u8],
+    th1: &SpdmDigestStruct,
+) -> Result<(), MigrationResult> {
+    let report_data =
+        build_report_data(peer_prefix, th1).map_err(|_| MigrationResult::InvalidParameter)?;
+    verify_peer_report_data(supplemental_data, &report_data)
 }
 
 const ECDSA_P384_SHA384_PRIVATE_KEY_LENGTH: usize = 0xb9;
