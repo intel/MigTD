@@ -119,6 +119,34 @@ pub fn gen_quote_spdm(report_data: &[u8]) -> Result<Vec<u8>, MigrationResult> {
     Ok(res)
 }
 
+/// Verify that the peer's quote contains the expected REPORTDATA.
+///
+/// The REPORTDATA in the verified report should equal SHA384(expected_report_data),
+/// mirroring the binding created by gen_quote_spdm().
+///
+/// `supplemental_data` is the output of verify_quote() (774 bytes),
+/// which contains the REPORTDATA at offset 520..568 (48 bytes).
+pub fn verify_peer_report_data(
+    supplemental_data: &[u8],
+    expected_report_data: &[u8],
+) -> Result<(), MigrationResult> {
+    const REPORT_DATA_OFFSET: usize = 520;
+    const REPORT_DATA_SIZE: usize = 48;
+
+    if supplemental_data.len() < REPORT_DATA_OFFSET + REPORT_DATA_SIZE {
+        return Err(MigrationResult::InvalidParameter);
+    }
+
+    let hash = digest_sha384(expected_report_data)?;
+    let actual = &supplemental_data[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + REPORT_DATA_SIZE];
+
+    if actual != hash.as_slice() {
+        return Err(MigrationResult::InvalidParameter);
+    }
+
+    Ok(())
+}
+
 const ECDSA_P384_SHA384_PRIVATE_KEY_LENGTH: usize = 0xb9;
 
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop, Eq, PartialEq)]
