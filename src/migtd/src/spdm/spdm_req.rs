@@ -339,23 +339,27 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     //quote src
     let quote_src = gen_quote_spdm(&report_data[..report_data_prefix_len + th1_len])?;
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-    let res = attestation::verify_quote(quote_src.as_slice());
-    //  The session MUST be terminated immediately, if the mutual attestation failure
-    #[cfg(feature = "test_disable_ra_and_accept_all")]
-    let res: Result<Vec<u8>, ()> = Ok(vec![]);
-
-    if res.is_err() {
-        error!("mutual attestation failed, end the session!\n");
-        let session = spdm_requester
-            .common
-            .get_session_via_id(session_id)
-            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-        session.teardown();
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    }
+    // Self-quote verification is only needed for policy v1, which uses
+    // verified_report_local in authenticate_policy(). Policy v2 re-verifies
+    // the quote internally via authenticate_remote().
     #[cfg(not(feature = "policy_v2"))]
-    let verified_report_local = res.unwrap();
+    let verified_report_local = {
+        #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
+        let res = attestation::verify_quote(quote_src.as_slice());
+        #[cfg(feature = "test_disable_ra_and_accept_all")]
+        let res: Result<Vec<u8>, ()> = Ok(vec![]);
+
+        if res.is_err() {
+            error!("mutual attestation failed, end the session!\n");
+            let session = spdm_requester
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+        res.unwrap()
+    };
 
     //quote src
     let quote_element = VdmMessageElement {
@@ -474,22 +478,57 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     let quote_dst = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
-    let res = attestation::verify_quote(quote_dst);
-    #[cfg(feature = "test_disable_ra_and_accept_all")]
-    let res: Result<Vec<u8>, ()> = Ok(vec![]);
-
-    if res.is_err() {
-        error!("mutual attestation failed, end the session!\n");
-        let session = spdm_requester
-            .common
-            .get_session_via_id(session_id)
-            .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
-        session.teardown();
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    }
+    // Peer quote verification via verify_quote() is only needed for policy v1,
+    // which uses verified_report_peer in authenticate_policy(). Policy v2
+    // re-verifies the quote internally via authenticate_remote().
     #[cfg(not(feature = "policy_v2"))]
-    let verified_report_peer = res.unwrap();
+    let verified_report_peer = {
+        #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
+        let res = attestation::verify_quote(quote_dst);
+        #[cfg(feature = "test_disable_ra_and_accept_all")]
+        let res: Result<Vec<u8>, ()> = Ok(vec![]);
+
+        if res.is_err() {
+            error!("mutual attestation failed, end the session!\n");
+            let session = spdm_requester
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+        res.unwrap()
+    };
+
+    // Verify that the peer's quote REPORTDATA is bound to this SPDM session (v1)
+    #[cfg(not(feature = "policy_v2"))]
+    #[cfg(not(any(
+        feature = "AzCVMEmu",
+        feature = "test_disable_ra_and_accept_all",
+        feature = "test_mock_report"
+    )))]
+    {
+        let peer_prefix = "MigTDRsp".as_bytes();
+        let mut expected_report_data = [0u8; "MigTDRsp".len() + SPDM_MAX_HASH_SIZE];
+        expected_report_data[..peer_prefix.len()].copy_from_slice(peer_prefix);
+        expected_report_data[peer_prefix.len()..peer_prefix.len() + th1_len]
+            .copy_from_slice(&th1.data[..th1_len]);
+        if verify_peer_report_data(
+            &verified_report_peer,
+            &expected_report_data[..peer_prefix.len() + th1_len],
+        )
+        .is_err()
+        {
+            error!("Peer REPORTDATA does not match expected TH1 binding!\n");
+            let session = spdm_requester
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+    }
+
     #[cfg(feature = "policy_v2")]
     let quote_dst_vec = quote_dst.to_vec();
 
@@ -570,6 +609,31 @@ pub async fn send_and_receive_sdm_migration_attest_info(
                     .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
                 session.teardown();
                 return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            }
+
+            // Verify that the peer's quote REPORTDATA is bound to this SPDM session (v2)
+            #[cfg(not(any(feature = "AzCVMEmu", feature = "test_mock_report")))]
+            {
+                let verified_report_peer = policy_check_result.unwrap();
+                let peer_prefix = "MigTDRsp".as_bytes();
+                let mut expected_report_data = [0u8; "MigTDRsp".len() + SPDM_MAX_HASH_SIZE];
+                expected_report_data[..peer_prefix.len()].copy_from_slice(peer_prefix);
+                expected_report_data[peer_prefix.len()..peer_prefix.len() + th1_len]
+                    .copy_from_slice(&th1.data[..th1_len]);
+                if verify_peer_report_data(
+                    &verified_report_peer,
+                    &expected_report_data[..peer_prefix.len() + th1_len],
+                )
+                .is_err()
+                {
+                    error!("Peer REPORTDATA does not match expected TH1 binding!\n");
+                    let session = spdm_requester
+                        .common
+                        .get_session_via_id(session_id)
+                        .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+                    session.teardown();
+                    return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+                }
             }
         }
     }
