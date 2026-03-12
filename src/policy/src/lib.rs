@@ -18,7 +18,9 @@ use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use cc_measurement::CcEventHeader;
 use core::ops::Range;
 
-pub const REPORT_DATA_SIZE: usize = 774;
+/// Size of the full supplemental data returned by quote verification.
+/// Matches C struct `servtd_tdx_quote_suppl_data` (822 bytes, packed).
+pub const REPORT_DATA_SIZE: usize = 822;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -92,6 +94,9 @@ impl<'a> Report<'a> {
     pub const R_QE_ISV_SVN: Range<usize> = 732..734;
     pub const R_TCB_DATE: Range<usize> = 734..742;
     pub const R_TCB_STATUS: Range<usize> = 742..774;
+    pub const R_PLATFORM_TCB_DATE: Range<usize> = 774..782;
+    pub const R_QE_TCB_DATE: Range<usize> = 782..790;
+    pub const R_QE_TCB_STATUS: Range<usize> = 790..822;
 
     fn setup_migtd_info(
         report: &'a [u8],

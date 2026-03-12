@@ -544,11 +544,7 @@ mod v2 {
         let (tcb_date, tcb_status) = get_tcb_date_and_status_from_suppl_data(suppl_data)?;
         let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
         let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral)?;
-        let report_value = Report::new(
-            suppl_data
-                .get(..REPORT_DATA_SIZE)
-                .ok_or(PolicyError::InvalidParameter)?,
-        )?;
+        let report_value = Report::new(suppl_data)?;
 
         let migtd_svn = policy
             .servtd_tcb_mapping
