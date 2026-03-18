@@ -20,7 +20,12 @@ use tdx_tdcall::tdreport::tdcall_report;
 use tdx_tdcall_emu::tdreport::tdcall_report;
 
 /// Initial retry delay in milliseconds (2 seconds)
+#[cfg(not(feature = "AzCVMEmu"))]
 const INITIAL_DELAY_MS: u64 = 2000;
+
+//shorter for testing
+#[cfg(feature = "AzCVMEmu")]
+const INITIAL_DELAY_MS: u64 = 20;
 
 /// Maximum number of attempts before giving up
 const MAX_ATTEMPTS: u32 = 6; // Total wait time up to ~1 minutes with 2s initial delay

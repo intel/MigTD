@@ -136,6 +136,33 @@ pub fn tdcall_report_emulated(additional_data: &[u8; 64]) -> Result<tdx::TdRepor
 /// Emulated quote generation using mock quote
 #[cfg(feature = "test_mock_report")]
 pub fn get_quote_emulated(td_report_data: &[u8]) -> Result<Vec<u8>, QuoteError> {
+    // When mock_quote_retry is enabled, fail the first N calls to exercise retry logic
+    #[cfg(feature = "mock_quote_retry")]
+    {
+        use core::sync::atomic::{AtomicU32, Ordering};
+
+        /// Number of times get_quote should fail before succeeding.
+        /// Must be less than MAX_ATTEMPTS in quote.rs (currently 6) so
+        /// the last retry attempt succeeds.
+        const FAIL_COUNT: u32 = 5;
+
+        static CALL_COUNT: AtomicU32 = AtomicU32::new(0);
+
+        let count = CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        if count < FAIL_COUNT {
+            log::warn!(
+                "mock_quote_retry: Simulating quote failure ({}/{})",
+                count + 1,
+                FAIL_COUNT
+            );
+            return Err(QuoteError::ImdsError);
+        }
+        log::info!(
+            "mock_quote_retry: Returning mock quote on attempt {}",
+            count + 1
+        );
+    }
+
     debug!("Using mock quote for test_mock_report feature");
     Ok(create_mock_quote(td_report_data))
 }
