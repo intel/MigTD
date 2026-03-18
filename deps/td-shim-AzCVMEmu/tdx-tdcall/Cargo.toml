@@ -24,7 +24,7 @@ zerocopy = { version = "0.7", features = ["derive"] }
 
 # For compatibility with original tdx-tdcall interface
 bitflags = "2.11"
-spin = { version = "0.9", default-features = false, features = ["spin_mutex"] }
+spin = { version = "0.10", default-features = false, features = ["spin_mutex"] }
 lazy_static = { version = "1.4", features = ["spin_no_std"] }
 interrupt-emu = { path = "../interrupt-emu", package = "interrupt-emu" }
 
