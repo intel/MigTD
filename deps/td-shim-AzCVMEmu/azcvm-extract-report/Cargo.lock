@@ -601,7 +601,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -679,7 +679,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -1180,6 +1180,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "spin"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1254,7 +1260,7 @@ dependencies = [
  "lazy_static",
  "log",
  "scroll",
- "spin",
+ "spin 0.9.8",
  "x86_64",
 ]
 
@@ -1268,7 +1274,7 @@ dependencies = [
  "lazy_static",
  "log",
  "sha2",
- "spin",
+ "spin 0.10.0",
  "tdx-mock-data",
  "tdx-tdcall",
  "tokio",
