@@ -28,6 +28,7 @@ USE_POLICY_V2=false
 MOCK_QUOTE_FILE=""  # Optional mock quote file path
 EXPLICIT_POLICY_FILE=false
 EXPLICIT_POLICY_ISSUER_CHAIN=false
+USE_MOCK_QUOTE_RETRY=false
 DEFAULT_RUST_BACKTRACE="1"
 # Default RUST_LOG: verbose in debug, info in release; can be overridden by env
 DEFAULT_RUST_LOG_DEBUG="debug"
@@ -61,6 +62,7 @@ show_usage() {
     echo "  --skip-ra                    Skip remote attestation (uses mock TD reports/quotes for non-TDX environments)"
     echo "  --mock-report                Use mock report data for RA and policy v2 (non-TDX, but full attestation flow)"
     echo "  --mock-quote-file FILE       Path to mock quote file (used with --mock-report, defaults to output_data_v4.bin)"
+    echo "  --mock-quote-retry           Enable mock_quote_retry feature (get_quote fails first 8 times to test retry logic)"
     echo "  --both                       Start destination first, then source (same host)"
     echo "  --no-sudo                    Run without sudo (useful for local testing)"
     echo "  --features FEATURES          Add extra cargo features (comma-separated, e.g., 'spdm_attestation,feature2')"
@@ -279,6 +281,10 @@ while [[ $# -gt 0 ]]; do
             MOCK_QUOTE_FILE="$2"
             shift 2
             ;;
+        --mock-quote-retry)
+            USE_MOCK_QUOTE_RETRY=true
+            shift
+            ;;
         --both)
             RUN_BOTH=true
             shift
@@ -444,6 +450,10 @@ build_features_string() {
         features="$features,test_disable_ra_and_accept_all"
     elif [[ "$USE_MOCK_REPORT" == true ]]; then
         features="$features,test_mock_report"
+    fi
+
+    if [[ "$USE_MOCK_QUOTE_RETRY" == true ]]; then
+        features="$features,mock_quote_retry"
     fi
 
     if [[ -n "$EXTRA_FEATURES" ]]; then
