@@ -13,8 +13,13 @@ use tdx_tdcall::tdreport::tdcall_report;
 #[cfg(feature = "AzCVMEmu")]
 use tdx_tdcall_emu::tdreport::tdcall_report;
 
-/// Initial backoff delay in milliseconds.
+/// Initial retry delay in milliseconds (1 seconds)
+#[cfg(not(feature = "AzCVMEmu"))]
 const INITIAL_DELAY_MS: u64 = 1000;
+
+//shorter for testing
+#[cfg(feature = "AzCVMEmu")]
+const INITIAL_DELAY_MS: u64 = 20;
 
 /// Maximum number of retries.
 /// The cumulative exponential-backoff sleep time is bounded to stay below

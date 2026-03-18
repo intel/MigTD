@@ -32,6 +32,7 @@ interrupt-emu = { path = "../interrupt-emu", package = "interrupt-emu" }
 default = []
 test_mock_report = ["tdx-mock-data"]
 mock_report_tools = ["tdx-mock-data"]
+mock_quote_retry = ["test_mock_report"]
 
 [lib]
 name = "tdx_tdcall_emu"

@@ -560,6 +560,8 @@ pub fn tdvmcall_migtd_waitforrequest(
     data_buffer: &mut [u8],
     interrupt: u8,
 ) -> Result<(), TdVmcallError> {
+    crate::logging_emu::read_log_entries();
+
     // data_buffer uses the GHCI 1.5 buffer format:
     // Bytes 0-7: status (u64) - filled by VMM/emulation
     //   byte[0] = 1 (TDX_VMCALL_VMM_SUCCESS)
@@ -1108,6 +1110,7 @@ pub fn tdcall_servtd_rebind_approve(
 pub fn tdvmcall_get_quote(buffer: &mut [u8]) -> Result<(), original_tdx_tdcall::TdVmcallError> {
     use original_tdx_tdcall::TdVmcallError;
 
+    crate::logging_emu::read_log_entries();
     log::info!("AzCVMEmu: tdvmcall_get_quote emulated");
 
     // TDX GHCI GetQuote buffer format:
@@ -1604,6 +1607,7 @@ pub fn tdcall_extend_rtmr(
 /// Emulation for tdvmcall_setup_event_notify
 /// In AzCVMEmu mode, we store the vector so tdvmcall_get_quote can trigger it
 pub fn tdvmcall_setup_event_notify(vector: u64) -> Result<(), original_tdx_tdcall::TdVmcallError> {
+    crate::logging_emu::read_log_entries();
     log::info!(
         "AzCVMEmu: tdvmcall_setup_event_notify emulated - vector: {}",
         vector
