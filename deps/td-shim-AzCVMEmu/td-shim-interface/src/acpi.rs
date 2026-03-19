@@ -7,10 +7,10 @@
 //! ACPI emulation for td-shim-interface-emu
 //! Provides minimal ACPI types needed by migtd
 
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 
 #[repr(C, packed)]
-#[derive(Default, AsBytes, FromBytes, FromZeroes, Copy, Clone)]
+#[derive(Default, IntoBytes, FromBytes, Immutable, Copy, Clone)]
 pub struct GenericSdtHeader {
     pub signature: [u8; 4],
     pub length: u32,
@@ -44,7 +44,7 @@ impl GenericSdtHeader {
 }
 
 #[repr(C, packed)]
-#[derive(Default, AsBytes, FromBytes, FromZeroes, Copy, Clone)]
+#[derive(Default, IntoBytes, FromBytes, Immutable, Copy, Clone)]
 pub struct Ccel {
     pub header: GenericSdtHeader,
     pub cc_type: u8,

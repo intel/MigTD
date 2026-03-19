@@ -10,7 +10,7 @@ use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::sync::Mutex;
-use zerocopy::{transmute_ref, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{transmute_ref, FromBytes, Immutable, IntoBytes};
 
 const PAGE_SIZE: usize = 0x1000;
 const LOG_ENTRY_HEADER_SIZE: usize = core::mem::size_of::<LogEntryHeader>();
@@ -21,7 +21,7 @@ pub const LOGAREA_SIGNATURE: [u8; 16] = [
 ];
 
 #[repr(C, packed)]
-#[derive(AsBytes, FromBytes, FromZeroes, Debug, Clone, Copy)]
+#[derive(IntoBytes, FromBytes, Immutable, Debug, Clone, Copy)]
 pub struct LogAreaBufferHeader {
     pub signature: [u8; 16],
     pub vcpuindex: u32,
@@ -31,7 +31,7 @@ pub struct LogAreaBufferHeader {
 }
 
 #[repr(C, packed)]
-#[derive(AsBytes, FromBytes, FromZeroes, Debug, Clone, Copy)]
+#[derive(IntoBytes, FromBytes, Immutable, Debug, Clone, Copy)]
 pub struct LogEntryHeader {
     pub log_entry_id: u64,
     pub mig_request_id: u64,
