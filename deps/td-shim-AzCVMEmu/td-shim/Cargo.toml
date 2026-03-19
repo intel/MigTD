@@ -13,4 +13,4 @@ std = []
 
 [dependencies]
 cc-measurement = { path = "../../td-shim/cc-measurement"}
-zerocopy = { version = "0.7", features = ["derive"] }
+zerocopy = { version = "=0.8.27", features = ["derive"] }

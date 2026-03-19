@@ -377,7 +377,6 @@ fn populate_tcg_pcr_event_log() {
 
             use cc_measurement::{TcgEfiSpecIdevent, TcgPcrEventHeader};
             use core::mem::size_of;
-            use zerocopy::AsBytes;
 
             // Create the initial TCG_EfiSpecIDEvent using the default implementation
             let spec_id_event = TcgEfiSpecIdevent::default();
@@ -394,12 +393,18 @@ fn populate_tcg_pcr_event_log() {
             let mut offset = 0;
 
             // Write TcgPcrEventHeader
-            let pcr_header_bytes = pcr_header.as_bytes();
+            let pcr_header_bytes = slice::from_raw_parts(
+                &pcr_header as *const TcgPcrEventHeader as *const u8,
+                size_of::<TcgPcrEventHeader>(),
+            );
             log.data[offset..offset + pcr_header_bytes.len()].copy_from_slice(pcr_header_bytes);
             offset += pcr_header_bytes.len();
 
             // Write TcgEfiSpecIdevent
-            let spec_id_bytes = spec_id_event.as_bytes();
+            let spec_id_bytes = slice::from_raw_parts(
+                &spec_id_event as *const TcgEfiSpecIdevent as *const u8,
+                size_of::<TcgEfiSpecIdevent>(),
+            );
             log.data[offset..offset + spec_id_bytes.len()].copy_from_slice(spec_id_bytes);
 
             // No need to track size - parsing logic will determine the written portion
