@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
+use crate::{config, migration::transport::TransportType};
+
 use super::MigrationResult;
 use alloc::{vec, vec::Vec};
 use async_io::{AsyncRead, AsyncWrite};
@@ -318,10 +320,9 @@ pub(super) async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
         .ok_or(MigrationResult::InvalidParameter)
 }
 
-#[cfg(feature = "policy_v2")]
-pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
-    transport: &mut T,
-    pre_session_data: &[u8],
+pub(super) async fn source_pre_session_data_exchange(
+    transport: &mut TransportType,
+    #[cfg(feature = "vmcall-raw")] init_policy: &[u8],
 ) -> Result<Vec<u8>> {
     let version = exchange_hello_packet(transport).await.map_err(|e| {
         log::error!(
@@ -332,7 +333,13 @@ pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>
     })?;
     log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
 
-    send_pre_session_data_packet(pre_session_data, transport)
+    let policy = config::get_policy()
+        .ok_or(MigrationResult::InvalidParameter)
+        .map_err(|e| {
+            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
+            e
+        })?;
+    send_pre_session_data_packet(policy, transport)
         .await
         .map_err(|e| {
             log::error!(
@@ -346,6 +353,17 @@ pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>
         .map_err(|e| {
             log::error!(
                 "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
+                e
+            );
+            e
+        })?;
+
+    #[cfg(feature = "vmcall-raw")]
+    send_pre_session_data_packet(init_policy, transport)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
                 e
             );
             e
@@ -367,4 +385,79 @@ pub(super) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>
     })?;
 
     Ok(remote_policy)
+}
+
+pub(super) async fn dest_pre_session_data_exchange(
+    transport: &mut TransportType,
+) -> Result<Vec<u8>> {
+    let version = exchange_hello_packet(transport).await.map_err(|e| {
+        log::error!(
+            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
+            e
+        );
+        e
+    })?;
+    log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
+
+    let policy = config::get_policy()
+        .ok_or(MigrationResult::InvalidParameter)
+        .map_err(|e| {
+            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
+            e
+        })?;
+    send_pre_session_data_packet(policy, transport)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
+                e
+            );
+            e
+        })?;
+    let remote_policy = receive_pre_session_data_packet(transport)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
+                e
+            );
+            e
+        })?;
+
+    #[cfg(feature = "vmcall-raw")]
+    let init_policy = receive_pre_session_data_packet(transport)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
+                e
+            );
+            e
+        })?;
+
+    send_start_session_packet(transport).await.map_err(|e| {
+        log::error!(
+            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
+            e
+        );
+        e
+    })?;
+    receive_start_session_packet(transport).await.map_err(|e| {
+        log::error!(
+            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
+            e
+        );
+        e
+    })?;
+
+    // FIXME: Refactor the TLS verification callback to enable easier access to pre-session data.
+    let mut policy_buffer = Vec::new();
+    policy_buffer.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
+    policy_buffer.extend_from_slice(&remote_policy);
+    #[cfg(feature = "vmcall-raw")]
+    policy_buffer.extend_from_slice(&(init_policy.len() as u32).to_le_bytes());
+    #[cfg(feature = "vmcall-raw")]
+    policy_buffer.extend_from_slice(&init_policy);
+
+    Ok(policy_buffer)
 }
