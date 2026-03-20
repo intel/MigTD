@@ -41,7 +41,7 @@ use spdmlib::{
     secret::SpdmSecretAsymSign,
 };
 use spin::Mutex;
-use zerocopy::AsBytes;
+use zerocopy::IntoBytes;
 use zeroize::Zeroize;
 
 extern crate alloc;
@@ -322,7 +322,7 @@ pub fn handle_exchange_pub_key_req(
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     cnt += writer
-        .extend_from_slice(my_pub_key.as_bytes())
+        .extend_from_slice(my_pub_key.as_slice())
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     if my_pub_key.len() > config::MAX_SPDM_CERT_CHAIN_DATA_SIZE
