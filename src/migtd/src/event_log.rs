@@ -20,8 +20,7 @@ use td_shim::event_log::{
 };
 use td_shim_interface::acpi::Ccel;
 use tdx_tdcall::tdx;
-use zerocopy::AsBytes;
-
+use zerocopy::{FromBytes, IntoBytes};
 pub const EV_EVENT_TAG: u32 = 0x00000006;
 pub const TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT: &[u8] = b"test_disable_ra_and_accept_all";
 
@@ -99,7 +98,7 @@ fn get_ccel() -> Option<&'static Ccel> {
             return None;
         }
 
-        let ccel = Ccel::read_from_bytes(&ccel[..size_of::<Ccel>()])?;
+        let ccel = Ccel::read_from_bytes(&ccel[..size_of::<Ccel>()]).ok()?;
 
         Some(CCEL.call_once(|| ccel))
     } else {

@@ -16,7 +16,7 @@ use td_shim_interface::td_uefi_pi::{
     hob::{self as hob_lib, align_to_next_hob_offset},
     pi::hob::{GuidExtension, Header, HOB_TYPE_END_OF_HOB_LIST, HOB_TYPE_GUID_EXTENSION},
 };
-use zerocopy::{AsBytes, FromBytes, FromZeroes};
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const QUERY_COMMAND: u8 = 0;
@@ -153,12 +153,12 @@ impl<'a> VmcallServiceResponse<'a> {
             return None;
         }
 
-        T::read_from(&self.data[24 + offset..24 + offset + size_of::<T>()])
+        T::read_from_bytes(&self.data[24 + offset..24 + offset + size_of::<T>()]).ok()
     }
 }
 
 #[repr(C, packed)]
-#[derive(Debug, FromZeroes, FromBytes, AsBytes)]
+#[derive(Debug, FromBytes, IntoBytes, Immutable)]
 pub struct ServiceQueryResponse {
     pub version: u8,
     pub command: u8,
@@ -168,7 +168,7 @@ pub struct ServiceQueryResponse {
 }
 
 #[repr(C, packed)]
-#[derive(FromZeroes, FromBytes, AsBytes)]
+#[derive(FromBytes, IntoBytes, Immutable)]
 #[cfg(not(feature = "vmcall-raw"))]
 pub struct ServiceMigWaitForReqResponse {
     pub version: u8,
@@ -178,7 +178,7 @@ pub struct ServiceMigWaitForReqResponse {
 }
 
 #[repr(C)]
-#[derive(FromZeroes, FromBytes, AsBytes)]
+#[derive(FromBytes, IntoBytes, Immutable)]
 #[cfg(feature = "vmcall-raw")]
 pub struct ServiceMigWaitForReqResponse {
     pub data_status: u32,
@@ -191,7 +191,7 @@ pub struct ServiceMigWaitForReqResponse {
 }
 
 #[repr(C, packed)]
-#[derive(FromZeroes, FromBytes, AsBytes)]
+#[derive(FromBytes, IntoBytes, Immutable)]
 pub struct ServiceMigWaitForReqShutdown {
     pub version: u8,
     pub command: u8,
@@ -199,7 +199,7 @@ pub struct ServiceMigWaitForReqShutdown {
 }
 
 #[repr(C, packed)]
-#[derive(FromZeroes, FromBytes, AsBytes)]
+#[derive(FromBytes, IntoBytes, Immutable)]
 pub struct ServiceMigReportStatusResponse {
     pub version: u8,
     pub command: u8,
@@ -241,7 +241,7 @@ pub struct ReportStatusResponse {
 }
 
 #[cfg(feature = "vmcall-raw")]
-#[derive(AsBytes, FromBytes, FromZeroes, Debug)]
+#[derive(IntoBytes, FromBytes, Immutable, Debug)]
 #[repr(C, packed)]
 pub struct RequestDataBufferHeader {
     pub datastatus: u64,
