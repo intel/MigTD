@@ -20,7 +20,7 @@ use spin::Mutex;
 use td_payload::mm::shared::alloc_shared_pages;
 #[cfg(not(test))]
 use tdx_tdcall::{td_call, TdcallArgs};
-use zerocopy::{transmute_ref, AsBytes, FromBytes, FromZeroes};
+use zerocopy::{transmute_ref, FromBytes, Immutable, IntoBytes};
 
 // Use td-logger-emu for AzCVMEmu mode (console output), td-logger for real td-shim
 #[cfg(feature = "AzCVMEmu")]
@@ -58,7 +58,7 @@ pub const LOGAREA_SIGNATURE: [u8; 16] = [
 ];
 
 #[repr(C, packed)]
-#[derive(AsBytes, FromBytes, FromZeroes, Debug)]
+#[derive(IntoBytes, FromBytes, Immutable, Debug)]
 pub struct LogAreaBufferHeader {
     pub signature: [u8; 16],
     pub vcpuindex: u32,
@@ -73,7 +73,7 @@ pub struct LogAreaBuffer<'a> {
 }
 
 #[repr(C, packed)]
-#[derive(AsBytes, FromBytes, FromZeroes, Debug)]
+#[derive(IntoBytes, FromBytes, Immutable, Debug)]
 #[cfg(feature = "vmcall-raw")]
 pub struct LogEntryHeader {
     pub log_entry_id: u64,

@@ -44,7 +44,7 @@ virtio_serial = { path="../devices/virtio_serial", optional = true }
 vmcall_raw = { path="../devices/vmcall_raw", optional = true }
 x86 = "0.47.0"
 x86_64 = { version = "0.14", default-features = false, features = ["instructions"] }
-zerocopy = { version = "0.7", features = ["derive"] }
+zerocopy = { version = "=0.8.27", features = ["derive"] }
 bitfield-struct = "0.11"
 raw-cpuid = "11.6.0"
 sha2 = { version = "0.10.2", default-features = false, optional = true }

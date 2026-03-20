@@ -29,7 +29,7 @@ use tdx_tdcall::{
 };
 #[cfg(feature = "vmcall-raw")]
 use tdx_tdcall::{tdreport::TdxReport, tdreport::TD_REPORT_ADDITIONAL_DATA_SIZE};
-use zerocopy::AsBytes;
+use zerocopy::IntoBytes;
 type Result<T> = core::result::Result<T, MigrationResult>;
 
 use super::{data::*, *};
