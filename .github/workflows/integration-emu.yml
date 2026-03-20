@@ -85,6 +85,13 @@ jobs:
             test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-rebind-skip-ra-test-logs"
 
+          - test-name: "Mock Quote Retry"
+            test-type: "mock-quote-retry"
+            install-jq: 'false'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --mock-report --mock-quote-retry --both --no-sudo --log-level info"
+            artifact-name: "mock-quote-retry-test-logs"
+
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.16.1
@@ -216,6 +223,38 @@ jobs:
               echo "=== Core dumps found ==="
               ls -la core*
             fi
+          fi
+
+          # Verify retry messages for mock-quote-retry test
+          if [[ "${{ matrix.test-type }}" == "mock-quote-retry" ]]; then
+            echo ""
+            echo "=== Verifying quote retry logs ==="
+            FAIL=0
+            for LOG in migtd_migration_source.log migtd_migration_destination.log; do
+              if [[ ! -f "$LOG" ]]; then
+                echo "❌ Missing log file: $LOG"
+                FAIL=1
+                continue
+              fi
+              RETRY_COUNT=$(grep -ac "Simulating quote failure" "$LOG" || true)
+              SUCCESS_COUNT=$(grep -ac "Quote generated successfully" "$LOG" || true)
+              echo "$LOG: $RETRY_COUNT retry failures, $SUCCESS_COUNT successes"
+              if [[ "$RETRY_COUNT" -ne 5 ]]; then
+                echo "❌ Expected 5 retry failures in $LOG, got $RETRY_COUNT"
+                FAIL=1
+              fi
+              if [[ "$SUCCESS_COUNT" -lt 1 ]]; then
+                echo "❌ Expected at least 1 success in $LOG"
+                FAIL=1
+              fi
+            done
+            if [[ "$FAIL" -eq 1 ]]; then
+              echo ""
+              echo "Dumping retry-related log lines:"
+              grep -a "retry\|Simulating\|Quote generated\|GetQuote failed" migtd_migration_source.log migtd_migration_destination.log || true
+              exit 1
+            fi
+            echo "✅ Quote retry verification passed (5 failures + success on both sides)"
           fi
 
       - name: Upload test artifacts on failure
