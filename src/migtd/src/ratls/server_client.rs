@@ -223,12 +223,20 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
-    let td_report = gen_tdreport(public_key)?;
+    let hash = digest_sha384(public_key).map_err(|e| {
+        log::error!("Failed to compute SHA384 digest: {:?}\n", e);
+        e
+    })?;
 
-    attestation::get_quote(td_report.as_bytes()).map_err(|e| {
-        log::error!("Failed to get quote from TD report. Error: {:?}\n", e);
+    let mut additional_data = [0u8; 64];
+    additional_data[..hash.len()].copy_from_slice(hash.as_ref());
+
+    let (quote, _report) = crate::quote::get_quote_with_retry(&additional_data).map_err(|e| {
+        log::error!("get_quote_with_retry failed: {:?}\n", e);
         RatlsError::GetQuote
-    })
+    })?;
+
+    Ok(quote)
 }
 
 pub fn gen_tdreport(public_key: &[u8]) -> Result<TdxReport> {
@@ -819,7 +827,6 @@ mod verify {
     use crypto::ecdsa::ecdsa_verify;
     use crypto::{Error as CryptoError, Result as CryptoResult};
     use policy::PolicyError;
-    use tdx_tdcall::tdreport::TdxReport;
 
     #[cfg(not(feature = "policy_v2"))]
     pub fn verify_peer_cert(
@@ -1227,6 +1234,7 @@ mod verify {
 
     #[cfg(feature = "policy_v2")]
     fn verify_public_key_with_tdreport(tdreport: &[u8], public_key: &[u8]) -> CryptoResult<()> {
+        use tdx_tdcall::tdreport::TdxReport;
         if cfg!(feature = "AzCVMEmu") {
             // In AzCVMEmu mode, REPORTDATA is constructed differently.
             // Bypass public key hash check in this development environment.

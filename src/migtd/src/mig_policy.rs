@@ -119,9 +119,7 @@ mod v2 {
         LOCAL_TCB_INFO
             .try_call_once(|| {
                 let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-                let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
-                    .map_err(|_| PolicyError::GetTdxReport)?;
-                let quote = attestation::get_quote(tdx_report.as_bytes())
+                let (quote, _report) = crate::quote::get_quote_with_retry(&[0u8; 64])
                     .map_err(|_| PolicyError::QuoteGeneration)?;
                 let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
                 setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
