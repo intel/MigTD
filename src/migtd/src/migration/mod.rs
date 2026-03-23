@@ -16,6 +16,8 @@ pub mod session;
 pub mod transport;
 
 use crate::driver::ticks::TimeoutError;
+#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+use crate::migration::rebinding::InitData;
 use crate::ratls::RatlsError;
 use crate::ratls::{
     INVALID_MIG_POLICY_ERROR, MIG_POLICY_UNSATISFIED_ERROR, MUTUAL_ATTESTATION_ERROR,
@@ -79,7 +81,6 @@ pub const STREAM_SOCKET_INFO_HOB_GUID: Guid = Guid::from_fields(
 );
 
 #[repr(C)]
-#[derive(Debug, Pread, Pwrite, Clone, Default)]
 pub struct MigtdMigrationInformation {
     // ID for the migration request, which can be used in TDG.VP.VMCALL
     // <Service.MigTD.ReportStatus>
@@ -87,7 +88,10 @@ pub struct MigtdMigrationInformation {
 
     // If set, current MigTD is MigTD-s else current MigTD is MigTD-d
     pub migration_source: u8,
-    _pad: [u8; 7],
+
+    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+    // Has init migtd data
+    pub has_init_data: u8,
 
     // UUID of target TD
     pub target_td_uuid: [u64; 4],
@@ -103,6 +107,64 @@ pub struct MigtdMigrationInformation {
     // Unique identifier for the communication between MigTD and VMM
     // It can be retrieved from MIGTD_STREAM_SOCKET_INFO HOB
     pub communication_id: u64,
+
+    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+    pub init_migtd_data: Option<InitData>,
+}
+
+impl MigtdMigrationInformation {
+    pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
+        let min_len = if cfg!(feature = "vmcall-raw") { 56 } else { 72 };
+
+        if b.len() < min_len {
+            return None;
+        }
+
+        if b[10..16] != [0; 6] {
+            return None;
+        }
+
+        let mig_request_id = u64::from_le_bytes(b[..8].try_into().unwrap());
+        let migration_source = b[8];
+        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        let has_init_data = b[9];
+
+        let target_td_uuid: [u64; 4] = core::array::from_fn(|i| {
+            let offset = 16 + i * 8;
+            u64::from_le_bytes(b[offset..offset + 8].try_into().unwrap())
+        });
+
+        let binding_handle = u64::from_le_bytes(b[48..56].try_into().unwrap());
+
+        #[cfg(not(feature = "vmcall-raw"))]
+        let mig_policy_id = u64::from_le_bytes(b[56..64].try_into().unwrap());
+
+        #[cfg(not(feature = "vmcall-raw"))]
+        let communication_id = u64::from_le_bytes(b[64..72].try_into().unwrap());
+
+        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        let mut init_migtd_data = None;
+
+        #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+        if has_init_data == 1 {
+            init_migtd_data = Some(InitData::read_from_bytes(&b[56..])?);
+        }
+
+        Some(Self {
+            mig_request_id,
+            migration_source,
+            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            has_init_data,
+            target_td_uuid,
+            binding_handle,
+            #[cfg(not(feature = "vmcall-raw"))]
+            mig_policy_id,
+            #[cfg(not(feature = "vmcall-raw"))]
+            communication_id,
+            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            init_migtd_data,
+        })
+    }
 }
 
 #[repr(C)]

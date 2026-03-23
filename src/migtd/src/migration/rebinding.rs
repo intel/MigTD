@@ -6,6 +6,7 @@ use alloc::{boxed::Box, vec::Vec};
 use core::mem::MaybeUninit;
 use core::time::Duration;
 use crypto::{
+    hash::digest_sha384,
     tls::SecureChannel,
     x509::{Certificate, Decode},
     SHA384_DIGEST_SIZE,
@@ -16,17 +17,10 @@ use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 use crate::migration::servtd_ext::read_servtd_ext;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
-use crate::{event_log, migration::transport::*};
-use crypto::hash::digest_sha384;
-
 use crate::{
-    config,
-    migration::pre_session_data::{
-        exchange_hello_packet, receive_pre_session_data_packet, receive_start_session_packet,
-        send_pre_session_data_packet, send_start_session_packet,
-    },
+    config, event_log,
+    migration::{pre_session_data::*, transport::*},
 };
-
 use crate::{
     driver::ticks::with_timeout,
     migration::{
@@ -245,144 +239,6 @@ impl<'a> MigtdDataEntry<'a> {
     }
 }
 
-pub(super) async fn rebinding_old_pre_session_data_exchange(
-    transport: &mut TransportType,
-    init_policy: &[u8],
-) -> Result<Vec<u8>, MigrationResult> {
-    let version = exchange_hello_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
-
-    let policy = config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    send_pre_session_data_packet(policy, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-    send_pre_session_data_packet(init_policy, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-
-    Ok(remote_policy)
-}
-
-pub(super) async fn rebinding_new_pre_session_data_exchange(
-    transport: &mut TransportType,
-) -> Result<Vec<u8>, MigrationResult> {
-    let version = exchange_hello_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
-
-    let policy = config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    send_pre_session_data_packet(policy, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-    let init_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-
-    // FIXME: Refactor the TLS verification callback to enable easier access to pre-session data.
-    let mut policy_buffer = Vec::new();
-    policy_buffer.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
-    policy_buffer.extend_from_slice(&remote_policy);
-    policy_buffer.extend_from_slice(&(init_policy.len() as u32).to_le_bytes());
-    policy_buffer.extend_from_slice(&init_policy);
-
-    Ok(policy_buffer)
-}
-
 pub async fn start_rebinding(
     info: &RebindingInfo,
     data: &mut Vec<u8>,
@@ -401,19 +257,19 @@ pub async fn start_rebinding(
             .ok_or(MigrationResult::InvalidParameter)?;
         let remote_policy = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
-            rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
+            source_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
         ))
         .await
         .map_err(|e| {
             log::error!(
-                "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
+                "start_rebinding: source_pre_session_data_exchange timeout error: {:?}\n",
                 e
             );
             e
         })?
         .map_err(|e| {
             log::error!(
-                "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
+                "start_rebinding: source_pre_session_data_exchange error: {:?}\n",
                 e
             );
             e
@@ -446,12 +302,12 @@ pub async fn start_rebinding(
     } else {
         let pre_session_data = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
-            rebinding_new_pre_session_data_exchange(&mut transport),
+            dest_pre_session_data_exchange(&mut transport),
         ))
         .await
         .map_err(|e| {
             log::error!(
-                "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
+                "start_rebinding: dest_pre_session_data_exchange timeout error: {:?}\n",
                 e
             );
             e
