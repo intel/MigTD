@@ -187,7 +187,11 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let response = spdm_requester
-        .send_spdm_vendor_defined_request_ex(None, &send_buffer[..used], &mut receive_buffer)
+        .send_receive_spdm_vendor_defined_request_ex(
+            None,
+            &send_buffer[..used],
+            &mut receive_buffer,
+        )
         .await?;
 
     // Format checks and save the received public key
@@ -413,7 +417,11 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let response = spdm_requester
-        .send_spdm_vendor_defined_request_ex(None, &send_buffer[..send_used], &mut receive_buffer)
+        .send_receive_spdm_vendor_defined_request_ex(
+            None,
+            &send_buffer[..send_used],
+            &mut receive_buffer,
+        )
         .await?;
 
     //Format checks
@@ -733,7 +741,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let response = spdm_requester
-        .send_spdm_vendor_defined_request_ex(
+        .send_receive_spdm_vendor_defined_request_ex(
             session_id,
             &send_buffer[..send_used],
             &mut receive_buffer,
@@ -1017,7 +1025,11 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let response = spdm_requester
-        .send_spdm_vendor_defined_request_ex(None, &send_buffer[..send_used], &mut receive_buffer)
+        .send_receive_spdm_vendor_defined_request_ex(
+            None,
+            &send_buffer[..send_used],
+            &mut receive_buffer,
+        )
         .await?;
 
     //Format checks
@@ -1219,7 +1231,7 @@ pub async fn send_and_receive_sdm_rebind_info(
 
     let mut receive_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
     let response = spdm_requester
-        .send_spdm_vendor_defined_request_ex(
+        .send_receive_spdm_vendor_defined_request_ex(
             session_id,
             &send_buffer[..send_used],
             &mut receive_buffer,
