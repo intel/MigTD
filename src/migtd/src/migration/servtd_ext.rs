@@ -33,6 +33,7 @@ pub struct ServtdExt {
     pub init_cpusvn: [u8; 16],
     pub init_tee_tcb_svn: [u8; 16],
     pub init_tee_model: [u8; 12],
+    reserved1: [u8; 4],
     pub cur_servtd_info_hash: [u8; 48],
     pub cur_servtd_attr: [u8; 8],
     reserved2: [u8; 104],
@@ -117,6 +118,7 @@ pub fn read_servtd_ext(
         init_cpusvn,
         init_tee_tcb_svn,
         init_tee_model,
+        reserved1: [0u8; 4],
         cur_servtd_info_hash,
         cur_servtd_attr,
         reserved: [0u8; 8],
@@ -146,6 +148,6 @@ mod test {
 
     #[test]
     fn test_structure_sizes() {
-        assert_eq!(size_of::<ServtdExt>(), 268)
+        assert_eq!(size_of::<ServtdExt>(), 272)
     }
 }

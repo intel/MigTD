@@ -675,9 +675,11 @@ async fn rebinding_new_prepare(
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
 
     // The TLS session is established; we can now extract servtd_ext from the peer certificates.
-    let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
+    let mut servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
     write_rebinding_session_token(&rebind_token.token)?;
     write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
+    servtd_ext.cur_servtd_info_hash.fill(0);
+    servtd_ext.cur_servtd_attr.fill(0);
     write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
 
     shutdown_transport(ratls_server.transport_mut(), info.mig_request_id).await?;
