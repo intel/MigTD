@@ -39,6 +39,7 @@ pub mod driver;
 pub mod event_log;
 pub mod mig_policy;
 pub mod migration;
+pub mod quote;
 pub mod ratls;
 pub mod spdm;
 
