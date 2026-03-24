@@ -392,45 +392,39 @@ pub async fn start_rebinding(
     // Exchange policy firstly because of the message size limitation of TLS protocol
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
     if info.rebinding_src == 1 {
-        let local_data =
-            InitData::get_from_local(&[0u8; 64]).ok_or(MigrationResult::InvalidParameter)?;
-        let init_migtd_data = info
-            .init_migtd_data
-            .as_ref()
-            .or(Some(&local_data))
-            .ok_or(MigrationResult::InvalidParameter)?;
-        let remote_policy = Box::pin(with_timeout(
-            PRE_SESSION_TIMEOUT,
-            rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
-        ))
-        .await
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
-                e
-            );
-            e
-        })?
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
-                e
-            );
-            e
-        })?;
-        #[cfg(not(feature = "spdm_attestation"))]
         match info.operation {
             MIGTD_REBIND_OP_PREPARE => {
+                let local_data = InitData::get_from_local(&[0u8; 64])
+                    .ok_or(MigrationResult::InvalidParameter)?;
+                let init_migtd_data = info
+                    .init_migtd_data
+                    .as_ref()
+                    .or(Some(&local_data))
+                    .ok_or(MigrationResult::InvalidParameter)?;
+                let remote_policy = Box::pin(with_timeout(
+                    PRE_SESSION_TIMEOUT,
+                    rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
+                ))
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
+                        e
+                    );
+                    e
+                })?
+                .map_err(|e| {
+                    log::error!(
+                        "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
+                        e
+                    );
+                    e
+                })?;
+                #[cfg(not(feature = "spdm_attestation"))]
                 rebinding_old_prepare(transport, info, &init_migtd_data, data, remote_policy)
-                    .await?
-            }
-            MIGTD_REBIND_OP_FINALIZE => rebinding_old_finalize(info, data).await?,
-            _ => return Err(MigrationResult::InvalidParameter),
-        }
+                    .await?;
 
-        #[cfg(feature = "spdm_attestation")]
-        match info.operation {
-            MIGTD_REBIND_OP_PREPARE => {
+                #[cfg(feature = "spdm_attestation")]
                 rebinding_old_prepare(
                     transport,
                     info,
@@ -438,44 +432,38 @@ pub async fn start_rebinding(
                     #[cfg(feature = "policy_v2")]
                     remote_policy,
                 )
-                .await?
+                .await?;
             }
             MIGTD_REBIND_OP_FINALIZE => rebinding_old_finalize(info, data).await?,
             _ => return Err(MigrationResult::InvalidParameter),
         }
     } else {
-        let pre_session_data = Box::pin(with_timeout(
-            PRE_SESSION_TIMEOUT,
-            rebinding_new_pre_session_data_exchange(&mut transport),
-        ))
-        .await
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
-                e
-            );
-            e
-        })?
-        .map_err(|e| {
-            log::error!(
-                "start_rebinding: rebinding_new_pre_session_data_exchange error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-        #[cfg(not(feature = "spdm_attestation"))]
         match info.operation {
             MIGTD_REBIND_OP_PREPARE => {
-                rebinding_new_prepare(transport, info, data, pre_session_data).await?
-            }
-            MIGTD_REBIND_OP_FINALIZE => rebinding_new_finalize(info, data).await?,
-            _ => return Err(MigrationResult::InvalidParameter),
-        }
+                let pre_session_data = Box::pin(with_timeout(
+                    PRE_SESSION_TIMEOUT,
+                    rebinding_new_pre_session_data_exchange(&mut transport),
+                ))
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
+                        e
+                    );
+                    e
+                })?
+                .map_err(|e| {
+                    log::error!(
+                        "start_rebinding: rebinding_new_pre_session_data_exchange error: {:?}\n",
+                        e
+                    );
+                    e
+                })?;
 
-        #[cfg(feature = "spdm_attestation")]
-        match info.operation {
-            MIGTD_REBIND_OP_PREPARE => {
+                #[cfg(not(feature = "spdm_attestation"))]
+                rebinding_new_prepare(transport, info, data, pre_session_data).await?;
+
+                #[cfg(feature = "spdm_attestation")]
                 rebinding_new_prepare(
                     transport,
                     info,
@@ -483,7 +471,7 @@ pub async fn start_rebinding(
                     #[cfg(feature = "policy_v2")]
                     pre_session_data,
                 )
-                .await?
+                .await?;
             }
             MIGTD_REBIND_OP_FINALIZE => rebinding_new_finalize(info, data).await?,
             _ => return Err(MigrationResult::InvalidParameter),
