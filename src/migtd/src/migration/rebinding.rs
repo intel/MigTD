@@ -644,7 +644,7 @@ async fn rebinding_new_prepare(
     pre_session_data: Vec<u8>,
 ) -> Result<(), MigrationResult> {
     // TLS server
-    let mut ratls_server = ratls::server_rebinding(transport, pre_session_data).map_err(|_| {
+    let mut ratls_server = ratls::server_rebinding(transport, pre_session_data).map_err(|e| {
         #[cfg(feature = "vmcall-raw")]
         data.extend_from_slice(
             &format!(
@@ -654,10 +654,11 @@ async fn rebinding_new_prepare(
             .into_bytes(),
         );
         log::error!(
-            "rebinding_new(): Failed in ratls transport. Migration ID: {}\n",
-            info.mig_request_id
+            "rebinding_new(): Failed in ratls transport. Migration ID: {} Error: {:?}\n",
+            info.mig_request_id,
+            e
         );
-        MigrationResult::SecureSessionError
+        e
     })?;
 
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
