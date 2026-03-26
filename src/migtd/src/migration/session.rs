@@ -768,7 +768,7 @@ async fn migration_src_exchange_msk(
         log::error!(migration_request_id = info.mig_info.mig_request_id;
             "exchange_msk(): Failed in ratls client setup. Error: {:?}\n", e
         );
-        MigrationResult::SecureSessionError
+        e
     })?;
 
     // MigTD-S send Migration Session Forward key to peer
@@ -830,7 +830,7 @@ async fn migration_dst_exchange_msk(
         log::error!(migration_request_id = info.mig_info.mig_request_id;
             "exchange_msk(): Failed in ratls server setup. Error: {:?}\n", e
         );
-        MigrationResult::SecureSessionError
+        e
     })?;
 
     with_timeout(
