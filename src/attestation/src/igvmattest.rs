@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use crate::{attest::TD_QUOTE_SIZE, Error};
+use crate::{attest::TD_QUOTE_SIZE, binding::AttestLibError, Error};
 #[cfg(feature = "igvm-attest")]
 use alloc::{vec, vec::Vec};
 use core::ffi::c_void;
@@ -92,7 +92,11 @@ pub fn get_quote_igvm(td_report: &[u8]) -> Result<Vec<u8>, Error> {
                 (*hdr)
             );
         }
-        return Err(Error::GetQuote);
+        const BUSY: i32 = AttestLibError::Busy as i32;
+        return Err(match servtd_get_quote_ret {
+            BUSY => Error::Busy,
+            _ => Error::GetQuote,
+        });
     }
 
     let hdr = get_quote_blob_ptr as *mut ServtdTdxQuoteHdr;

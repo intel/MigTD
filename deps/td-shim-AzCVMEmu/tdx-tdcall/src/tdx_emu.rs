@@ -1454,9 +1454,16 @@ fn handle_quote_request(
         Ok(quote) => quote,
         Err(e) => {
             error!("Failed to generate quote in AzCVMEmu mode: {:?}", e);
+            // Set error status in buffer. Return Ok so ghci.rs proceeds to
+            // check the buffer status and classifies it as a retriable error.
             let error_status = 0x8000000000000000u64;
             buffer[8..16].copy_from_slice(&error_status.to_le_bytes());
-            return Err(TdVmcallError::Other);
+            // Trigger event notification so ghci.rs wakes from wait_for_vmm_notification
+            if let Some(vector) = *EVENT_NOTIFY_VECTOR.lock() {
+                log::info!("AzCVMEmu: Triggering interrupt vector {} (error path)", vector);
+                intr::trigger(vector as u8);
+            }
+            return Ok(());
         }
     };
 

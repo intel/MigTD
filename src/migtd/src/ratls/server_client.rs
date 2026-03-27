@@ -220,7 +220,7 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     })
 }
 
-fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
+fn prepare_report_data(public_key: &[u8]) -> Result<[u8; 64]> {
     let hash = digest_sha384(public_key).map_err(|e| {
         log::error!("Failed to compute SHA384 digest: {:?}\n", e);
         e
@@ -228,6 +228,11 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
 
     let mut additional_data = [0u8; 64];
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
+    Ok(additional_data)
+}
+
+fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
+    let additional_data = prepare_report_data(public_key)?;
 
     let (quote, _report) = crate::quote::get_quote_with_retry(&additional_data).map_err(|e| {
         log::error!("get_quote_with_retry failed: {:?}\n", e);
@@ -238,15 +243,9 @@ fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
 }
 
 pub fn gen_tdreport(public_key: &[u8]) -> Result<TdxReport> {
-    let hash = digest_sha384(public_key).map_err(|e| {
-        log::error!("Failed to compute SHA384 digest: {:?}\n", e);
-        e
-    })?;
+    let additional_data = prepare_report_data(public_key)?;
 
     // Generate the TD Report that contains the public key hash as nonce
-    let mut additional_data = [0u8; 64];
-    additional_data[..hash.len()].copy_from_slice(hash.as_ref());
-
     tdx_tdcall::tdreport::tdcall_report(&additional_data).map_err(|e| {
         log::error!("Failed to get TD report via tdcall. Error: {:?}\n", e);
         e.into()

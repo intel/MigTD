@@ -9,6 +9,7 @@ use td_payload::arch::apic::{disable, enable_and_hlt};
 use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
 use td_payload::mm::shared::SharedMemory;
 use tdx_tdcall::tdx::tdvmcall_get_quote;
+use tdx_tdcall::TdVmcallError;
 
 use crate::binding::AttestLibError;
 
@@ -18,6 +19,9 @@ const GET_QUOTE_MAX_SIZE: u64 = 32 * 0x1000;
 const GET_QUOTE_STATUS_FIELD: Range<usize> = 8..16;
 const GET_QUOTE_STATUS_SUCCESS: u64 = 0;
 const GET_QUOTE_STATUS_IN_FLIGHT: u64 = 0xFFFFFFFF_FFFFFFFF;
+// Any quote error: e.g., impactless update causing report verification failure, upper layer should retry.
+const GET_QUOTE_STATUS_ERROR: u64 = 0x80000000_00000000;
+const GET_QUOTE_STATUS_SERVICE_UNAVAILABLE: u64 = 0x80000000_00000001;
 
 pub static NOTIFIER: AtomicU8 = AtomicU8::new(0);
 
@@ -44,9 +48,16 @@ pub extern "C" fn servtd_get_quote(tdquote_req_buf: *mut c_void, len: u64) -> i3
 
     let notify_registered = set_vmm_notification();
 
-    if let Err(e) = tdvmcall_get_quote(shared.as_mut_bytes()) {
-        log::error!("tdvmcall_get_quote failed with error: {:?}\n", e);
-        return AttestLibError::QuoteFailure as i32;
+    match tdvmcall_get_quote(shared.as_mut_bytes()) {
+        Ok(()) => {}
+        Err(TdVmcallError::VmcallRetry) => {
+            log::error!("tdvmcall_get_quote returned RETRY\n");
+            return AttestLibError::Busy as i32;
+        }
+        Err(e) => {
+            log::error!("tdvmcall_get_quote failed with error: {:?}\n", e);
+            return AttestLibError::QuoteFailure as i32;
+        }
     }
 
     let wait_result = wait_for_quote_completion(notify_registered, shared.as_bytes());
@@ -116,11 +127,21 @@ fn wait_for_quote_completion(notify_registered: bool, buffer: &[u8]) -> Result<(
         }
     };
 
-    if status_code == GET_QUOTE_STATUS_SUCCESS {
-        Ok(())
-    } else {
-        log::error!("Quote status indicates failure: {:#x}\n", status_code);
-        Err(AttestLibError::QuoteFailure)
+    match status_code {
+        GET_QUOTE_STATUS_SUCCESS => Ok(()),
+        GET_QUOTE_STATUS_SERVICE_UNAVAILABLE
+        | GET_QUOTE_STATUS_ERROR
+        | GET_QUOTE_STATUS_IN_FLIGHT => {
+            log::error!(
+                "Quote status indicates service unavailable or other retriable error: {:#x}\n",
+                status_code
+            );
+            Err(AttestLibError::Busy)
+        }
+        _ => {
+            log::error!("Quote status indicates failure: {:#x}\n", status_code);
+            Err(AttestLibError::QuoteFailure)
+        }
     }
 }
 

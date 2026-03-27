@@ -9,7 +9,7 @@ use crate::binding::verify_quote_integrity_ex;
 use crate::binding::get_quote as get_quote_inner;
 
 use crate::{
-    binding::{init_heap, verify_quote_integrity, QveCollateral},
+    binding::{init_heap, verify_quote_integrity, AttestLibError, QveCollateral},
     root_ca::ROOT_CA_PUBLIC_KEY,
     Error, TD_VERIFIED_REPORT_SIZE,
 };
@@ -104,7 +104,10 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
             );
             if result != 0 {
                 log::error!("get_quote_inner failed with error: {:#x}\n", result);
-                return Err(Error::GetQuote);
+                return Err(match result {
+                    x if x == AttestLibError::Busy as i32 => Error::Busy,
+                    _ => Error::GetQuote,
+                });
             }
         }
         quote.truncate(quote_size as usize);
