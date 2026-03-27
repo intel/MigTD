@@ -62,7 +62,7 @@ show_usage() {
     echo "  --skip-ra                    Skip remote attestation (uses mock TD reports/quotes for non-TDX environments)"
     echo "  --mock-report                Use mock report data for RA and policy v2 (non-TDX, but full attestation flow)"
     echo "  --mock-quote-file FILE       Path to mock quote file (used with --mock-report, defaults to output_data_v4.bin)"
-    echo "  --mock-quote-retry           Enable mock_quote_retry feature (get_quote fails first 8 times to test retry logic)"
+    echo "  --mock-quote-retry           Enable mock_quote_retry feature (get_quote fails first 5 times to test retry logic)"
     echo "  --both                       Start destination first, then source (same host)"
     echo "  --no-sudo                    Run without sudo (useful for local testing)"
     echo "  --features FEATURES          Add extra cargo features (comma-separated, e.g., 'spdm_attestation,feature2')"

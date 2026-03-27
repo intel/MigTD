@@ -36,9 +36,10 @@ pub enum QuoteError {
     QuoteGenerationFailed,
 }
 
-/// Get a quote with retry logic to handle potential security updates
+/// Get a quote with retry logic to handle transient and retriable errors
 ///
-/// On quote failure, fetches a new TD REPORT and retries with exponential backoff.
+/// On retriable errors, retries with exponential backoff starting at 1s.
+/// Non-retriable errors cause immediate failure.
 ///
 /// # Arguments
 /// * `additional_data` - The 64-byte additional data to include in the TD REPORT
@@ -63,20 +64,24 @@ pub fn get_quote_with_retry(additional_data: &[u8; 64]) -> Result<(Vec<u8>, Vec<
                 log::info!("Quote generated successfully\n");
                 return Ok((quote, report_bytes.to_vec()));
             }
-            _ => {
+            Err(attestation::Error::Busy) => {
                 attempt += 1;
                 if attempt > MAX_RETRIES {
                     log::error!("GetQuote failed after {} attempts\n", attempt);
                     return Err(QuoteError::QuoteGenerationFailed);
                 }
                 log::warn!(
-                    "GetQuote failed (attempt {}/{}), retrying in {}ms\n",
+                    "GetQuote returned Busy (attempt {}/{}), retrying in {}ms\n",
                     attempt,
                     MAX_RETRIES + 1,
                     busy_delay_ms
                 );
                 delay_milliseconds(busy_delay_ms);
                 busy_delay_ms *= 2;
+            }
+            Err(e) => {
+                log::error!("GetQuote failed with non-retriable error: {:?}\n", e);
+                return Err(QuoteError::QuoteGenerationFailed);
             }
         }
     }

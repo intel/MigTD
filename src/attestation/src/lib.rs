@@ -89,4 +89,6 @@ pub enum Error {
     InvalidOutput,
     InvalidQuote,
     OutOfMemory,
+    /// Service busy/unavailable/transient error, caller should retry
+    Busy,
 }

@@ -89,7 +89,7 @@ jobs:
             test-type: "mock-quote-retry"
             install-jq: 'false'
             timeout-seconds: 900
-            test-command: "./migtdemu.sh --mock-report --mock-quote-retry --both --no-sudo --log-level info"
+            test-command: "./migtdemu.sh --mock-report --mock-quote-retry --features igvm-attest --both --no-sudo --log-level info"
             artifact-name: "mock-quote-retry-test-logs"
 
     steps:
