@@ -87,11 +87,10 @@ pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
     Ok((requester_context, device_io_ref))
 }
 
-pub async fn spdm_requester_transfer_msk(
+pub async fn spdm_requester_establish_session(
     spdm_requester: &mut RequesterContext,
-    mig_info: &MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
-) -> Result<(), SpdmStatus> {
+) -> Result<u32, SpdmStatus> {
     Box::pin(spdm_requester.send_receive_spdm_version()).await?;
     Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
     Box::pin(spdm_requester.send_receive_spdm_algorithm()).await?;
@@ -112,6 +111,15 @@ pub async fn spdm_requester_transfer_msk(
     .await?;
 
     Box::pin(spdm_requester.send_receive_spdm_finish(Some(0xff), session_id)).await?;
+
+    Ok(session_id)
+}
+
+pub async fn spdm_requester_exchange_msk(
+    spdm_requester: &mut RequesterContext,
+    mig_info: &MigtdMigrationInformation,
+    session_id: u32,
+) -> Result<(), SpdmStatus> {
     Box::pin(send_and_receive_sdm_exchange_migration_info(
         spdm_requester,
         mig_info,

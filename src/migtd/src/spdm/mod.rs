@@ -35,9 +35,11 @@ pub use spdm_rebind::spdm_requester_rebind_old;
 #[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
 pub use spdm_rebind::spdm_responder_rebind_new;
 pub use spdm_req::spdm_requester;
-pub use spdm_req::spdm_requester_transfer_msk;
+pub use spdm_req::spdm_requester_establish_session;
+pub use spdm_req::spdm_requester_exchange_msk;
 pub use spdm_rsp::spdm_responder;
-pub use spdm_rsp::spdm_responder_transfer_msk;
+pub use spdm_rsp::spdm_responder_establish_session;
+pub use spdm_rsp::spdm_responder_exchange_msk;
 
 pub use spdm_vdm::*;
 

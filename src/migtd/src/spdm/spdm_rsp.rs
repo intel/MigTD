@@ -146,7 +146,7 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
     Ok((responder_context_ex, device_io_ref))
 }
 
-pub async fn spdm_responder_transfer_msk(
+pub async fn spdm_responder_establish_session(
     spdm_responder_ex: &mut ResponderContextEx<'_>,
     mig_info: &MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
@@ -167,9 +167,61 @@ pub async fn spdm_responder_transfer_msk(
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
 
+    Box::pin(rsp_handle_message_until_session_established(spdm_responder)).await?;
+
+    Ok(())
+}
+
+pub async fn spdm_responder_exchange_msk(
+    spdm_responder_ex: &mut ResponderContextEx<'_>,
+) -> Result<(), SpdmStatus> {
+    let spdm_responder = &mut spdm_responder_ex.responder_context;
     Box::pin(rsp_handle_message(spdm_responder)).await?;
     spdm_responder.common.app_context_data_buffer.zeroize();
 
+    Ok(())
+}
+
+pub async fn rsp_handle_message_until_session_established(
+    spdm_responder: &mut ResponderContext,
+) -> Result<(), SpdmStatus> {
+    use spdmlib::common::session::SpdmSessionState;
+
+    loop {
+        let raw_packet = Arc::new(Mutex::new([0u8; config::RECEIVER_BUFFER_SIZE]));
+        let mut raw_packet = raw_packet.lock();
+        let raw_packet = raw_packet.deref_mut();
+        raw_packet.zeroize();
+        let res = Box::pin(spdm_responder.process_message(false, 0, raw_packet)).await;
+
+        match res {
+            Ok(spdm_result) => match spdm_result {
+                Ok(_) => {}
+                Err(spdm_status) => {
+                    if spdm_status.severity == StatusSeverity::ERROR
+                        && matches!(spdm_status.status_code, StatusCode::VDM(_))
+                    {
+                        return Err(spdm_status);
+                    }
+                    if spdm_status == SPDM_STATUS_INVALID_STATE_LOCAL {
+                        return Err(spdm_status);
+                    }
+                }
+            },
+            Err(_) => {
+                return Err(SPDM_STATUS_RECEIVE_FAIL);
+            }
+        }
+
+        // Break out once the session handshake (including attestation) is complete
+        if let Some(sid) = spdm_responder.common.runtime_info.get_last_session_id() {
+            if let Some(session) = spdm_responder.common.get_session_via_id(sid) {
+                if session.get_session_state() == SpdmSessionState::SpdmSessionEstablished {
+                    break;
+                }
+            }
+        }
+    }
     Ok(())
 }
 

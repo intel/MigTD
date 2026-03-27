@@ -887,25 +887,33 @@ async fn migration_src_exchange_msk(
         );
         MigrationResult::SecureSessionError
     })?;
-    with_timeout(
-        SPDM_TIMEOUT,
-        spdm::spdm_requester_transfer_msk(
-            &mut spdm_requester,
-            &info.mig_info,
-            #[cfg(feature = "policy_v2")]
-            remote_policy,
-        ),
+    let session_id = spdm::spdm_requester_establish_session(
+        &mut spdm_requester,
+        #[cfg(feature = "policy_v2")]
+        remote_policy,
     )
     .await
     .map_err(|e| {
         log::error!(
-            "exchange_msk: spdm_requester_transfer_msk timeout error: {:?}\n",
+            "exchange_msk: spdm_requester_establish_session error: {:?}\n",
+            e
+        );
+        e
+    })?;
+    with_timeout(
+        SPDM_TIMEOUT,
+        spdm::spdm_requester_exchange_msk(&mut spdm_requester, &info.mig_info, session_id),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "exchange_msk: spdm_requester_exchange_msk timeout error: {:?}\n",
             e
         );
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
+        log::error!("exchange_msk: spdm_requester_exchange_msk error: {:?}\n", e);
         e
     })?;
     log::info!("MSK exchange completed\n");
@@ -933,25 +941,34 @@ async fn migration_dst_exchange_msk(
         MigrationResult::SecureSessionError
     })?;
 
-    with_timeout(
-        SPDM_TIMEOUT,
-        spdm::spdm_responder_transfer_msk(
-            &mut spdm_responder,
-            &info.mig_info,
-            #[cfg(feature = "policy_v2")]
-            remote_policy,
-        ),
+    spdm::spdm_responder_establish_session(
+        &mut spdm_responder,
+        &info.mig_info,
+        #[cfg(feature = "policy_v2")]
+        remote_policy,
     )
     .await
     .map_err(|e| {
         log::error!(
-            "exchange_msk: spdm_responder_transfer_msk timeout error: {:?}\n",
+            "exchange_msk: spdm_responder_establish_session error: {:?}\n",
+            e
+        );
+        e
+    })?;
+    with_timeout(
+        SPDM_TIMEOUT,
+        spdm::spdm_responder_exchange_msk(&mut spdm_responder),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "exchange_msk: spdm_responder_exchange_msk timeout error: {:?}\n",
             e
         );
         e
     })?
     .map_err(|e| {
-        log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
+        log::error!("exchange_msk: spdm_responder_exchange_msk error: {:?}\n", e);
         e
     })?;
     log::info!("MSK exchange completed\n");
