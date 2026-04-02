@@ -1063,9 +1063,8 @@ mod verify {
             td_report,
             event_log,
             remote_policy,
-            init_policy,
+            init_tdinfo,
             init_event_log,
-            init_td_report,
             servtd_ext,
         );
 

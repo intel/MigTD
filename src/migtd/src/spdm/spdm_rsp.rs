@@ -1087,9 +1087,8 @@ pub fn handle_exchange_rebind_attest_info_req(
             &td_report_src_vec,
             &event_log_src_vec,
             remote_policy,
-            init_policy,
-            &event_log_init_vec,
             &td_report_init_vec,
+            &event_log_init_vec,
             &servtd_ext_vec,
         );
         if let Err(e) = &policy_check_result {
