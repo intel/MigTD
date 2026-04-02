@@ -222,6 +222,11 @@ mod v2 {
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
+        policy.policy_data.evaluate_policy_common(
+            &evaluation_data_src,
+            &relative_reference,
+            false,
+        )?;
         policy.policy_data.evaluate_policy_backward(
             &evaluation_data_src,
             &relative_reference,
@@ -248,6 +253,11 @@ mod v2 {
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
+        policy.policy_data.evaluate_policy_common(
+            &evaluation_data_dst,
+            &relative_reference,
+            true,
+        )?;
         policy.policy_data.evaluate_policy_forward(
             &evaluation_data_dst,
             &relative_reference,
