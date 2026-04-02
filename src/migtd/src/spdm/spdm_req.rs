@@ -105,6 +105,7 @@ pub async fn spdm_requester_transfer_msk(
 
     Box::pin(send_and_receive_sdm_migration_attest_info(
         spdm_requester,
+        mig_info,
         session_id,
         #[cfg(feature = "policy_v2")]
         remote_policy,
@@ -293,6 +294,7 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
 
 pub async fn send_and_receive_sdm_migration_attest_info(
     spdm_requester: &mut RequesterContext,
+    mig_info: &MigtdMigrationInformation,
     session_id: u32,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> SpdmResult {
@@ -391,6 +393,41 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     cnt += writer
         .extend_from_slice(&mig_policy_src_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+
+    // SERVTD_EXT: read from target TD via TDG.SERVTD.RD and send to peer
+    {
+        use crate::migration::servtd_ext::read_servtd_ext;
+
+        let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
+            .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        let servtd_ext_element = VdmMessageElement {
+            element_type: VdmMessageElementType::SerVtdExt,
+            length: servtd_ext.as_bytes().len() as u32,
+        };
+        cnt += servtd_ext_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(servtd_ext.as_bytes())
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
+
+    // Init TDINFO: local MigTD TDINFO_STRUCT for SERVTD_HASH verification by peer
+    {
+        let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
+            .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        let tdinfo_init = report.td_info.as_bytes();
+        let tdinfo_init_element = VdmMessageElement {
+            element_type: VdmMessageElementType::TdReportInit,
+            length: tdinfo_init.len() as u32,
+        };
+        cnt += tdinfo_init_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(tdinfo_init)
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
 
     spdm_requester.common.reset_buffer_via_request_code(
         SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
