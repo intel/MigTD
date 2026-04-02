@@ -51,9 +51,6 @@ const MIGTD_DATA_TYPE_INIT_MIG_POLICY: u32 = 0;
 const MIGTD_DATA_TYPE_INIT_TD_REPORT: u32 = 1;
 const MIGTD_DATA_TYPE_INIT_EVENT_LOG: u32 = 2;
 
-const MIGTD_REBIND_OP_PREPARE: u8 = 0;
-const MIGTD_REBIND_OP_FINALIZE: u8 = 1;
-
 #[repr(C)]
 pub struct RebindingToken {
     token: [u8; 32],
@@ -90,7 +87,6 @@ pub struct RebindingInfo {
     pub mig_request_id: u64,
     pub rebinding_src: u8,
     pub has_init_data: u8,
-    pub operation: u8,
     pub target_td_uuid: [u64; 4],
     pub binding_handle: u64,
     pub init_migtd_data: Option<InitData>,
@@ -98,14 +94,13 @@ pub struct RebindingInfo {
 
 impl RebindingInfo {
     pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
-        // Check the length of input and the reserved fields
-        if b.len() < 56 || b[11..16] != [0; 5] {
+        // Check the length of input and the reserved fields (bytes 10-15 per GHCI 1.5)
+        if b.len() < 56 || b[10..16] != [0; 6] {
             return None;
         }
         let mig_request_id = u64::from_le_bytes(b[..8].try_into().unwrap());
         let rebinding_src = b[8];
         let has_init_data = b[9];
-        let operation = b[10];
 
         let target_td_uuid: [u64; 4] = core::array::from_fn(|i| {
             let offset = 16 + i * 8;
@@ -123,7 +118,6 @@ impl RebindingInfo {
             mig_request_id,
             rebinding_src,
             has_init_data,
-            operation,
             target_td_uuid,
             binding_handle,
             init_migtd_data,
@@ -392,90 +386,77 @@ pub async fn start_rebinding(
     // Exchange policy firstly because of the message size limitation of TLS protocol
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
     if info.rebinding_src == 1 {
-        match info.operation {
-            MIGTD_REBIND_OP_PREPARE => {
-                let local_data = InitData::get_from_local(&[0u8; 64])
-                    .ok_or(MigrationResult::InvalidParameter)?;
-                let init_migtd_data = info
-                    .init_migtd_data
-                    .as_ref()
-                    .or(Some(&local_data))
-                    .ok_or(MigrationResult::InvalidParameter)?;
-                let remote_policy = Box::pin(with_timeout(
-                    PRE_SESSION_TIMEOUT,
-                    rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
-                ))
-                .await
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
-                        e
-                    );
-                    e
-                })?
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
-                        e
-                    );
-                    e
-                })?;
-                #[cfg(not(feature = "spdm_attestation"))]
-                rebinding_old_prepare(transport, info, &init_migtd_data, data, remote_policy)
-                    .await?;
+        let local_data =
+            InitData::get_from_local(&[0u8; 64]).ok_or(MigrationResult::InvalidParameter)?;
+        let init_migtd_data = info
+            .init_migtd_data
+            .as_ref()
+            .or(Some(&local_data))
+            .ok_or(MigrationResult::InvalidParameter)?;
+        let remote_policy = Box::pin(with_timeout(
+            PRE_SESSION_TIMEOUT,
+            rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
+        ))
+        .await
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
+                e
+            );
+            e
+        })?
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
+                e
+            );
+            e
+        })?;
+        #[cfg(not(feature = "spdm_attestation"))]
+        rebinding_old_prepare(transport, info, &init_migtd_data, data, remote_policy).await?;
 
-                #[cfg(feature = "spdm_attestation")]
-                rebinding_old_prepare(
-                    transport,
-                    info,
-                    data,
-                    #[cfg(feature = "policy_v2")]
-                    remote_policy,
-                )
-                .await?;
-            }
-            MIGTD_REBIND_OP_FINALIZE => rebinding_old_finalize(info, data).await?,
-            _ => return Err(MigrationResult::InvalidParameter),
-        }
+        #[cfg(feature = "spdm_attestation")]
+        rebinding_old_prepare(
+            transport,
+            info,
+            data,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        )
+        .await?;
     } else {
-        match info.operation {
-            MIGTD_REBIND_OP_PREPARE => {
-                let pre_session_data = Box::pin(with_timeout(
-                    PRE_SESSION_TIMEOUT,
-                    rebinding_new_pre_session_data_exchange(&mut transport),
-                ))
-                .await
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
-                        e
-                    );
-                    e
-                })?
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_new_pre_session_data_exchange error: {:?}\n",
-                        e
-                    );
-                    e
-                })?;
+        let pre_session_data = Box::pin(with_timeout(
+            PRE_SESSION_TIMEOUT,
+            rebinding_new_pre_session_data_exchange(&mut transport),
+        ))
+        .await
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
+                e
+            );
+            e
+        })?
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_new_pre_session_data_exchange error: {:?}\n",
+                e
+            );
+            e
+        })?;
 
-                #[cfg(not(feature = "spdm_attestation"))]
-                rebinding_new_prepare(transport, info, data, pre_session_data).await?;
+        #[cfg(not(feature = "spdm_attestation"))]
+        rebinding_new_prepare(transport, info, data, pre_session_data).await?;
 
-                #[cfg(feature = "spdm_attestation")]
-                rebinding_new_prepare(
-                    transport,
-                    info,
-                    data,
-                    #[cfg(feature = "policy_v2")]
-                    pre_session_data,
-                )
-                .await?;
-            }
-            MIGTD_REBIND_OP_FINALIZE => rebinding_new_finalize(info, data).await?,
-            _ => return Err(MigrationResult::InvalidParameter),
-        }
+        #[cfg(feature = "spdm_attestation")]
+        rebinding_new_prepare(
+            transport,
+            info,
+            data,
+            #[cfg(feature = "policy_v2")]
+            pre_session_data,
+        )
+        .await?;
     }
     #[cfg(feature = "vmcall-raw")]
     {
@@ -629,14 +610,8 @@ async fn rebinding_old_prepare(
     Ok(())
 }
 
-pub async fn rebinding_old_finalize(
-    _info: &RebindingInfo,
-    _data: &mut Vec<u8>,
-) -> Result<(), MigrationResult> {
-    Ok(())
-}
-
 #[cfg(not(feature = "spdm_attestation"))]
+
 async fn rebinding_new_prepare(
     transport: TransportType,
     info: &RebindingInfo,
@@ -672,15 +647,6 @@ async fn rebinding_new_prepare(
     write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
 
     shutdown_transport(ratls_server.transport_mut(), info.mig_request_id).await?;
-    Ok(())
-}
-
-async fn rebinding_new_finalize(
-    _info: &RebindingInfo,
-    _data: &mut Vec<u8>,
-) -> Result<(), MigrationResult> {
-    write_rebinding_session_token(&[0u8; 32])?;
-    write_approved_servtd_ext_hash(&[0u8; SHA384_DIGEST_SIZE])?;
     Ok(())
 }
 
