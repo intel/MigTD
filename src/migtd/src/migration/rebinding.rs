@@ -614,8 +614,9 @@ async fn rebinding_old_prepare(
     Ok(())
 }
 
-#[cfg(not(feature = "spdm_attestation"))]
 
+
+#[cfg(not(feature = "spdm_attestation"))]
 async fn rebinding_new_prepare(
     transport: TransportType,
     info: &RebindingInfo,
@@ -653,6 +654,8 @@ async fn rebinding_new_prepare(
     shutdown_transport(ratls_server.transport_mut(), info.mig_request_id).await?;
     Ok(())
 }
+
+
 
 pub fn write_rebinding_session_token(rebind_token: &[u8]) -> Result<(), MigrationResult> {
     if rebind_token.len() != 32 {
@@ -809,4 +812,186 @@ async fn tls_session_read_exact(
         recvd += n;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use alloc::vec;
+
+    /// Build a minimal valid MIGTD_DATA blob containing one TDINFO_STRUCT entry.
+    fn build_migtd_data(tdinfo: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MIGTD_DATA_SIGNATURE); // "MIGTDATA"
+        buf.extend_from_slice(&0x00010000u32.to_le_bytes()); // version
+        buf.extend_from_slice(&0u32.to_le_bytes()); // length placeholder
+        buf.extend_from_slice(&1u32.to_le_bytes()); // num_entries = 1
+        // Entry: type 0 (TDINFO)
+        buf.extend_from_slice(&MIGTD_DATA_TYPE_TDINFO.to_le_bytes());
+        buf.extend_from_slice(&(tdinfo.len() as u32).to_le_bytes());
+        buf.extend_from_slice(tdinfo);
+        // Patch length
+        let total = buf.len() as u32;
+        buf[12..16].copy_from_slice(&total.to_le_bytes());
+        buf
+    }
+
+    /// Create a 512-byte TDINFO_STRUCT with known mrowner and mrownerconfig.
+    fn make_tdinfo(mrowner: &[u8; 48], mrownerconfig: &[u8; 48]) -> Vec<u8> {
+        let mut tdinfo = vec![0u8; 512];
+        // mrowner at offset 112..160
+        tdinfo[112..160].copy_from_slice(mrowner);
+        // mrownerconfig at offset 160..208
+        tdinfo[160..208].copy_from_slice(mrownerconfig);
+        tdinfo
+    }
+
+    // --- InitData tests ---
+
+    #[test]
+    fn test_initdata_read_write_roundtrip() {
+        let mrowner = [0xAAu8; 48];
+        let mrownerconfig = [0xBBu8; 48];
+        let tdinfo = make_tdinfo(&mrowner, &mrownerconfig);
+
+        let data = build_migtd_data(&tdinfo);
+        let init = InitData::read_from_bytes(&data).expect("should parse valid MIGTD_DATA");
+
+        assert_eq!(init.init_tdinfo.len(), 512);
+        assert_eq!(init.init_tdinfo, tdinfo);
+
+        // Round-trip: write back and re-parse
+        let mut buf = Vec::new();
+        init.write_into_bytes(&mut buf);
+        let init2 = InitData::read_from_bytes(&buf).expect("round-trip should parse");
+        assert_eq!(init2.init_tdinfo, tdinfo);
+    }
+
+    #[test]
+    fn test_initdata_mrowner_mrownerconfig() {
+        let mrowner = [0x11u8; 48];
+        let mrownerconfig = [0x22u8; 48];
+        let tdinfo = make_tdinfo(&mrowner, &mrownerconfig);
+        let data = build_migtd_data(&tdinfo);
+
+        let init = InitData::read_from_bytes(&data).unwrap();
+        assert_eq!(init.mrowner(), &mrowner);
+        assert_eq!(init.mrownerconfig(), &mrownerconfig);
+    }
+
+    #[test]
+    fn test_initdata_rejects_bad_signature() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[0] = b'X'; // corrupt signature
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_bad_version() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[8..12].copy_from_slice(&0x00020000u32.to_le_bytes()); // wrong version
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_multiple_entries() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[16..20].copy_from_slice(&2u32.to_le_bytes()); // num_entries = 2
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_wrong_type() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[20..24].copy_from_slice(&1u32.to_le_bytes()); // type 1 instead of 0
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_short_tdinfo() {
+        let tdinfo = vec![0u8; 256]; // too small (< 512)
+        let data = build_migtd_data(&tdinfo);
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_empty() {
+        assert!(InitData::read_from_bytes(&[]).is_none());
+        assert!(InitData::read_from_bytes(&[0u8; 10]).is_none());
+    }
+
+    // --- RebindingInfo tests ---
+
+    /// Build a minimal RebindingInfo byte buffer.
+    fn build_rebinding_info(
+        mig_request_id: u64,
+        rebinding_src: u8,
+        has_init_data: u8,
+        uuid: [u64; 4],
+        binding_handle: u64,
+        init_data: Option<&[u8]>,
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&mig_request_id.to_le_bytes()); // 0..8
+        buf.push(rebinding_src); // 8
+        buf.push(has_init_data); // 9
+        buf.extend_from_slice(&[0u8; 6]); // 10..16 reserved
+        for u in &uuid {
+            buf.extend_from_slice(&u.to_le_bytes()); // 16..48
+        }
+        buf.extend_from_slice(&binding_handle.to_le_bytes()); // 48..56
+        if let Some(data) = init_data {
+            buf.extend_from_slice(data);
+        }
+        buf
+    }
+
+    #[test]
+    fn test_rebinding_info_no_init_data() {
+        let buf = build_rebinding_info(42, 1, 0, [1, 2, 3, 4], 99, None);
+        let info = RebindingInfo::read_from_bytes(&buf).expect("should parse");
+        assert_eq!(info.mig_request_id, 42);
+        assert_eq!(info.rebinding_src, 1);
+        assert_eq!(info.has_init_data, 0);
+        assert_eq!(info.target_td_uuid, [1, 2, 3, 4]);
+        assert_eq!(info.binding_handle, 99);
+        assert!(info.init_migtd_data.is_none());
+    }
+
+    #[test]
+    fn test_rebinding_info_with_init_data() {
+        let tdinfo = make_tdinfo(&[0xCAu8; 48], &[0xFEu8; 48]);
+        let migtd_data = build_migtd_data(&tdinfo);
+        let buf = build_rebinding_info(7, 0, 1, [10, 20, 30, 40], 55, Some(&migtd_data));
+        let info = RebindingInfo::read_from_bytes(&buf).expect("should parse with init data");
+        assert_eq!(info.mig_request_id, 7);
+        assert_eq!(info.has_init_data, 1);
+        let init = info.init_migtd_data.as_ref().unwrap();
+        assert_eq!(init.mrowner(), &[0xCAu8; 48]);
+        assert_eq!(init.mrownerconfig(), &[0xFEu8; 48]);
+    }
+
+    #[test]
+    fn test_rebinding_info_rejects_short_buffer() {
+        assert!(RebindingInfo::read_from_bytes(&[0u8; 10]).is_none());
+        assert!(RebindingInfo::read_from_bytes(&[0u8; 55]).is_none()); // 55 < 56
+    }
+
+    #[test]
+    fn test_rebinding_info_rejects_nonzero_reserved() {
+        let mut buf = build_rebinding_info(1, 0, 0, [0; 4], 0, None);
+        buf[10] = 0xFF; // reserved byte not zero
+        assert!(RebindingInfo::read_from_bytes(&buf).is_none());
+    }
+
+    #[test]
+    fn test_rebinding_info_rejects_has_init_data_without_data() {
+        // has_init_data=1 but no data bytes following → InitData::read_from_bytes fails
+        let buf = build_rebinding_info(1, 0, 1, [0; 4], 0, None);
+        assert!(RebindingInfo::read_from_bytes(&buf).is_none());
+    }
 }
