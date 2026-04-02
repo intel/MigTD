@@ -207,6 +207,26 @@ impl BuildArgs {
         }
 
         cmd.run()?;
+
+        // Relocate TempMem BASE addresses from the firmware range into
+        // guest RAM so QEMU tdx_accept_ram_range() can accept them.
+        let build_time_path = SHIM_FOLDER.join("td-layout/src/build_time.rs");
+        let content = fs::read_to_string(&build_time_path)?;
+        let content = content
+            .replace(
+                "pub const TD_SHIM_MAILBOX_BASE: u32 = 0xFF040000;",
+                "pub const TD_SHIM_MAILBOX_BASE: u32 = 0x7FE000;",
+            )
+            .replace(
+                "pub const TD_SHIM_TEMP_STACK_BASE: u32 = 0xFF041000;",
+                "pub const TD_SHIM_TEMP_STACK_BASE: u32 = 0x7C0000;",
+            )
+            .replace(
+                "pub const TD_SHIM_TEMP_HEAP_BASE: u32 = 0xFF061000;",
+                "pub const TD_SHIM_TEMP_HEAP_BASE: u32 = 0x7A0000;",
+            );
+        fs::write(&build_time_path, content)?;
+
         Ok(())
     }
 
