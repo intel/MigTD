@@ -959,21 +959,25 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         .extend_from_slice(servtd_ext.as_bytes())
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
-    //TD report init
-    let tdreport_init = &init_migtd_data.init_report;
+    //TD info init (per GHCI 1.5: MIGTD_DATA type 0 = TDINFO_STRUCT)
+    // NOTE: VdmMessageElementType::TdReportInit name retained for wire compatibility;
+    // payload is now TDINFO_STRUCT, not full TDREPORT.
+    let tdinfo_init = &init_migtd_data.init_tdinfo;
     let tdreport_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::TdReportInit,
-        length: tdreport_init.len() as u32,
+        length: tdinfo_init.len() as u32,
     };
     cnt += tdreport_init_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     cnt += writer
-        .extend_from_slice(tdreport_init)
+        .extend_from_slice(tdinfo_init)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     //event log init
-    let event_log_init = &init_migtd_data.init_event_log;
+    // Per GHCI 1.5: init_event_log is no longer in MIGTD_DATA; use local event log.
+    // NOTE: EventLogInit VDM element retained for wire compatibility with responder.
+    let event_log_init = crate::event_log::get_event_log().unwrap_or(&[]);
     let event_log_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogInit,
         length: event_log_init.len() as u32,
@@ -986,9 +990,9 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     //mig policy init hash
-    let mig_policy_init = &init_migtd_data.init_policy;
-    let mig_policy_init_hash =
-        digest_sha384(mig_policy_init).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    // Per GHCI 1.5: policy_key is in tdinfo.mrowner; sent as init_policy_hash.
+    // NOTE: MigPolicyInit VDM element name retained for wire compatibility.
+    let mig_policy_init_hash = init_migtd_data.mrowner().to_vec();
     let mig_policy_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyInit,
         length: mig_policy_init_hash.len() as u32,
