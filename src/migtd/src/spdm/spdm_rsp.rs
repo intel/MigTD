@@ -493,6 +493,39 @@ pub fn handle_exchange_mig_attest_info_req(
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
+    // SERVTD_EXT from src
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    let servtd_ext_bytes = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+
+    // Store SERVTD_EXT in ResponderContextEx for later use during MSK exchange
+    #[cfg(feature = "policy_v2")]
+    unsafe {
+        let spdm_responder_ex = upcast_mut(responder_context);
+        spdm_responder_ex.servtd_ext = ServtdExt::read_from_bytes(servtd_ext_bytes);
+    };
+
+    // Init TDINFO from src (used for SERVTD_HASH verification)
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    if vdm_element.element_type != VdmMessageElementType::TdReportInit {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    let _td_report_init = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+
     // Policy-specific verification
     #[cfg(not(feature = "policy_v2"))]
     rsp_verify_peer_attestation_v1(
@@ -784,6 +817,19 @@ pub fn handle_exchange_mig_info_req(
         &responder_app_context.migration_info,
         &remote_information.key,
     )?;
+
+    // Write APPROVED_SERVTD_EXT_HASH if SERVTD_EXT was received during attestation
+    #[cfg(feature = "policy_v2")]
+    {
+        let servtd_ext = unsafe {
+            let spdm_responder_ex = upcast_mut(responder_context);
+            spdm_responder_ex.servtd_ext
+        };
+        if let Some(ext) = servtd_ext {
+            write_approved_servtd_ext_hash(&ext.calculate_approved_servtd_ext_hash()?)?;
+        }
+    }
+
     log::info!("Set MSK and report status\n");
 
     let min_import_version = exchange_information.min_ver;
