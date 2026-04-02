@@ -712,6 +712,121 @@ mod v2 {
         let iso_date = unix_to_iso8601(timestamp).unwrap();
         assert_eq!(iso_date, "2024-01-01T00:00:00Z");
     }
+
+    #[test]
+    fn test_verify_servtd_hash_valid() {
+        // Build a 512-byte TDINFO_STRUCT with known content
+        let mut tdinfo_bytes = [0u8; 512];
+        tdinfo_bytes[0..8].copy_from_slice(&[0x01; 8]); // attributes
+        tdinfo_bytes[8..16].copy_from_slice(&[0x02; 8]); // xfam
+
+        // Compute expected hash: SHA384(SHA384(tdinfo) || type(u16) || attr(u64))
+        let servtd_attr: u64 = 0;
+        let info_hash = digest_sha384(&tdinfo_bytes).unwrap();
+        let mut buffer = [0u8; SHA384_DIGEST_SIZE + size_of::<u16>() + size_of::<u64>()];
+        buffer[..SHA384_DIGEST_SIZE].copy_from_slice(&info_hash);
+        buffer[SHA384_DIGEST_SIZE..SHA384_DIGEST_SIZE + 2]
+            .copy_from_slice(&SERVTD_TYPE_MIGTD.to_le_bytes());
+        buffer[SHA384_DIGEST_SIZE + 2..SHA384_DIGEST_SIZE + 10]
+            .copy_from_slice(&servtd_attr.to_le_bytes());
+        let expected_hash = digest_sha384(&buffer).unwrap();
+
+        let result = verify_servtd_hash(&tdinfo_bytes, servtd_attr, &expected_hash);
+        assert!(result.is_ok());
+        let td_info = result.unwrap();
+        assert_eq!(td_info.attributes, [0x01; 8]);
+        assert_eq!(td_info.xfam, [0x02; 8]);
+    }
+
+    #[test]
+    fn test_verify_servtd_hash_wrong_hash() {
+        let tdinfo_bytes = [0u8; 512];
+        let wrong_hash = [0xFFu8; 48];
+        let result = verify_servtd_hash(&tdinfo_bytes, 0, &wrong_hash);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_servtd_hash_short_input() {
+        let short = [0u8; 256]; // too small for TdInfo (512 bytes)
+        let result = verify_servtd_hash(&short, 0, &[0u8; 48]);
+        assert!(matches!(result, Err(PolicyError::InvalidParameter)));
+    }
+
+    #[test]
+    fn test_verify_servtd_hash_with_ignore_attributes() {
+        // Build TdInfo with non-zero attributes
+        let mut tdinfo_bytes = [0u8; 512];
+        tdinfo_bytes[0..8].copy_from_slice(&[0xFF; 8]); // attributes
+
+        // Compute hash with attributes zeroed (IGNORE_ATTRIBUTES flag)
+        let servtd_attr = SERVTD_ATTR_IGNORE_ATTRIBUTES;
+        let mut zeroed = tdinfo_bytes;
+        zeroed[0..8].fill(0); // zero attributes for hash computation
+        let info_hash = digest_sha384(&zeroed).unwrap();
+        let mut buffer = [0u8; SHA384_DIGEST_SIZE + size_of::<u16>() + size_of::<u64>()];
+        buffer[..SHA384_DIGEST_SIZE].copy_from_slice(&info_hash);
+        buffer[SHA384_DIGEST_SIZE..SHA384_DIGEST_SIZE + 2]
+            .copy_from_slice(&SERVTD_TYPE_MIGTD.to_le_bytes());
+        buffer[SHA384_DIGEST_SIZE + 2..SHA384_DIGEST_SIZE + 10]
+            .copy_from_slice(&servtd_attr.to_le_bytes());
+        let expected_hash = digest_sha384(&buffer).unwrap();
+
+        let result = verify_servtd_hash(&tdinfo_bytes, servtd_attr, &expected_hash);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_servtd_hash_with_ignore_mrowner() {
+        // Build TdInfo with non-zero mrowner at offset 112..160
+        let mut tdinfo_bytes = [0u8; 512];
+        tdinfo_bytes[112..160].copy_from_slice(&[0xAA; 48]); // mrowner
+
+        // Compute hash with mrowner zeroed (IGNORE_MROWNER flag)
+        let servtd_attr = SERVTD_ATTR_IGNORE_MROWNER;
+        let mut zeroed = tdinfo_bytes;
+        zeroed[112..160].fill(0);
+        let info_hash = digest_sha384(&zeroed).unwrap();
+        let mut buffer = [0u8; SHA384_DIGEST_SIZE + size_of::<u16>() + size_of::<u64>()];
+        buffer[..SHA384_DIGEST_SIZE].copy_from_slice(&info_hash);
+        buffer[SHA384_DIGEST_SIZE..SHA384_DIGEST_SIZE + 2]
+            .copy_from_slice(&SERVTD_TYPE_MIGTD.to_le_bytes());
+        buffer[SHA384_DIGEST_SIZE + 2..SHA384_DIGEST_SIZE + 10]
+            .copy_from_slice(&servtd_attr.to_le_bytes());
+        let expected_hash = digest_sha384(&buffer).unwrap();
+
+        let result = verify_servtd_hash(&tdinfo_bytes, servtd_attr, &expected_hash);
+        assert!(result.is_ok());
+        // mrowner should be zeroed in the returned TdInfo
+        assert_eq!(result.unwrap().mrowner, [0u8; 48]);
+    }
+
+    #[test]
+    fn test_get_rtmrs_from_tdinfo() {
+        use tdx_tdcall::tdreport::TdInfo;
+        let mut tdinfo_bytes = [0u8; 512];
+        // RTMR offsets in TdInfo: rtmr0 at 208, rtmr1 at 256, rtmr2 at 304, rtmr3 at 352
+        tdinfo_bytes[208..256].copy_from_slice(&[0x01; 48]); // rtmr0
+        tdinfo_bytes[256..304].copy_from_slice(&[0x02; 48]); // rtmr1
+        tdinfo_bytes[304..352].copy_from_slice(&[0x03; 48]); // rtmr2
+        tdinfo_bytes[352..400].copy_from_slice(&[0x04; 48]); // rtmr3
+
+        let td_info = unsafe {
+            let mut uninit = core::mem::MaybeUninit::<TdInfo>::uninit();
+            core::ptr::copy_nonoverlapping(
+                tdinfo_bytes.as_ptr(),
+                uninit.as_mut_ptr() as *mut u8,
+                size_of::<TdInfo>(),
+            );
+            uninit.assume_init()
+        };
+
+        let rtmrs = get_rtmrs_from_tdinfo(&td_info).unwrap();
+        assert_eq!(rtmrs[0], [0x01; 48]);
+        assert_eq!(rtmrs[1], [0x02; 48]);
+        assert_eq!(rtmrs[2], [0x03; 48]);
+        assert_eq!(rtmrs[3], [0x04; 48]);
+    }
 }
 
 fn get_rtmrs_from_suppl_data(
