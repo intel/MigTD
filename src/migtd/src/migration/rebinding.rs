@@ -17,7 +17,6 @@ use crate::migration::servtd_ext::read_servtd_ext;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
 use crate::{event_log, migration::transport::*};
-use crypto::hash::digest_sha384;
 
 use crate::{
     config,
@@ -47,9 +46,7 @@ const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
                                                        // FIXME: Need VMM provide socket information
 const MIGTD_DATA_SIGNATURE: &[u8] = b"MIGTDATA";
-const MIGTD_DATA_TYPE_INIT_MIG_POLICY: u32 = 0;
-const MIGTD_DATA_TYPE_INIT_TD_REPORT: u32 = 1;
-const MIGTD_DATA_TYPE_INIT_EVENT_LOG: u32 = 2;
+const MIGTD_DATA_TYPE_TDINFO: u32 = 0;
 
 #[repr(C)]
 pub struct RebindingToken {
@@ -126,12 +123,29 @@ impl RebindingInfo {
 }
 
 pub struct InitData {
-    pub init_report: Vec<u8>,
-    pub init_policy: Vec<u8>,
-    pub init_event_log: Vec<u8>,
+    /// The TDINFO_STRUCT of the initial MigTD (per GHCI 1.5, MIGTD_DATA type 0).
+    pub init_tdinfo: Vec<u8>,
 }
 
 impl InitData {
+    /// TDINFO_STRUCT field offsets and sizes (per TDX Module ABI).
+    const TDINFO_MROWNER_OFFSET: usize = 112; // attributes(8) + xfam(8) + mrtd(48) + mrconfig_id(48)
+    const TDINFO_MROWNERCONFIG_OFFSET: usize = 160; // MROWNER_OFFSET + 48
+    const TDINFO_FIELD_SIZE: usize = SHA384_DIGEST_SIZE;
+    const TDINFO_MIN_SIZE: usize = 512;
+
+    /// Extract mrowner from the TDINFO_STRUCT.
+    /// Per GHCI 1.5: VMM puts migpolicy.policy_key in tdinfo.mrowner.
+    pub fn mrowner(&self) -> &[u8] {
+        &self.init_tdinfo[Self::TDINFO_MROWNER_OFFSET..Self::TDINFO_MROWNER_OFFSET + Self::TDINFO_FIELD_SIZE]
+    }
+
+    /// Extract mrownerconfig from the TDINFO_STRUCT.
+    /// Per GHCI 1.5: VMM puts migpolicy.policy_svn in tdinfo.mrownerconfig.
+    pub fn mrownerconfig(&self) -> &[u8] {
+        &self.init_tdinfo[Self::TDINFO_MROWNERCONFIG_OFFSET..Self::TDINFO_MROWNERCONFIG_OFFSET + Self::TDINFO_FIELD_SIZE]
+    }
+
     pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
         if b.len() < 20 || &b[..8] != MIGTD_DATA_SIGNATURE {
             return None;
@@ -141,34 +155,22 @@ impl InitData {
         let length = u32::from_le_bytes(b[12..16].try_into().unwrap());
         let num_entries = u32::from_le_bytes(b[16..20].try_into().unwrap());
 
-        if version != 0x00010000 || b.len() < length as usize {
+        // Per GHCI 1.5: version must be 0x00010000, numberOfEntry must be 1 (tdinfo)
+        if version != 0x00010000 || b.len() < length as usize || num_entries != 1 {
             return None;
         }
 
-        let mut offset = 20;
-        let mut init_report = None;
-        let mut init_policy = None;
-        let mut init_event_log = None;
-        for _ in 0..num_entries {
-            let entry = MigtdDataEntry::read_from_bytes(&b[offset..])?;
-            match entry.r#type {
-                MIGTD_DATA_TYPE_INIT_MIG_POLICY => init_policy = Some(entry.value),
-                MIGTD_DATA_TYPE_INIT_TD_REPORT => {
-                    if entry.value.len() > 1024 {
-                        return None;
-                    }
-                    init_report = Some(entry.value.to_vec())
-                }
-                MIGTD_DATA_TYPE_INIT_EVENT_LOG => init_event_log = Some(entry.value),
-                _ => return None,
-            }
-            offset += entry.length as usize + 8;
+        let entry = MigtdDataEntry::read_from_bytes(&b[20..])?;
+        if entry.r#type != MIGTD_DATA_TYPE_TDINFO {
+            return None;
+        }
+
+        if entry.value.len() < Self::TDINFO_MIN_SIZE {
+            return None;
         }
 
         Some(Self {
-            init_report: init_report?,
-            init_policy: init_policy?.to_vec(),
-            init_event_log: init_event_log?.to_vec(),
+            init_tdinfo: entry.value.to_vec(),
         })
     }
 
@@ -180,18 +182,12 @@ impl InitData {
         // Placeholder for length.
         buf.extend_from_slice(&0u32.to_le_bytes());
 
-        buf.extend_from_slice(&3u32.to_le_bytes()); // num_entries
+        // Per GHCI 1.5: numberOfEntry = 1, entry type 0 = tdinfo
+        buf.extend_from_slice(&1u32.to_le_bytes()); // num_entries
 
-        // Helper to write entries
-        let mut write_entry = |type_: u32, value: &[u8]| {
-            buf.extend_from_slice(&type_.to_le_bytes());
-            buf.extend_from_slice(&(value.len() as u32).to_le_bytes());
-            buf.extend_from_slice(value);
-        };
-
-        write_entry(MIGTD_DATA_TYPE_INIT_MIG_POLICY, &self.init_policy);
-        write_entry(MIGTD_DATA_TYPE_INIT_TD_REPORT, &self.init_report);
-        write_entry(MIGTD_DATA_TYPE_INIT_EVENT_LOG, &self.init_event_log);
+        buf.extend_from_slice(&MIGTD_DATA_TYPE_TDINFO.to_le_bytes());
+        buf.extend_from_slice(&(self.init_tdinfo.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&self.init_tdinfo);
 
         let total_size = (buf.len() - start_len) as u32;
 
@@ -201,13 +197,9 @@ impl InitData {
     }
 
     pub fn get_from_local(report_data: &[u8; 64]) -> Option<Self> {
+        let report = tdx_tdcall::tdreport::tdcall_report(report_data).ok()?;
         Some(Self {
-            init_report: tdx_tdcall::tdreport::tdcall_report(report_data)
-                .ok()?
-                .as_bytes()
-                .to_vec(),
-            init_policy: config::get_policy()?.to_vec(),
-            init_event_log: event_log::get_event_log()?.to_vec(),
+            init_tdinfo: report.td_info.as_bytes().to_vec(),
         })
     }
 }
@@ -395,7 +387,7 @@ pub async fn start_rebinding(
             .ok_or(MigrationResult::InvalidParameter)?;
         let remote_policy = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
-            rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
+            rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_tdinfo),
         ))
         .await
         .map_err(|e| {
@@ -574,15 +566,27 @@ async fn rebinding_old_prepare(
     remote_policy: Vec<u8>,
 ) -> Result<(), MigrationResult> {
     let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
-    let init_policy_hash = digest_sha384(&init_migtd_data.init_policy)?;
+
+    // Per GHCI 1.5: init policy key hash is in tdinfo.mrowner.
+    // Use mrowner directly as the init_policy_hash equivalent.
+    let init_policy_hash = init_migtd_data.mrowner().to_vec();
+
+    // Per GHCI 1.5: init_tdinfo replaces the old init_report (full TDREPORT).
+    // The TDINFO_STRUCT contains all the measurement fields needed for verification.
+    let init_tdinfo = &init_migtd_data.init_tdinfo;
+
+    // Per GHCI 1.5: init_event_log is no longer part of MIGTD_DATA.
+    // Use local event log; RATLS cert still carries init_event_log extension
+    // for responder-side verification of init RTMRs.
+    let init_event_log = event_log::get_event_log().unwrap_or(&[]);
 
     // TLS client
     let mut ratls_client = ratls::client_rebinding(
         transport,
         remote_policy,
         &init_policy_hash,
-        &init_migtd_data.init_report,
-        &init_migtd_data.init_event_log,
+        init_tdinfo,
+        init_event_log,
         &servtd_ext,
     )
     .map_err(|_| {
