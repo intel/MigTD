@@ -235,7 +235,7 @@ impl<'a> MigtdDataEntry<'a> {
 
 pub(super) async fn rebinding_old_pre_session_data_exchange(
     transport: &mut TransportType,
-    init_policy: &[u8],
+    init_tdinfo: &[u8],
 ) -> Result<Vec<u8>, MigrationResult> {
     let version = exchange_hello_packet(transport).await.map_err(|e| {
         log::error!(
@@ -271,7 +271,7 @@ pub(super) async fn rebinding_old_pre_session_data_exchange(
             e
         })?;
 
-    send_pre_session_data_packet(init_policy, transport)
+    send_pre_session_data_packet(init_tdinfo, transport)
         .await
         .map_err(|e| {
             log::error!(
@@ -336,11 +336,11 @@ pub(super) async fn rebinding_new_pre_session_data_exchange(
             e
         })?;
 
-    let init_policy = receive_pre_session_data_packet(transport)
+    let init_tdinfo = receive_pre_session_data_packet(transport)
         .await
         .map_err(|e| {
             log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
+                "pre_session_data_exchange: receive init_tdinfo error: {:?}\n",
                 e
             );
             e
@@ -365,8 +365,8 @@ pub(super) async fn rebinding_new_pre_session_data_exchange(
     let mut policy_buffer = Vec::new();
     policy_buffer.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
     policy_buffer.extend_from_slice(&remote_policy);
-    policy_buffer.extend_from_slice(&(init_policy.len() as u32).to_le_bytes());
-    policy_buffer.extend_from_slice(&init_policy);
+    policy_buffer.extend_from_slice(&(init_tdinfo.len() as u32).to_le_bytes());
+    policy_buffer.extend_from_slice(&init_tdinfo);
 
     Ok(policy_buffer)
 }
