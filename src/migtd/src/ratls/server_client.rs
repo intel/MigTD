@@ -184,7 +184,7 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     remote_policy: Vec<u8>,
     init_policy_hash: &[u8],
-    init_td_report: &[u8],
+    init_tdinfo: &[u8],
     init_event_log: &[u8],
     servtd_ext: &ServtdExt,
 ) -> Result<SecureChannel<T>> {
@@ -198,7 +198,7 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     let certs = create_certificate_for_rebinding_old(
         &signing_key,
         init_policy_hash,
-        init_td_report,
+        init_tdinfo,
         init_event_log,
         servtd_ext,
     )
@@ -409,7 +409,7 @@ fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
 fn create_certificate_for_rebinding_old(
     signing_key: &EcdsaPk,
     init_policy_hash: &[u8],
-    init_tdreport: &[u8],
+    init_tdinfo: &[u8],
     init_event_log: &[u8],
     servtd_ext: &ServtdExt,
 ) -> Result<Vec<u8>> {
@@ -508,7 +508,7 @@ fn create_certificate_for_rebinding_old(
             Extension::new(
                 EXTNID_MIGTD_TDREPORT_INIT,
                 Some(false),
-                Some(&init_tdreport),
+                Some(&init_tdinfo),
             )
             .map_err(|e| {
                 log::error!(
@@ -992,9 +992,10 @@ mod verify {
                 log::error!("Failed to find expected policy hash extension.\n");
                 CryptoError::ParseCertificate
             })?;
-        let init_td_report =
+        // Per GHCI 1.5: init extension now carries TDINFO_STRUCT instead of full TDREPORT
+        let init_tdinfo =
             find_extension(extensions, &EXTNID_MIGTD_TDREPORT_INIT).ok_or_else(|| {
-                log::error!("Failed to find init tdreport extension.\n");
+                log::error!("Failed to find init tdinfo extension.\n");
                 CryptoError::ParseCertificate
             })?;
         let init_event_log =
@@ -1002,6 +1003,7 @@ mod verify {
                 log::error!("Failed to find init event log extension.\n");
                 CryptoError::ParseCertificate
             })?;
+        // Per GHCI 1.5: init_policy_hash is now mrowner from the initial TDINFO_STRUCT
         let init_policy_hash = find_extension(extensions, &EXTNID_MIGTD_INIT_POLICY_HASH)
             .ok_or_else(|| {
                 log::error!("Failed to find init policy hash extension.\n");
@@ -1012,6 +1014,7 @@ mod verify {
             CryptoError::ParseCertificate
         })?;
 
+        // Parse pre_session_data: [remote_policy_size(4) | remote_policy | init_tdinfo_size(4) | init_tdinfo]
         let remote_policy_size = u32::from_le_bytes(
             pre_session_data
                 .get(..4)
@@ -1024,18 +1027,19 @@ mod verify {
         let remote_policy = pre_session_data.get(4..4 + remote_policy_size).ok_or(
             CryptoError::TlsVerifyPeerCert(INVALID_MIG_POLICY_ERROR.to_string()),
         )?;
-        let init_policy_offset = 4 + remote_policy_size;
-        let init_policy_size = u32::from_le_bytes(
+        // Per GHCI 1.5: second item is init_tdinfo (was init_policy)
+        let init_tdinfo_offset = 4 + remote_policy_size;
+        let init_tdinfo_size = u32::from_le_bytes(
             pre_session_data
-                .get(init_policy_offset..4 + init_policy_offset)
+                .get(init_tdinfo_offset..4 + init_tdinfo_offset)
                 .ok_or(CryptoError::TlsVerifyPeerCert(
                     INVALID_MIG_POLICY_ERROR.to_string(),
                 ))?
                 .try_into()
                 .unwrap(),
         ) as usize;
-        let init_policy = pre_session_data
-            .get(init_policy_offset + 4..init_policy_offset + 4 + init_policy_size)
+        let _init_tdinfo_from_pre_session = pre_session_data
+            .get(init_tdinfo_offset + 4..init_tdinfo_offset + 4 + init_tdinfo_size)
             .ok_or(CryptoError::TlsVerifyPeerCert(
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ))?;
@@ -1046,9 +1050,10 @@ mod verify {
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ));
         }
-        let exact_init_policy_hash = digest_sha384(init_policy)?;
-        if init_policy_hash != exact_init_policy_hash.as_slice() {
-            log::error!("Invalid init rebinding policy.\n");
+        // Per GHCI 1.5: init_policy_hash is mrowner from TDINFO — compare directly
+        // (no longer a hash of a policy blob)
+        if init_policy_hash != init_tdinfo.get(112..160).unwrap_or(&[]) {
+            log::error!("Invalid init policy hash (mrowner mismatch).\n");
             return Err(CryptoError::TlsVerifyPeerCert(
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ));
