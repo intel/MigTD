@@ -105,6 +105,7 @@ pub async fn spdm_requester_transfer_msk(
 
     Box::pin(send_and_receive_sdm_migration_attest_info(
         spdm_requester,
+        mig_info,
         session_id,
         #[cfg(feature = "policy_v2")]
         remote_policy,
@@ -293,6 +294,7 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
 
 pub async fn send_and_receive_sdm_migration_attest_info(
     spdm_requester: &mut RequesterContext,
+    mig_info: &MigtdMigrationInformation,
     session_id: u32,
     #[cfg(feature = "policy_v2")] remote_policy: Vec<u8>,
 ) -> SpdmResult {
@@ -391,6 +393,41 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     cnt += writer
         .extend_from_slice(&mig_policy_src_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+
+    // SERVTD_EXT: read from target TD via TDG.SERVTD.RD and send to peer
+    {
+        use crate::migration::servtd_ext::read_servtd_ext;
+
+        let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
+            .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        let servtd_ext_element = VdmMessageElement {
+            element_type: VdmMessageElementType::SerVtdExt,
+            length: servtd_ext.as_bytes().len() as u32,
+        };
+        cnt += servtd_ext_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(servtd_ext.as_bytes())
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
+
+    // Init TDINFO: local MigTD TDINFO_STRUCT for SERVTD_HASH verification by peer
+    {
+        let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
+            .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        let tdinfo_init = report.td_info.as_bytes();
+        let tdinfo_init_element = VdmMessageElement {
+            element_type: VdmMessageElementType::TdReportInit,
+            length: tdinfo_init.len() as u32,
+        };
+        cnt += tdinfo_init_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(tdinfo_init)
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
 
     spdm_requester.common.reset_buffer_via_request_code(
         SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
@@ -959,21 +996,25 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         .extend_from_slice(servtd_ext.as_bytes())
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
-    //TD report init
-    let tdreport_init = &init_migtd_data.init_report;
+    //TD info init (per GHCI 1.5: MIGTD_DATA type 0 = TDINFO_STRUCT)
+    // NOTE: VdmMessageElementType::TdReportInit name retained for wire compatibility;
+    // payload is now TDINFO_STRUCT, not full TDREPORT.
+    let tdinfo_init = &init_migtd_data.init_tdinfo;
     let tdreport_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::TdReportInit,
-        length: tdreport_init.len() as u32,
+        length: tdinfo_init.len() as u32,
     };
     cnt += tdreport_init_element
         .encode(&mut writer)
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     cnt += writer
-        .extend_from_slice(tdreport_init)
+        .extend_from_slice(tdinfo_init)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     //event log init
-    let event_log_init = &init_migtd_data.init_event_log;
+    // Per GHCI 1.5: init_event_log is no longer in MIGTD_DATA; use local event log.
+    // NOTE: EventLogInit VDM element retained for wire compatibility with responder.
+    let event_log_init = crate::event_log::get_event_log().unwrap_or(&[]);
     let event_log_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::EventLogInit,
         length: event_log_init.len() as u32,
@@ -986,9 +1027,9 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     //mig policy init hash
-    let mig_policy_init = &init_migtd_data.init_policy;
-    let mig_policy_init_hash =
-        digest_sha384(mig_policy_init).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
+    // Per GHCI 1.5: policy_key is in tdinfo.mrowner; sent as init_policy_hash.
+    // NOTE: MigPolicyInit VDM element name retained for wire compatibility.
+    let mig_policy_init_hash = init_migtd_data.mrowner().to_vec();
     let mig_policy_init_element = VdmMessageElement {
         element_type: VdmMessageElementType::MigPolicyInit,
         length: mig_policy_init_hash.len() as u32,
