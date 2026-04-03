@@ -17,7 +17,6 @@ use crate::migration::servtd_ext::read_servtd_ext;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
 use crate::{event_log, migration::transport::*};
-use crypto::hash::digest_sha384;
 
 use crate::{
     config,
@@ -47,12 +46,7 @@ const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
                                                        // FIXME: Need VMM provide socket information
 const MIGTD_DATA_SIGNATURE: &[u8] = b"MIGTDATA";
-const MIGTD_DATA_TYPE_INIT_MIG_POLICY: u32 = 0;
-const MIGTD_DATA_TYPE_INIT_TD_REPORT: u32 = 1;
-const MIGTD_DATA_TYPE_INIT_EVENT_LOG: u32 = 2;
-
-const MIGTD_REBIND_OP_PREPARE: u8 = 0;
-const MIGTD_REBIND_OP_FINALIZE: u8 = 1;
+const MIGTD_DATA_TYPE_TDINFO: u32 = 0;
 
 #[repr(C)]
 pub struct RebindingToken {
@@ -90,7 +84,6 @@ pub struct RebindingInfo {
     pub mig_request_id: u64,
     pub rebinding_src: u8,
     pub has_init_data: u8,
-    pub operation: u8,
     pub target_td_uuid: [u64; 4],
     pub binding_handle: u64,
     pub init_migtd_data: Option<InitData>,
@@ -98,14 +91,13 @@ pub struct RebindingInfo {
 
 impl RebindingInfo {
     pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
-        // Check the length of input and the reserved fields
-        if b.len() < 56 || b[11..16] != [0; 5] {
+        // Check the length of input and the reserved fields (bytes 10-15 per GHCI 1.5)
+        if b.len() < 56 || b[10..16] != [0; 6] {
             return None;
         }
         let mig_request_id = u64::from_le_bytes(b[..8].try_into().unwrap());
         let rebinding_src = b[8];
         let has_init_data = b[9];
-        let operation = b[10];
 
         let target_td_uuid: [u64; 4] = core::array::from_fn(|i| {
             let offset = 16 + i * 8;
@@ -123,7 +115,6 @@ impl RebindingInfo {
             mig_request_id,
             rebinding_src,
             has_init_data,
-            operation,
             target_td_uuid,
             binding_handle,
             init_migtd_data,
@@ -132,12 +123,29 @@ impl RebindingInfo {
 }
 
 pub struct InitData {
-    pub init_report: Vec<u8>,
-    pub init_policy: Vec<u8>,
-    pub init_event_log: Vec<u8>,
+    /// The TDINFO_STRUCT of the initial MigTD (per GHCI 1.5, MIGTD_DATA type 0).
+    pub init_tdinfo: Vec<u8>,
 }
 
 impl InitData {
+    /// TDINFO_STRUCT field offsets and sizes (per TDX Module ABI).
+    const TDINFO_MROWNER_OFFSET: usize = 112; // attributes(8) + xfam(8) + mrtd(48) + mrconfig_id(48)
+    const TDINFO_MROWNERCONFIG_OFFSET: usize = 160; // MROWNER_OFFSET + 48
+    const TDINFO_FIELD_SIZE: usize = SHA384_DIGEST_SIZE;
+    const TDINFO_MIN_SIZE: usize = 512;
+
+    /// Extract mrowner from the TDINFO_STRUCT.
+    /// Per GHCI 1.5: VMM puts migpolicy.policy_key in tdinfo.mrowner.
+    pub fn mrowner(&self) -> &[u8] {
+        &self.init_tdinfo[Self::TDINFO_MROWNER_OFFSET..Self::TDINFO_MROWNER_OFFSET + Self::TDINFO_FIELD_SIZE]
+    }
+
+    /// Extract mrownerconfig from the TDINFO_STRUCT.
+    /// Per GHCI 1.5: VMM puts migpolicy.policy_svn in tdinfo.mrownerconfig.
+    pub fn mrownerconfig(&self) -> &[u8] {
+        &self.init_tdinfo[Self::TDINFO_MROWNERCONFIG_OFFSET..Self::TDINFO_MROWNERCONFIG_OFFSET + Self::TDINFO_FIELD_SIZE]
+    }
+
     pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
         if b.len() < 20 || &b[..8] != MIGTD_DATA_SIGNATURE {
             return None;
@@ -147,34 +155,22 @@ impl InitData {
         let length = u32::from_le_bytes(b[12..16].try_into().unwrap());
         let num_entries = u32::from_le_bytes(b[16..20].try_into().unwrap());
 
-        if version != 0x00010000 || b.len() < length as usize {
+        // Per GHCI 1.5: version must be 0x00010000, numberOfEntry must be 1 (tdinfo)
+        if version != 0x00010000 || b.len() < length as usize || num_entries != 1 {
             return None;
         }
 
-        let mut offset = 20;
-        let mut init_report = None;
-        let mut init_policy = None;
-        let mut init_event_log = None;
-        for _ in 0..num_entries {
-            let entry = MigtdDataEntry::read_from_bytes(&b[offset..])?;
-            match entry.r#type {
-                MIGTD_DATA_TYPE_INIT_MIG_POLICY => init_policy = Some(entry.value),
-                MIGTD_DATA_TYPE_INIT_TD_REPORT => {
-                    if entry.value.len() > 1024 {
-                        return None;
-                    }
-                    init_report = Some(entry.value.to_vec())
-                }
-                MIGTD_DATA_TYPE_INIT_EVENT_LOG => init_event_log = Some(entry.value),
-                _ => return None,
-            }
-            offset += entry.length as usize + 8;
+        let entry = MigtdDataEntry::read_from_bytes(&b[20..])?;
+        if entry.r#type != MIGTD_DATA_TYPE_TDINFO {
+            return None;
+        }
+
+        if entry.value.len() < Self::TDINFO_MIN_SIZE {
+            return None;
         }
 
         Some(Self {
-            init_report: init_report?,
-            init_policy: init_policy?.to_vec(),
-            init_event_log: init_event_log?.to_vec(),
+            init_tdinfo: entry.value.to_vec(),
         })
     }
 
@@ -186,18 +182,12 @@ impl InitData {
         // Placeholder for length.
         buf.extend_from_slice(&0u32.to_le_bytes());
 
-        buf.extend_from_slice(&3u32.to_le_bytes()); // num_entries
+        // Per GHCI 1.5: numberOfEntry = 1, entry type 0 = tdinfo
+        buf.extend_from_slice(&1u32.to_le_bytes()); // num_entries
 
-        // Helper to write entries
-        let mut write_entry = |type_: u32, value: &[u8]| {
-            buf.extend_from_slice(&type_.to_le_bytes());
-            buf.extend_from_slice(&(value.len() as u32).to_le_bytes());
-            buf.extend_from_slice(value);
-        };
-
-        write_entry(MIGTD_DATA_TYPE_INIT_MIG_POLICY, &self.init_policy);
-        write_entry(MIGTD_DATA_TYPE_INIT_TD_REPORT, &self.init_report);
-        write_entry(MIGTD_DATA_TYPE_INIT_EVENT_LOG, &self.init_event_log);
+        buf.extend_from_slice(&MIGTD_DATA_TYPE_TDINFO.to_le_bytes());
+        buf.extend_from_slice(&(self.init_tdinfo.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&self.init_tdinfo);
 
         let total_size = (buf.len() - start_len) as u32;
 
@@ -207,13 +197,9 @@ impl InitData {
     }
 
     pub fn get_from_local(report_data: &[u8; 64]) -> Option<Self> {
+        let report = tdx_tdcall::tdreport::tdcall_report(report_data).ok()?;
         Some(Self {
-            init_report: tdx_tdcall::tdreport::tdcall_report(report_data)
-                .ok()?
-                .as_bytes()
-                .to_vec(),
-            init_policy: config::get_policy()?.to_vec(),
-            init_event_log: event_log::get_event_log()?.to_vec(),
+            init_tdinfo: report.td_info.as_bytes().to_vec(),
         })
     }
 }
@@ -247,7 +233,7 @@ impl<'a> MigtdDataEntry<'a> {
 
 pub(super) async fn rebinding_old_pre_session_data_exchange(
     transport: &mut TransportType,
-    init_policy: &[u8],
+    init_tdinfo: &[u8],
 ) -> Result<Vec<u8>, MigrationResult> {
     let version = exchange_hello_packet(transport).await.map_err(|e| {
         log::error!(
@@ -283,7 +269,7 @@ pub(super) async fn rebinding_old_pre_session_data_exchange(
             e
         })?;
 
-    send_pre_session_data_packet(init_policy, transport)
+    send_pre_session_data_packet(init_tdinfo, transport)
         .await
         .map_err(|e| {
             log::error!(
@@ -348,11 +334,11 @@ pub(super) async fn rebinding_new_pre_session_data_exchange(
             e
         })?;
 
-    let init_policy = receive_pre_session_data_packet(transport)
+    let init_tdinfo = receive_pre_session_data_packet(transport)
         .await
         .map_err(|e| {
             log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
+                "pre_session_data_exchange: receive init_tdinfo error: {:?}\n",
                 e
             );
             e
@@ -377,8 +363,8 @@ pub(super) async fn rebinding_new_pre_session_data_exchange(
     let mut policy_buffer = Vec::new();
     policy_buffer.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
     policy_buffer.extend_from_slice(&remote_policy);
-    policy_buffer.extend_from_slice(&(init_policy.len() as u32).to_le_bytes());
-    policy_buffer.extend_from_slice(&init_policy);
+    policy_buffer.extend_from_slice(&(init_tdinfo.len() as u32).to_le_bytes());
+    policy_buffer.extend_from_slice(&init_tdinfo);
 
     Ok(policy_buffer)
 }
@@ -392,90 +378,77 @@ pub async fn start_rebinding(
     // Exchange policy firstly because of the message size limitation of TLS protocol
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
     if info.rebinding_src == 1 {
-        match info.operation {
-            MIGTD_REBIND_OP_PREPARE => {
-                let local_data = InitData::get_from_local(&[0u8; 64])
-                    .ok_or(MigrationResult::InvalidParameter)?;
-                let init_migtd_data = info
-                    .init_migtd_data
-                    .as_ref()
-                    .or(Some(&local_data))
-                    .ok_or(MigrationResult::InvalidParameter)?;
-                let remote_policy = Box::pin(with_timeout(
-                    PRE_SESSION_TIMEOUT,
-                    rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_policy),
-                ))
-                .await
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
-                        e
-                    );
-                    e
-                })?
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
-                        e
-                    );
-                    e
-                })?;
-                #[cfg(not(feature = "spdm_attestation"))]
-                rebinding_old_prepare(transport, info, &init_migtd_data, data, remote_policy)
-                    .await?;
+        let local_data =
+            InitData::get_from_local(&[0u8; 64]).ok_or(MigrationResult::InvalidParameter)?;
+        let init_migtd_data = info
+            .init_migtd_data
+            .as_ref()
+            .or(Some(&local_data))
+            .ok_or(MigrationResult::InvalidParameter)?;
+        let remote_policy = Box::pin(with_timeout(
+            PRE_SESSION_TIMEOUT,
+            rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_tdinfo),
+        ))
+        .await
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
+                e
+            );
+            e
+        })?
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
+                e
+            );
+            e
+        })?;
+        #[cfg(not(feature = "spdm_attestation"))]
+        rebinding_old_prepare(transport, info, &init_migtd_data, data, remote_policy).await?;
 
-                #[cfg(feature = "spdm_attestation")]
-                rebinding_old_prepare(
-                    transport,
-                    info,
-                    data,
-                    #[cfg(feature = "policy_v2")]
-                    remote_policy,
-                )
-                .await?;
-            }
-            MIGTD_REBIND_OP_FINALIZE => rebinding_old_finalize(info, data).await?,
-            _ => return Err(MigrationResult::InvalidParameter),
-        }
+        #[cfg(feature = "spdm_attestation")]
+        rebinding_old_prepare(
+            transport,
+            info,
+            data,
+            #[cfg(feature = "policy_v2")]
+            remote_policy,
+        )
+        .await?;
     } else {
-        match info.operation {
-            MIGTD_REBIND_OP_PREPARE => {
-                let pre_session_data = Box::pin(with_timeout(
-                    PRE_SESSION_TIMEOUT,
-                    rebinding_new_pre_session_data_exchange(&mut transport),
-                ))
-                .await
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
-                        e
-                    );
-                    e
-                })?
-                .map_err(|e| {
-                    log::error!(
-                        "start_rebinding: rebinding_new_pre_session_data_exchange error: {:?}\n",
-                        e
-                    );
-                    e
-                })?;
+        let pre_session_data = Box::pin(with_timeout(
+            PRE_SESSION_TIMEOUT,
+            rebinding_new_pre_session_data_exchange(&mut transport),
+        ))
+        .await
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
+                e
+            );
+            e
+        })?
+        .map_err(|e| {
+            log::error!(
+                "start_rebinding: rebinding_new_pre_session_data_exchange error: {:?}\n",
+                e
+            );
+            e
+        })?;
 
-                #[cfg(not(feature = "spdm_attestation"))]
-                rebinding_new_prepare(transport, info, data, pre_session_data).await?;
+        #[cfg(not(feature = "spdm_attestation"))]
+        rebinding_new_prepare(transport, info, data, pre_session_data).await?;
 
-                #[cfg(feature = "spdm_attestation")]
-                rebinding_new_prepare(
-                    transport,
-                    info,
-                    data,
-                    #[cfg(feature = "policy_v2")]
-                    pre_session_data,
-                )
-                .await?;
-            }
-            MIGTD_REBIND_OP_FINALIZE => rebinding_new_finalize(info, data).await?,
-            _ => return Err(MigrationResult::InvalidParameter),
-        }
+        #[cfg(feature = "spdm_attestation")]
+        rebinding_new_prepare(
+            transport,
+            info,
+            data,
+            #[cfg(feature = "policy_v2")]
+            pre_session_data,
+        )
+        .await?;
     }
     #[cfg(feature = "vmcall-raw")]
     {
@@ -593,15 +566,27 @@ async fn rebinding_old_prepare(
     remote_policy: Vec<u8>,
 ) -> Result<(), MigrationResult> {
     let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
-    let init_policy_hash = digest_sha384(&init_migtd_data.init_policy)?;
+
+    // Per GHCI 1.5: init policy key hash is in tdinfo.mrowner.
+    // Use mrowner directly as the init_policy_hash equivalent.
+    let init_policy_hash = init_migtd_data.mrowner().to_vec();
+
+    // Per GHCI 1.5: init_tdinfo replaces the old init_report (full TDREPORT).
+    // The TDINFO_STRUCT contains all the measurement fields needed for verification.
+    let init_tdinfo = &init_migtd_data.init_tdinfo;
+
+    // Per GHCI 1.5: init_event_log is no longer part of MIGTD_DATA.
+    // Use local event log; RATLS cert still carries init_event_log extension
+    // for responder-side verification of init RTMRs.
+    let init_event_log = event_log::get_event_log().unwrap_or(&[]);
 
     // TLS client
     let mut ratls_client = ratls::client_rebinding(
         transport,
         remote_policy,
         &init_policy_hash,
-        &init_migtd_data.init_report,
-        &init_migtd_data.init_event_log,
+        init_tdinfo,
+        init_event_log,
         &servtd_ext,
     )
     .map_err(|_| {
@@ -629,12 +614,7 @@ async fn rebinding_old_prepare(
     Ok(())
 }
 
-pub async fn rebinding_old_finalize(
-    _info: &RebindingInfo,
-    _data: &mut Vec<u8>,
-) -> Result<(), MigrationResult> {
-    Ok(())
-}
+
 
 #[cfg(not(feature = "spdm_attestation"))]
 async fn rebinding_new_prepare(
@@ -675,14 +655,7 @@ async fn rebinding_new_prepare(
     Ok(())
 }
 
-async fn rebinding_new_finalize(
-    _info: &RebindingInfo,
-    _data: &mut Vec<u8>,
-) -> Result<(), MigrationResult> {
-    write_rebinding_session_token(&[0u8; 32])?;
-    write_approved_servtd_ext_hash(&[0u8; SHA384_DIGEST_SIZE])?;
-    Ok(())
-}
+
 
 pub fn write_rebinding_session_token(rebind_token: &[u8]) -> Result<(), MigrationResult> {
     if rebind_token.len() != 32 {
@@ -839,4 +812,186 @@ async fn tls_session_read_exact(
         recvd += n;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use alloc::vec;
+
+    /// Build a minimal valid MIGTD_DATA blob containing one TDINFO_STRUCT entry.
+    fn build_migtd_data(tdinfo: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MIGTD_DATA_SIGNATURE); // "MIGTDATA"
+        buf.extend_from_slice(&0x00010000u32.to_le_bytes()); // version
+        buf.extend_from_slice(&0u32.to_le_bytes()); // length placeholder
+        buf.extend_from_slice(&1u32.to_le_bytes()); // num_entries = 1
+        // Entry: type 0 (TDINFO)
+        buf.extend_from_slice(&MIGTD_DATA_TYPE_TDINFO.to_le_bytes());
+        buf.extend_from_slice(&(tdinfo.len() as u32).to_le_bytes());
+        buf.extend_from_slice(tdinfo);
+        // Patch length
+        let total = buf.len() as u32;
+        buf[12..16].copy_from_slice(&total.to_le_bytes());
+        buf
+    }
+
+    /// Create a 512-byte TDINFO_STRUCT with known mrowner and mrownerconfig.
+    fn make_tdinfo(mrowner: &[u8; 48], mrownerconfig: &[u8; 48]) -> Vec<u8> {
+        let mut tdinfo = vec![0u8; 512];
+        // mrowner at offset 112..160
+        tdinfo[112..160].copy_from_slice(mrowner);
+        // mrownerconfig at offset 160..208
+        tdinfo[160..208].copy_from_slice(mrownerconfig);
+        tdinfo
+    }
+
+    // --- InitData tests ---
+
+    #[test]
+    fn test_initdata_read_write_roundtrip() {
+        let mrowner = [0xAAu8; 48];
+        let mrownerconfig = [0xBBu8; 48];
+        let tdinfo = make_tdinfo(&mrowner, &mrownerconfig);
+
+        let data = build_migtd_data(&tdinfo);
+        let init = InitData::read_from_bytes(&data).expect("should parse valid MIGTD_DATA");
+
+        assert_eq!(init.init_tdinfo.len(), 512);
+        assert_eq!(init.init_tdinfo, tdinfo);
+
+        // Round-trip: write back and re-parse
+        let mut buf = Vec::new();
+        init.write_into_bytes(&mut buf);
+        let init2 = InitData::read_from_bytes(&buf).expect("round-trip should parse");
+        assert_eq!(init2.init_tdinfo, tdinfo);
+    }
+
+    #[test]
+    fn test_initdata_mrowner_mrownerconfig() {
+        let mrowner = [0x11u8; 48];
+        let mrownerconfig = [0x22u8; 48];
+        let tdinfo = make_tdinfo(&mrowner, &mrownerconfig);
+        let data = build_migtd_data(&tdinfo);
+
+        let init = InitData::read_from_bytes(&data).unwrap();
+        assert_eq!(init.mrowner(), &mrowner);
+        assert_eq!(init.mrownerconfig(), &mrownerconfig);
+    }
+
+    #[test]
+    fn test_initdata_rejects_bad_signature() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[0] = b'X'; // corrupt signature
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_bad_version() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[8..12].copy_from_slice(&0x00020000u32.to_le_bytes()); // wrong version
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_multiple_entries() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[16..20].copy_from_slice(&2u32.to_le_bytes()); // num_entries = 2
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_wrong_type() {
+        let tdinfo = vec![0u8; 512];
+        let mut data = build_migtd_data(&tdinfo);
+        data[20..24].copy_from_slice(&1u32.to_le_bytes()); // type 1 instead of 0
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_short_tdinfo() {
+        let tdinfo = vec![0u8; 256]; // too small (< 512)
+        let data = build_migtd_data(&tdinfo);
+        assert!(InitData::read_from_bytes(&data).is_none());
+    }
+
+    #[test]
+    fn test_initdata_rejects_empty() {
+        assert!(InitData::read_from_bytes(&[]).is_none());
+        assert!(InitData::read_from_bytes(&[0u8; 10]).is_none());
+    }
+
+    // --- RebindingInfo tests ---
+
+    /// Build a minimal RebindingInfo byte buffer.
+    fn build_rebinding_info(
+        mig_request_id: u64,
+        rebinding_src: u8,
+        has_init_data: u8,
+        uuid: [u64; 4],
+        binding_handle: u64,
+        init_data: Option<&[u8]>,
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&mig_request_id.to_le_bytes()); // 0..8
+        buf.push(rebinding_src); // 8
+        buf.push(has_init_data); // 9
+        buf.extend_from_slice(&[0u8; 6]); // 10..16 reserved
+        for u in &uuid {
+            buf.extend_from_slice(&u.to_le_bytes()); // 16..48
+        }
+        buf.extend_from_slice(&binding_handle.to_le_bytes()); // 48..56
+        if let Some(data) = init_data {
+            buf.extend_from_slice(data);
+        }
+        buf
+    }
+
+    #[test]
+    fn test_rebinding_info_no_init_data() {
+        let buf = build_rebinding_info(42, 1, 0, [1, 2, 3, 4], 99, None);
+        let info = RebindingInfo::read_from_bytes(&buf).expect("should parse");
+        assert_eq!(info.mig_request_id, 42);
+        assert_eq!(info.rebinding_src, 1);
+        assert_eq!(info.has_init_data, 0);
+        assert_eq!(info.target_td_uuid, [1, 2, 3, 4]);
+        assert_eq!(info.binding_handle, 99);
+        assert!(info.init_migtd_data.is_none());
+    }
+
+    #[test]
+    fn test_rebinding_info_with_init_data() {
+        let tdinfo = make_tdinfo(&[0xCAu8; 48], &[0xFEu8; 48]);
+        let migtd_data = build_migtd_data(&tdinfo);
+        let buf = build_rebinding_info(7, 0, 1, [10, 20, 30, 40], 55, Some(&migtd_data));
+        let info = RebindingInfo::read_from_bytes(&buf).expect("should parse with init data");
+        assert_eq!(info.mig_request_id, 7);
+        assert_eq!(info.has_init_data, 1);
+        let init = info.init_migtd_data.as_ref().unwrap();
+        assert_eq!(init.mrowner(), &[0xCAu8; 48]);
+        assert_eq!(init.mrownerconfig(), &[0xFEu8; 48]);
+    }
+
+    #[test]
+    fn test_rebinding_info_rejects_short_buffer() {
+        assert!(RebindingInfo::read_from_bytes(&[0u8; 10]).is_none());
+        assert!(RebindingInfo::read_from_bytes(&[0u8; 55]).is_none()); // 55 < 56
+    }
+
+    #[test]
+    fn test_rebinding_info_rejects_nonzero_reserved() {
+        let mut buf = build_rebinding_info(1, 0, 0, [0; 4], 0, None);
+        buf[10] = 0xFF; // reserved byte not zero
+        assert!(RebindingInfo::read_from_bytes(&buf).is_none());
+    }
+
+    #[test]
+    fn test_rebinding_info_rejects_has_init_data_without_data() {
+        // has_init_data=1 but no data bytes following → InitData::read_from_bytes fails
+        let buf = build_rebinding_info(1, 0, 1, [0; 4], 0, None);
+        assert!(RebindingInfo::read_from_bytes(&buf).is_none());
+    }
 }
