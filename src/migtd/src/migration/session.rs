@@ -370,9 +370,9 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 if data_length >= size_of::<u64>() as u32 {
                     let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
                     let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
+                    log::error!(migration_request_id = mig_request_id; "wait_for_request: GetReportData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
                 } else {
-                    log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
+                    log::error!("wait_for_request: GetReportData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
                 }
                 return Poll::Pending;
             }
@@ -418,14 +418,15 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
             {
                 let mut reportdata: [u8; 64] = [0; 64];
                 let mut mig_request_id: u64 = 0;
-                if data_length != size_of::<MigtdDataInfo>() as u32
+                // data length should MigRequestID (+ optional REPORTDATA)
+                if data_length != size_of::<MigtdDataInfo>() as u32 && data_length != size_of_val(&mig_request_id) as u32
                 {
                     if data_length >= size_of::<u64>() as u32 {
                         let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
                         let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                        log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
+                        log::error!(migration_request_id = mig_request_id; "wait_for_request: GetMigtdData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
                     } else {
-                        log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
+                        log::error!("wait_for_request: GetMigtdData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
                     }
                     return Poll::Pending;
                 }
