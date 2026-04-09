@@ -87,7 +87,6 @@ mod v2 {
     const SERVTD_ATTR_IGNORE_RTMR3: u64 = 0x200_0000_0000;
 
     const SERVTD_TYPE_MIGTD: u16 = 0;
-    const TD_INFO_OFFSET: usize = 512;
 
     lazy_static! {
         pub static ref LOCAL_TCB_INFO: Once<PolicyEvaluationInfo> = Once::new();
@@ -134,13 +133,6 @@ mod v2 {
             .get()
             .cloned()
             .ok_or(PolicyError::InvalidParameter)
-    }
-
-    pub fn get_init_tcb_evaluation_info(
-        init_report: &TdxReport,
-        init_policy: &VerifiedPolicy,
-    ) -> Result<PolicyEvaluationInfo, PolicyError> {
-        setup_evaluation_data_with_tdreport(init_report, init_policy)
     }
 
     /// Get reference to the global verified policy
@@ -273,13 +265,14 @@ mod v2 {
     }
 
     // Authenticate the migtd-old from migtd-new side
+    // Per GHCI 1.5: init_tdinfo is a TDINFO_STRUCT (not full TDREPORT),
+    // and there is no separate init_policy JSON blob.
     pub fn authenticate_rebinding_old(
         tdreport_src: &[u8],
         event_log_src: &[u8],
         mig_policy_src: &[u8],
-        init_policy: &[u8],
+        init_tdinfo: &[u8],
         init_event_log: &[u8],
-        init_td_report: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
         let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
@@ -294,29 +287,27 @@ mod v2 {
             )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        // Verify the td report init / event log init / policy init
+        // Verify the init tdinfo against servtd_ext hash
         let servtd_ext_src_obj =
             ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
-        let init_tdreport = verify_init_tdreport(init_td_report, &servtd_ext_src_obj)?;
+        let init_td_info = verify_init_tdinfo(init_tdinfo, &servtd_ext_src_obj)?;
         let _engine_svn = policy
             .servtd_tcb_mapping
             .get_engine_svn_by_measurements(&Measurements::new_from_bytes(
-                &init_tdreport.td_info.mrtd,
-                &init_tdreport.td_info.rtmr0,
-                &init_tdreport.td_info.rtmr1,
+                &init_td_info.mrtd,
+                &init_td_info.rtmr0,
+                &init_td_info.rtmr1,
                 None,
                 None,
             ))
             .ok_or(PolicyError::SvnMismatch)?;
-        let verified_policy_init = verify_policy_and_event_log(
-            init_event_log,
-            init_policy,
-            policy_issuer_chain,
-            &get_rtmrs_from_tdreport(&init_tdreport)?,
-        )?;
 
-        let relative_reference =
-            get_init_tcb_evaluation_info(&init_tdreport, &verified_policy_init)?;
+        // Verify init event log integrity against RTMRs from init tdinfo
+        verify_event_log(init_event_log, &get_rtmrs_from_tdinfo(&init_td_info)?)
+            .map_err(|_| PolicyError::InvalidEventLog)?;
+
+        // Use local policy's tcb_mapping with init tdinfo measurements
+        let relative_reference = setup_evaluation_data_with_tdinfo(&init_td_info, policy)?;
         policy.policy_data.evaluate_policy_common(
             &evaluation_data_src,
             &relative_reference,
@@ -466,52 +457,62 @@ mod v2 {
         Ok(tdx_report)
     }
 
+    /// Per GHCI 1.5: accepts TDINFO_STRUCT bytes directly (not full TDREPORT)
     fn verify_servtd_hash(
-        servtd_report: &[u8],
+        tdinfo_bytes: &[u8],
         servtd_attr: u64,
         init_servtd_hash: &[u8],
-    ) -> Result<TdxReport, PolicyError> {
-        if servtd_report.len() < TD_INFO_OFFSET + size_of::<TdInfo>() {
+    ) -> Result<TdInfo, PolicyError> {
+        if tdinfo_bytes.len() < size_of::<TdInfo>() {
             return Err(PolicyError::InvalidParameter);
         }
 
-        // Extract TdInfo from the report
-        let mut td_report =
-            TdxReport::read_from_bytes(servtd_report).ok_or(PolicyError::InvalidTdReport)?;
+        // Parse TdInfo directly from bytes
+        let mut td_info = {
+            let mut uninit = core::mem::MaybeUninit::<TdInfo>::uninit();
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    tdinfo_bytes.as_ptr(),
+                    uninit.as_mut_ptr() as *mut u8,
+                    size_of::<TdInfo>(),
+                );
+                uninit.assume_init()
+            }
+        };
 
         if (servtd_attr & SERVTD_ATTR_IGNORE_ATTRIBUTES) != 0 {
-            td_report.td_info.attributes.fill(0);
+            td_info.attributes.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_XFAM) != 0 {
-            td_report.td_info.xfam.fill(0);
+            td_info.xfam.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_MRTD) != 0 {
-            td_report.td_info.mrtd.fill(0);
+            td_info.mrtd.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_MRCONFIGID) != 0 {
-            td_report.td_info.mrconfig_id.fill(0);
+            td_info.mrconfig_id.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_MROWNER) != 0 {
-            td_report.td_info.mrowner.fill(0);
+            td_info.mrowner.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_MROWNERCONFIG) != 0 {
-            td_report.td_info.mrownerconfig.fill(0);
+            td_info.mrownerconfig.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR0) != 0 {
-            td_report.td_info.rtmr0.fill(0);
+            td_info.rtmr0.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR1) != 0 {
-            td_report.td_info.rtmr1.fill(0);
+            td_info.rtmr1.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR2) != 0 {
-            td_report.td_info.rtmr2.fill(0);
+            td_info.rtmr2.fill(0);
         }
         if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR3) != 0 {
-            td_report.td_info.rtmr3.fill(0);
+            td_info.rtmr3.fill(0);
         }
 
-        let info_hash = digest_sha384(td_report.td_info.as_bytes())
-            .map_err(|_| PolicyError::HashCalculation)?;
+        let info_hash =
+            digest_sha384(td_info.as_bytes()).map_err(|_| PolicyError::HashCalculation)?;
 
         // Calculate ServTD hash: SHA384(info_hash || type || attr)
         let mut buffer = [0u8; SHA384_DIGEST_SIZE + size_of::<u16>() + size_of::<u64>()];
@@ -531,18 +532,60 @@ mod v2 {
             return Err(PolicyError::InvalidTdReport);
         }
 
-        Ok(td_report)
+        Ok(td_info)
     }
 
-    fn verify_init_tdreport(
-        init_report: &[u8],
+    /// Per GHCI 1.5: verifies TDINFO_STRUCT against servtd_ext hash
+    fn verify_init_tdinfo(
+        init_tdinfo: &[u8],
         servtd_ext: &ServtdExt,
-    ) -> Result<TdxReport, PolicyError> {
+    ) -> Result<TdInfo, PolicyError> {
         verify_servtd_hash(
-            init_report,
+            init_tdinfo,
             u64::from_le_bytes(servtd_ext.init_attr),
             &servtd_ext.init_servtd_info_hash,
         )
+    }
+
+    fn get_rtmrs_from_tdinfo(
+        td_info: &TdInfo,
+    ) -> Result<[[u8; SHA384_DIGEST_SIZE]; 4], PolicyError> {
+        let mut rtmrs = [[0u8; SHA384_DIGEST_SIZE]; 4];
+        rtmrs[0].copy_from_slice(&td_info.rtmr0);
+        rtmrs[1].copy_from_slice(&td_info.rtmr1);
+        rtmrs[2].copy_from_slice(&td_info.rtmr2);
+        rtmrs[3].copy_from_slice(&td_info.rtmr3);
+        Ok(rtmrs)
+    }
+
+    fn setup_evaluation_data_with_tdinfo(
+        td_info: &TdInfo,
+        policy: &VerifiedPolicy,
+    ) -> Result<PolicyEvaluationInfo, PolicyError> {
+        let migtd_svn = policy.servtd_tcb_mapping.get_engine_svn_by_measurements(
+            &Measurements::new_from_bytes(
+                &td_info.mrtd,
+                &td_info.rtmr0,
+                &td_info.rtmr1,
+                None,
+                None,
+            ),
+        );
+
+        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
+
+        Ok(PolicyEvaluationInfo {
+            tee_tcb_svn: None,
+            tcb_date: None,
+            tcb_status: None,
+            tcb_evaluation_number: None,
+            fmspc: None,
+            migtd_isvsvn: migtd_svn,
+            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
+            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+            pck_crl_num: None,
+            root_ca_crl_num: None,
+        })
     }
 
     fn setup_evaluation_data(
