@@ -1,59 +1,51 @@
 {
     "Sections": [
         {
-            "DataOffset": "0xFA7000",
-            "RawDataSize": "0x59000",
-            "MemoryAddress": "0xFFFA7000",
-            "MemoryDataSize": "0x59000",
+            "DataOffset": "0x81000",
+            "RawDataSize": "0xF7F000",
+            "MemoryAddress": "0xFF081000",
+            "MemoryDataSize": "0xF7F000",
             "Type": "BFV",
             "Attributes": "0x1"
         },
         {
-            "DataOffset": "0xC1000",
-            "RawDataSize": "0xEE6000",
-            "MemoryAddress": "0xFF0C1000",
-            "MemoryDataSize": "0xEE6000",
-            "Type": "Payload",
-            "Attributes": "0x1"
-        },
-        {
             "DataOffset": "0x0",
-            "RawDataSize": "0xA0000",
+            "RawDataSize": "0x40000",
             "MemoryAddress": "0xFF000000",
-            "MemoryDataSize": "0xA0000",
+            "MemoryDataSize": "0x40000",
             "Type": "CFV",
             "Attributes": "0x0"
         },
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF0A1000",
-            "MemoryDataSize": "0x10000",
+            "MemoryAddress": "0x7C0000",
+            "MemoryDataSize": "0x20000",
             "Type": "TempMem",
             "Attributes": "0x0"
         },
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF0B1000",
-            "MemoryDataSize": "0x10000",
+            "MemoryAddress": "0x7A0000",
+            "MemoryDataSize": "0x20000",
             "Type": "TempMem",
             "Attributes": "0x0"
         },
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0x0",
-            "MemoryDataSize": "0x2000000",
-            "Type": "PermMem",
-            "Attributes": "0x2"
-        },
-        {
-            "DataOffset": "0x0",
-            "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF0A0000",
+            "MemoryAddress": "0x7FE000",
             "MemoryDataSize": "0x1000",
             "Type": "TempMem",
+            "Attributes": "0x0"
+        },
+        {
+            "DataOffset": "0x0",
+            "RawDataSize": "0x0",
+            "MemoryAddress": "0x800000",
+            "MemoryDataSize": "0x20000",
+            "Type": "TD_HOB",
             "Attributes": "0x0"
         }
     ]

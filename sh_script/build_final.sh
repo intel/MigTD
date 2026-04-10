@@ -72,6 +72,18 @@ function populate_layout() {
     popd
 }
 
+function apply_image_layout() {
+    pushd ${PROJECT_DIR:-.}/deps/td-shim/devtools/td-layout-config
+    cargo run -- -t image ../../../../config/image_layout.json -o ../../td-layout/src/build_time.rs
+    popd
+    # Relocate TempMem BASE addresses from the firmware range (0xFF0x0000) into
+    # the Bootloader guest RAM region so QEMU tdx_accept_ram_range() can find them.
+    local build_time=${PROJECT_DIR:-.}/deps/td-shim/td-layout/src/build_time.rs
+    sed -i 's/pub const TD_SHIM_MAILBOX_BASE: u32 = 0xFF040000;/pub const TD_SHIM_MAILBOX_BASE: u32 = 0x7FE000;/' "${build_time}"
+    sed -i 's/pub const TD_SHIM_TEMP_STACK_BASE: u32 = 0xFF041000;/pub const TD_SHIM_TEMP_STACK_BASE: u32 = 0x7C0000;/' "${build_time}"
+    sed -i 's/pub const TD_SHIM_TEMP_HEAP_BASE: u32 = 0xFF061000;/pub const TD_SHIM_TEMP_HEAP_BASE: u32 = 0x7A0000;/' "${build_time}"
+}
+
 # Required by `td-shim-tools` but cannot be set when compiling attestation library
 # TODO: Move to `xtask`
 function set_cc() {
@@ -329,6 +341,7 @@ function enroll() {
 ./sh_script/preparation.sh
 
 populate_layout
+apply_image_layout
 
 proccess_args $@
 
