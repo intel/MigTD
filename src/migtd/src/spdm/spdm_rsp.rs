@@ -639,7 +639,8 @@ fn rsp_verify_peer_attestation_v1(
     #[cfg(not(any(
         feature = "AzCVMEmu",
         feature = "test_disable_ra_and_accept_all",
-        feature = "test_mock_report"
+        feature = "test_mock_report",
+        feature = "use-mock-quote"
     )))]
     if verify_report_data_binding(&verified_report_peer, b"MigTDReq", th1).is_err() {
         error!("Peer REPORTDATA does not match expected TH1 binding!\n");
@@ -704,7 +705,11 @@ fn rsp_verify_peer_attestation_v2(
         }
 
         // 3. Verify REPORTDATA binding using supplemental data from authenticate_remote
-        #[cfg(not(any(feature = "AzCVMEmu", feature = "test_mock_report")))]
+        #[cfg(not(any(
+            feature = "AzCVMEmu",
+            feature = "test_mock_report",
+            feature = "use-mock-quote"
+        )))]
         {
             let verified_report_peer = policy_check_result.unwrap();
             if verify_report_data_binding(&verified_report_peer, b"MigTDReq", th1).is_err() {

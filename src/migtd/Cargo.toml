@@ -84,7 +84,8 @@ test_heap_size = ["td-benchmark", "td-payload/test_heap_size"]
 test_stack_size = ["td-benchmark"]
 test_disable_ra_and_accept_all = ["attestation/test", "tdx-tdcall-emu?/test_mock_report"] # Dangerous: can only be used for test purpose to bypass the remote attestation
 spdm_attestation = ["main"]
-test_mock_report = ["AzCVMEmu", "tdx-tdcall-emu/test_mock_report"]
+test_mock_report = ["AzCVMEmu", "tdx-tdcall-emu/test_mock_report"]  # Use mock TD report in AzCVMEmu mode
+use-mock-quote = ["attestation/use-mock-quote"]  # Use mock quote and mock TD report for non-AzCVMEmu testing
 AzCVMEmu = [
 	"main",                     # Include main feature by default
 	"attestation/AzCVMEmu",

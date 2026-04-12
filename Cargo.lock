@@ -177,6 +177,7 @@ dependencies = [
  "spin 0.9.8",
  "td-payload",
  "td-payload-emu",
+ "tdx-mock-data",
  "tdx-tdcall",
  "tdx-tdcall-emu",
 ]

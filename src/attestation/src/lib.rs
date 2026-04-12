@@ -23,8 +23,17 @@ mod binding;
 mod ghci;
 pub mod root_ca;
 
+// Re-export tdreport module with conditional mock support
+#[cfg(not(feature = "use-mock-quote"))]
+pub use tdx_tdcall::tdreport;
+
+#[cfg(feature = "use-mock-quote")]
+pub mod tdreport;
+
 #[cfg(feature = "igvm-attest")]
 mod igvmattest;
+#[cfg(feature = "use-mock-quote")]
+mod mock_quote;
 
 pub use attest::*;
 
