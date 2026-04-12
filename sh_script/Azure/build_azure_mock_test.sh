@@ -441,9 +441,13 @@ echo
 # Make sure no ending newline is added (important for signing)
 #
 echo -e "${BLUE}=== Step 3: Updating TD Identity Template ===${NC}"
+# Set tcbDate and issueDate to current time so they satisfy the policy's
+# servtd tcbDate reference (which uses an absolute date).
+CURRENT_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 jq -c ".xfam = \"$XFAM\" | .attributes = \"$ATTRIBUTES\" | .mrConfigId = \"$MR_CONFIG_ID\" | \
 .mrOwner = \"$MR_OWNER\" | .mrOwnerConfig = \"$MR_OWNER_CONFIG\" | .mrsigner = \"$MRSIGNER\" | \
-.isvProdId = $ISV_PROD_ID | .tcbLevels[0].tcb.isvsvn = $ISVSVN" \
+.isvProdId = $ISV_PROD_ID | .tcbLevels[0].tcb.isvsvn = $ISVSVN | \
+.tcbLevels[0].tcbDate = \"$CURRENT_UTC\" | .issueDate = \"$CURRENT_UTC\"" \
 "$TD_IDENTITY_TEMPLATE" | tr -d '\n' > "$TD_IDENTITY_UPDATED"
 
 echo -e "${GREEN}✓ TD Identity updated: $TD_IDENTITY_UPDATED${NC}"
