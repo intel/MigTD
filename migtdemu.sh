@@ -83,7 +83,7 @@ show_usage() {
     echo "    example files in config/AzCVMEmu. Some reference values in those files for the ServTD may become"
     echo "    outdated over time. Use ./sh_script/build_AzCVMEmu_policy_and_test.sh to generate updated policy"
     echo "    and issuer chain files."
-    echo "  - Migration flow automatically includes EnableLogArea and GetReportData requests before"
+    echo "  - Migration flow automatically includes EnableLogArea and GetTDReport requests before"
     echo "    the actual migration, ensuring logging is enabled and a TD report is generated."
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
@@ -93,7 +93,7 @@ show_usage() {
     echo "    token exchange, and approval). 'rebind-finalize' clears the session token."
     echo
     echo "Examples:"
-    echo "  # Migration testing (includes EnableLogArea → GetReportData → StartMigration)"
+    echo "  # Migration testing (includes EnableLogArea → GetTDReport → StartMigration)"
     echo "  $0                                    # Build release and run as source with defaults"
     echo "  $0 --role destination                # Build release and run as destination"
     echo "  $0 --debug --role source             # Build debug and run as source"
