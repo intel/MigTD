@@ -70,7 +70,7 @@ const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
 pub enum DataStatusOperation {
     StartMigration = 1,
     StartRebinding = 2,
-    GetReportData = 3,
+    GetTDReport = 3,
     EnableLogArea = 4,
     GetMigtdData = 5,
 }
@@ -359,7 +359,7 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
                 log::debug!("wait_for_request: invalid operation StartRebinding received\n");
                 Poll::Pending
             }
-        } else if operation == DataStatusOperation::GetReportData as u8 {
+        } else if operation == DataStatusOperation::GetTDReport as u8 {
             let mut reportdata: [u8; 64] = [0; 64];
             let mut mig_request_id: u64 = 0;
             // data length should MigRequestID (+ optional REPORTDATA)

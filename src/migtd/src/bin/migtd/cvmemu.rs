@@ -387,7 +387,7 @@ fn parse_commandline_args() {
     match operation {
         "migration" => {
             log::info!(
-                "Setting up migration flow (EnableLogArea → GetReportData → StartMigration)\n"
+                "Setting up migration flow (EnableLogArea → GetTDReport → StartMigration)\n"
             );
             set_emulated_start_migration(mig_request_id, rebinding_src, td_uuid, binding_handle);
         }
@@ -445,7 +445,7 @@ fn print_usage() {
     println!("  export MIGTD_POLICY_FILE=config/policy.json");
     println!("  export MIGTD_ROOT_CA_FILE=config/Intel_SGX_Provisioning_Certification_RootCA.cer");
     println!();
-    println!("  # Migration (automatically includes EnableLogArea and GetReportData):");
+    println!("  # Migration (automatically includes EnableLogArea and GetTDReport):");
     println!("  ./migtd --role source --request-id 42");
     println!("  ./migtd -m destination -r 42 -b 0x5678");
     println!("  ./migtd --role source --dest-ip 192.168.1.100 --dest-port 8001");
@@ -460,7 +460,7 @@ fn handle_pre_mig_emu() -> i32 {
     // For AzCVMEmu, create an async runtime and run the standard flow
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
-    // Process requests in sequence: EnableLogArea → GetReportData → StartMigration
+    // Process requests in sequence: EnableLogArea → GetTDReport → StartMigration
     let exit_code: i32 = rt.block_on(async move {
         loop {
             match migtd::migration::session::wait_for_request().await {
@@ -558,7 +558,7 @@ fn handle_pre_mig_emu() -> i32 {
                             }
                         }
                         WaitForRequestResponse::GetTdReport(report_info) => {
-                            log::info!(migration_request_id = report_info.mig_request_id; "Processing GetReportData request\n");
+                            log::info!(migration_request_id = report_info.mig_request_id; "Processing GetTDReport request\n");
                             log::debug!(migration_request_id = report_info.mig_request_id;
                                 "ReportData (first 32 bytes): {:02x?}\n",
                                 &report_info.reportdata[0..32]
