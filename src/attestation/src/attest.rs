@@ -5,7 +5,7 @@
 #[cfg(feature = "attest-lib-ext")]
 use crate::binding::verify_quote_integrity_ex;
 
-#[cfg(not(feature = "igvm-attest"))]
+#[cfg(not(any(feature = "igvm-attest", feature = "use-mock-quote")))]
 use crate::binding::get_quote as get_quote_inner;
 
 use crate::{
@@ -16,8 +16,14 @@ use crate::{
 use alloc::{ffi::CString, vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void, ops::Range};
 
-#[cfg(not(feature = "igvm-attest"))]
+#[cfg(not(any(feature = "igvm-attest", feature = "use-mock-quote")))]
 use tdx_tdcall::tdreport::*;
+
+// Compile-time check: igvm-attest and use-mock-quote are mutually exclusive
+#[cfg(all(feature = "igvm-attest", feature = "use-mock-quote"))]
+compile_error!(
+    "Features 'igvm-attest' and 'use-mock-quote' are mutually exclusive. Enable only one."
+);
 
 pub const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
@@ -80,7 +86,12 @@ pub fn get_quote(td_report: &[u8]) -> Result<Vec<u8>, Error> {
         return crate::igvmattest::get_quote_igvm(td_report);
     }
 
-    #[cfg(not(feature = "igvm-attest"))]
+    #[cfg(feature = "use-mock-quote")]
+    {
+        return Ok(crate::mock_quote::get_mock_quote(td_report));
+    }
+
+    #[cfg(not(any(feature = "igvm-attest", feature = "use-mock-quote")))]
     {
         let mut quote = vec![0u8; TD_QUOTE_SIZE];
         let mut quote_size = TD_QUOTE_SIZE as u32;

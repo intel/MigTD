@@ -17,11 +17,15 @@ log = { version = "0.4.13" }
 tdx-tdcall-emu = { path = "../../deps/td-shim-AzCVMEmu/tdx-tdcall", optional = true }
 td-payload-emu = { path = "../../deps/td-shim-AzCVMEmu/td-payload-emu", optional = true }
 
+# For use-mock-quote feature, use the shared mock data crate (no-std compatible)
+tdx-mock-data = { path = "../../deps/td-shim-AzCVMEmu/tdx-mock-data", optional = true }
+
 [features]
 default = []
 test = []
 AzCVMEmu = ["tdx-tdcall-emu", "td-payload-emu"]
 attest-lib-ext = []
 policy_v2=[]
-igvm-attest = []
+igvm-attest = []  # Get quote via IGVM interface (mutually exclusive with use-mock-quote)
 vmcall-raw = []
+use-mock-quote = ["tdx-mock-data"]  # Use mock quote and mock TD report for testing (mutually exclusive with AzCVMEmu)

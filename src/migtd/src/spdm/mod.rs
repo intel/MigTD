@@ -187,6 +187,16 @@ pub fn verify_report_data_binding(
     peer_prefix: &[u8],
     th1: &SpdmDigestStruct,
 ) -> Result<(), MigrationResult> {
+    if cfg!(feature = "use-mock-quote") {
+        // The mock quote is static test data and does not embed the live
+        // SHA384(prefix || TH1) binding for the current SPDM handshake.
+        // Skip this check in that development-only mode.
+        log::warn!(
+            "use-mock-quote mode: Skipping REPORTDATA TH1 binding verification. This is NOT secure for production use.\n"
+        );
+        return Ok(());
+    }
+
     let report_data =
         build_report_data(peer_prefix, th1).map_err(|_| MigrationResult::InvalidParameter)?;
     verify_peer_report_data(supplemental_data, &report_data)

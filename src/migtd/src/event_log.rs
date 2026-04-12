@@ -268,7 +268,13 @@ fn replay_event_log_with_report(
         {
             Ok(())
         }
-        #[cfg(not(feature = "AzCVMEmu"))]
+        // In use-mock-quote mode, mock quote won't have valid RTMR matching event log.
+        #[cfg(feature = "use-mock-quote")]
+        {
+            log::warn!("Event log verification bypassed due to use-mock-quote feature");
+            Ok(())
+        }
+        #[cfg(not(any(feature = "AzCVMEmu", feature = "use-mock-quote")))]
         Err(anyhow!("Invalid event log"))
     }
 }
