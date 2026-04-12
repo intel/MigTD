@@ -90,10 +90,15 @@ pub struct RebindingInfo {
 }
 
 impl RebindingInfo {
-    pub fn read_from_bytes(b: &[u8]) -> Option<Self> {
-        // Check the length of input and the reserved fields (bytes 10-15 per GHCI 1.5)
-        if b.len() < 56 || b[10..16] != [0; 6] {
-            return None;
+    pub fn read_from_bytes(
+        data_length: u32,
+        payload: &[u8],
+    ) -> core::result::Result<Self, crate::migration::MigrationResult> {
+        use crate::migration::MigrationResult;
+        let b = payload;
+        // Check the length of input and the reserved fields
+        if b.len() < 56 || (data_length as usize) < 56 || b[11..16] != [0; 5] {
+            return Err(MigrationResult::InvalidParameter);
         }
         let mig_request_id = u64::from_le_bytes(b[..8].try_into().unwrap());
         let rebinding_src = b[8];
@@ -107,11 +112,11 @@ impl RebindingInfo {
 
         let mut init_migtd_data = None;
         if has_init_data == 1 {
-            // Returns None if `has_init_data` is set but reading initialization data from the input buffer fails.
-            init_migtd_data = Some(InitData::read_from_bytes(&b[56..])?);
+            init_migtd_data =
+                Some(InitData::read_from_bytes(&b[56..]).ok_or(MigrationResult::InvalidParameter)?);
         }
 
-        Some(Self {
+        Ok(Self {
             mig_request_id,
             rebinding_src,
             has_init_data,
@@ -951,7 +956,7 @@ mod test {
     #[test]
     fn test_rebinding_info_no_init_data() {
         let buf = build_rebinding_info(42, 1, 0, [1, 2, 3, 4], 99, None);
-        let info = RebindingInfo::read_from_bytes(&buf).expect("should parse");
+        let info = RebindingInfo::read_from_bytes(buf.len() as u32, &buf).expect("should parse");
         assert_eq!(info.mig_request_id, 42);
         assert_eq!(info.rebinding_src, 1);
         assert_eq!(info.has_init_data, 0);
@@ -965,7 +970,8 @@ mod test {
         let tdinfo = make_tdinfo(&[0xCAu8; 48], &[0xFEu8; 48]);
         let migtd_data = build_migtd_data(&tdinfo);
         let buf = build_rebinding_info(7, 0, 1, [10, 20, 30, 40], 55, Some(&migtd_data));
-        let info = RebindingInfo::read_from_bytes(&buf).expect("should parse with init data");
+        let info = RebindingInfo::read_from_bytes(buf.len() as u32, &buf)
+            .expect("should parse with init data");
         assert_eq!(info.mig_request_id, 7);
         assert_eq!(info.has_init_data, 1);
         let init = info.init_migtd_data.as_ref().unwrap();
@@ -975,21 +981,21 @@ mod test {
 
     #[test]
     fn test_rebinding_info_rejects_short_buffer() {
-        assert!(RebindingInfo::read_from_bytes(&[0u8; 10]).is_none());
-        assert!(RebindingInfo::read_from_bytes(&[0u8; 55]).is_none()); // 55 < 56
+        assert!(RebindingInfo::read_from_bytes(10, &[0u8; 10]).is_err());
+        assert!(RebindingInfo::read_from_bytes(55, &[0u8; 55]).is_err()); // 55 < 56
     }
 
     #[test]
     fn test_rebinding_info_rejects_nonzero_reserved() {
         let mut buf = build_rebinding_info(1, 0, 0, [0; 4], 0, None);
         buf[10] = 0xFF; // reserved byte not zero
-        assert!(RebindingInfo::read_from_bytes(&buf).is_none());
+        assert!(RebindingInfo::read_from_bytes(buf.len() as u32, &buf).is_err());
     }
 
     #[test]
     fn test_rebinding_info_rejects_has_init_data_without_data() {
         // has_init_data=1 but no data bytes following → InitData::read_from_bytes fails
         let buf = build_rebinding_info(1, 0, 1, [0; 4], 0, None);
-        assert!(RebindingInfo::read_from_bytes(&buf).is_none());
+        assert!(RebindingInfo::read_from_bytes(buf.len() as u32, &buf).is_err());
     }
 }

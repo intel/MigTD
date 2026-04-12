@@ -76,13 +76,18 @@ pub enum DataStatusOperation {
 }
 
 #[cfg(feature = "vmcall-raw")]
-fn parse_uuid(buf: &[u8]) -> [u64; 4] {
-    [
-        u64::from_le_bytes(buf[0..8].try_into().unwrap()),
-        u64::from_le_bytes(buf[8..16].try_into().unwrap()),
-        u64::from_le_bytes(buf[16..24].try_into().unwrap()),
-        u64::from_le_bytes(buf[24..32].try_into().unwrap()),
-    ]
+impl TryFrom<u8> for DataStatusOperation {
+    type Error = u8;
+    fn try_from(value: u8) -> core::result::Result<Self, u8> {
+        match value {
+            1 => Ok(Self::StartMigration),
+            2 => Ok(Self::StartRebinding),
+            3 => Ok(Self::GetTDReport),
+            4 => Ok(Self::EnableLogArea),
+            5 => Ok(Self::GetMigtdData),
+            unknown => Err(unknown),
+        }
+    }
 }
 
 lazy_static! {
@@ -254,6 +259,202 @@ fn try_accept_request(
 }
 
 #[cfg(feature = "vmcall-raw")]
+fn get_request_payload<'a>(
+    data_buffer: &'a [u8],
+    reqbufferhdrlen: usize,
+    data_length: u32,
+) -> Result<&'a [u8]> {
+    let end = reqbufferhdrlen
+        .checked_add(data_length as usize)
+        .ok_or(MigrationResult::InvalidParameter)?;
+    data_buffer
+        .get(reqbufferhdrlen..end)
+        .ok_or(MigrationResult::InvalidParameter)
+}
+
+#[cfg(feature = "vmcall-raw")]
+fn read_request_id(data_buffer: &[u8], reqbufferhdrlen: usize) -> Option<u64> {
+    let end = reqbufferhdrlen.checked_add(size_of::<u64>())?;
+    let bytes: [u8; 8] = data_buffer.get(reqbufferhdrlen..end)?.try_into().ok()?;
+    Some(u64::from_le_bytes(bytes))
+}
+
+#[cfg(feature = "vmcall-raw")]
+fn reject_request(
+    pending_error_report: &mut Option<(u64, MigrationResult)>,
+    request_id: Option<u64>,
+    status: MigrationResult,
+) -> Poll<Result<WaitForRequestResponse>> {
+    if let Some(request_id) = request_id {
+        *pending_error_report = Some((request_id, status));
+    }
+    Poll::Ready(Err(status))
+}
+
+/// Log an error with an optional `migration_request_id` structured field.
+macro_rules! log_request_error {
+    ($request_id:expr, $($arg:tt)*) => {
+        if let Some(mig_request_id) = $request_id {
+            log::error!(migration_request_id = mig_request_id; $($arg)*);
+        } else {
+            log::error!($($arg)*);
+        }
+    };
+}
+
+#[cfg(feature = "vmcall-raw")]
+async fn report_wait_for_request_error(request_id: u64, status: MigrationResult) {
+    let data = Vec::new();
+    if let Err(e) = report_status(status as u8, request_id, &data).await {
+        log::error!(migration_request_id = request_id;
+            "wait_for_request: failed to report error status {:?} to host: {:?}\n",
+            status,
+            e
+        );
+    }
+}
+
+/// Parse a raw request buffer into a typed WaitForRequestResponse.
+///
+#[cfg(feature = "vmcall-raw")]
+fn parse_request(
+    data_buffer: &[u8],
+    reqbufferhdrlen: usize,
+    pending_error_report: &mut Option<(u64, MigrationResult)>,
+) -> Poll<Result<WaitForRequestResponse>> {
+    let reqbufferhdr = process_buffer(data_buffer);
+    let data_status = reqbufferhdr.datastatus;
+    let data_length = reqbufferhdr.length;
+    if (data_status == 0) && (data_length == 0) {
+        return Poll::Pending;
+    }
+
+    let data_status_bytes = &data_status.to_le_bytes();
+    let request_id = read_request_id(data_buffer, reqbufferhdrlen);
+    if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
+        log_request_error!(
+            request_id,
+            "wait_for_request: data_status byte[0] failure, data_status = {:x}\n",
+            data_status
+        );
+        return reject_request(
+            pending_error_report,
+            request_id,
+            MigrationResult::VmmInternalError,
+        );
+    }
+
+    let operation: u8 = data_status_bytes[1];
+    log::trace!(
+        "wait_for_request: Received operation {} with data length {}\n",
+        operation,
+        data_length
+    );
+
+    // Step 1: Convert operation byte to typed enum, reject unknown immediately
+    let op = match DataStatusOperation::try_from(operation).map_err(|unknown| {
+        log_request_error!(
+            request_id,
+            "wait_for_request: unknown operation {} received\n",
+            unknown
+        );
+        reject_request(
+            pending_error_report,
+            request_id,
+            MigrationResult::UnsupportedOperationError,
+        )
+    }) {
+        Ok(op) => op,
+        Err(poll) => return poll,
+    };
+
+    // Step 2: Extract payload bytes based on data_length
+    let slice = match get_request_payload(data_buffer, reqbufferhdrlen, data_length) {
+        Ok(s) => s,
+        Err(status) => {
+            log::error!("wait_for_request: {:?} payload out of bounds\n", op);
+            return reject_request(pending_error_report, request_id, status);
+        }
+    };
+
+    // Step 3: Decode payload into operation-specific data and dispatch
+    // Each read_from_bytes() validates data_length == expected size.
+    macro_rules! decode_and_dispatch {
+        ($type:ty, |$info:ident| $response:expr) => {
+            match <$type>::read_from_bytes(data_length, slice) {
+                Ok($info) => try_accept_request($info.mig_request_id, $response),
+                Err(status) => {
+                    log_request_error!(
+                        request_id,
+                        "wait_for_request: {:?} failed to decode payload\n",
+                        op
+                    );
+                    reject_request(pending_error_report, request_id, status)
+                }
+            }
+        };
+    }
+
+    match op {
+        DataStatusOperation::StartMigration => {
+            decode_and_dispatch!(MigtdMigrationInformation, |mig_info| {
+                WaitForRequestResponse::StartMigration(MigrationInformation { mig_info })
+            })
+        }
+        DataStatusOperation::StartRebinding => {
+            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            {
+                decode_and_dispatch!(RebindingInfo, |info| {
+                    WaitForRequestResponse::StartRebinding(info)
+                })
+            }
+            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
+            {
+                log_request_error!(
+                    request_id,
+                    "wait_for_request: unsupported operation {:?} received\n",
+                    op
+                );
+                reject_request(
+                    pending_error_report,
+                    request_id,
+                    MigrationResult::UnsupportedOperationError,
+                )
+            }
+        }
+        DataStatusOperation::GetTDReport => {
+            decode_and_dispatch!(ReportInfo, |info| WaitForRequestResponse::GetTdReport(info))
+        }
+        DataStatusOperation::EnableLogArea => {
+            decode_and_dispatch!(EnableLogAreaInfo, |info| {
+                WaitForRequestResponse::EnableLogArea(info)
+            })
+        }
+        DataStatusOperation::GetMigtdData => {
+            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+            {
+                decode_and_dispatch!(MigtdDataInfo, |info| WaitForRequestResponse::GetMigtdData(
+                    info
+                ))
+            }
+            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
+            {
+                log_request_error!(
+                    request_id,
+                    "wait_for_request: unsupported operation {:?} received\n",
+                    op
+                );
+                reject_request(
+                    pending_error_report,
+                    request_id,
+                    MigrationResult::UnsupportedOperationError,
+                )
+            }
+        }
+    }
+}
+
+#[cfg(feature = "vmcall-raw")]
 pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
     let mut reqbufferhdr = RequestDataBufferHeader {
         datastatus: 0,
@@ -281,7 +482,8 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
         },
     )?;
 
-    poll_fn(|_cx| {
+    let mut pending_error_report: Option<(u64, MigrationResult)> = None;
+    let result = poll_fn(|_cx| {
         if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
             VMCALL_SERVICE_FLAG.store(false, Ordering::SeqCst);
         } else {
@@ -292,169 +494,21 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
             private_buffer
         } else {
             log::error!("wait_for_request: copy_to_private_shadow failure\n");
-            return Poll::Pending
+            return Poll::Ready(Err(MigrationResult::OutOfResource));
         };
 
-        reqbufferhdr = process_buffer(data_buffer);
-        let data_status = reqbufferhdr.datastatus;
-        let data_length = reqbufferhdr.length;
-        if (data_status == 0) && (data_length == 0) {
-            return Poll::Pending;
-        }
-        let data_status_bytes = &data_status.to_le_bytes();
-        if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
-            log::error!("wait_for_request: data_status byte[0] failure\n");
-            return Poll::Pending;
-        }
-
-        let operation: u8 = data_status_bytes[1];
-        log::trace!("wait_for_request: Received operation {} with data length {}\n", operation, data_length);
-        if operation == DataStatusOperation::StartMigration as u8 {
-            // data_length should be MigtdMigrationInformation
-            let expected_datalength = size_of::<MigtdMigrationInformation>();
-            if data_length != expected_datalength as u32 {
-                if data_length >= size_of::<u64>() as u32 {
-                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    log::error!(migration_request_id = mig_request_id; "wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
-                } else {
-                    log::error!("wait_for_request: StartMigration operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
-                }
-                return Poll::Pending;
-            }
-            let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-            let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-
-            let wfr_info = MigtdMigrationInformation {
-                mig_request_id,
-                migration_source: slice[8],
-                _pad: slice[9..16].try_into().unwrap(),
-                target_td_uuid: parse_uuid(&slice[16..48]),
-                binding_handle: u64::from_le_bytes(slice[48..56].try_into().unwrap()),
-            };
-
-            let wfr_info = MigrationInformation { mig_info: wfr_info };
-
-            try_accept_request(mig_request_id, WaitForRequestResponse::StartMigration(wfr_info))
-        } else if operation == DataStatusOperation::StartRebinding as u8 {
-            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-            match RebindingInfo::read_from_bytes(&data_buffer[reqbufferhdrlen..]) {
-                Some(rebinding_info) => {
-                    let req_id = rebinding_info.mig_request_id;
-                    try_accept_request(req_id, WaitForRequestResponse::StartRebinding(rebinding_info))
-                }
-                None => {
-                    if data_length >= size_of::<u64>() as u32 {
-                        let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                        let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                        log::error!(migration_request_id = mig_request_id; "wait_for_request: StartRebinding operation incorrect data received\n");
-                    } else {
-                        log::error!("wait_for_request: StartRebinding operation incorrect data received\n");
-                    }
-                    Poll::Pending
-                }
-            }
-            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
-            {
-                log::debug!("wait_for_request: invalid operation StartRebinding received\n");
-                Poll::Pending
-            }
-        } else if operation == DataStatusOperation::GetTDReport as u8 {
-            let mut reportdata: [u8; 64] = [0; 64];
-            let mut mig_request_id: u64 = 0;
-            // data length should MigRequestID (+ optional REPORTDATA)
-            if data_length != size_of_val(&mig_request_id) as u32
-                && data_length
-                    != size_of::<ReportInfo>() as u32
-            {
-                if data_length >= size_of::<u64>() as u32 {
-                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    log::error!(migration_request_id = mig_request_id; "wait_for_request: GetReportData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
-                } else {
-                    log::error!("wait_for_request: GetReportData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
-                }
-                return Poll::Pending;
-            }
-            let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-            mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-
-            if data_length == (size_of_val(&mig_request_id) + TD_REPORT_ADDITIONAL_DATA_SIZE) as u32
-            {
-                reportdata = slice[8..72].try_into().unwrap();
-            }
-
-            let wfr_info = ReportInfo {
-                mig_request_id,
-                reportdata,
-            };
-
-            try_accept_request(mig_request_id, WaitForRequestResponse::GetTdReport(wfr_info))
-        } else if operation == DataStatusOperation::EnableLogArea as u8 {
-            let expected_datalength = size_of::<EnableLogAreaInfo>();
-            if data_length != expected_datalength as u32 {
-                if data_length >= size_of::<u64>() as u32 {
-                    let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                    let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                    log::error!(migration_request_id = mig_request_id; "wait_for_request: EnableLogArea operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
-                } else {
-                    log::error!("wait_for_request: EnableLogArea operation incorrect data length - expected {} actual {}\n", expected_datalength, data_length);
-                }
-                return Poll::Pending;
-            }
-
-            let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-            let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-
-            let wfr_info = EnableLogAreaInfo {
-                mig_request_id,
-                log_max_level: slice[8],
-                reserved: slice[9..16].try_into().unwrap(),
-            };
-
-            try_accept_request(mig_request_id, WaitForRequestResponse::EnableLogArea(wfr_info))
-        } else if operation == DataStatusOperation::GetMigtdData as u8 {
-            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-            {
-                let mut reportdata: [u8; 64] = [0; 64];
-                let mut mig_request_id: u64 = 0;
-                // data length should MigRequestID (+ optional REPORTDATA)
-                if data_length != size_of::<MigtdDataInfo>() as u32 && data_length != size_of_val(&mig_request_id) as u32
-                {
-                    if data_length >= size_of::<u64>() as u32 {
-                        let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                        let mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-                        log::error!(migration_request_id = mig_request_id; "wait_for_request: GetMigtdData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
-                    } else {
-                        log::error!("wait_for_request: GetMigtdData operation incorrect data length - expected {} actual {}\n", size_of::<ReportInfo>(), data_length);
-                    }
-                    return Poll::Pending;
-                }
-                let slice = &data_buffer[reqbufferhdrlen..reqbufferhdrlen + data_length as usize];
-                mig_request_id = u64::from_le_bytes(slice[0..8].try_into().unwrap());
-
-                if data_length == (size_of_val(&mig_request_id) + TD_REPORT_ADDITIONAL_DATA_SIZE) as u32
-                {
-                    reportdata = slice[8..72].try_into().unwrap();
-                }
-
-                let wfr_info = MigtdDataInfo {
-                    mig_request_id,
-                    reportdata,
-                };
-
-                try_accept_request(mig_request_id, WaitForRequestResponse::GetMigtdData(wfr_info))
-            }
-            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
-            {
-                log::debug!("wait_for_request: invalid operation GetMigtdData received\n");
-                Poll::Pending
-            }
-        } else {
-            Poll::Pending
-        }
+        parse_request(data_buffer, reqbufferhdrlen, &mut pending_error_report)
     })
-    .await
+    .await;
+
+    if let Err(status) = result {
+        if let Some((request_id, report_status_code)) = pending_error_report.take() {
+            report_wait_for_request_error(request_id, report_status_code).await;
+        }
+        return Err(status);
+    }
+
+    result
 }
 
 #[cfg(not(feature = "vmcall-raw"))]
