@@ -5,7 +5,7 @@
 IGVM_FILE ?= target/release/migtd.igvm
 LOG_LEVEL ?= trace
 # Common features for IGVM images
-IGVM_FEATURES_BASE ?= vmcall-raw,stack-guard,main,vmcall-interrupt,oneshot-apic
+IGVM_FEATURES_BASE ?= vmcall-raw,stack-guard,main,vmcall-interrupt,oneshot-apic,spdm_attestation
 IGVM_FEATURES_GET_QUOTE ?= $(IGVM_FEATURES_BASE),igvm-attest
 # test_disable_ra_and_accept_all feature disables remote attestation and skips policy verification, bypassing RATLS security
 # test feature skips the compilation of attestation library when the remote attestation is not enabled or needed
@@ -74,7 +74,7 @@ build-igvm:
 build-igvm-all: pre-build build-igvm generate-hash
 
 build-igvm-reject:
-	cd ../../ && cargo image --no-default-features --features $(IGVM_FEATURES_GET_QUOTE) --log-level $(LOG_LEVEL) \
+	cd ../../ && cargo image --no-default-features --features $(IGVM_FEATURES_BASE) --log-level $(LOG_LEVEL) \
 	 --image-format igvm --output $(IGVM_FILE) --debug
 
 build-igvm-reject-all: pre-build build-igvm-reject generate-hash

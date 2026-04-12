@@ -80,12 +80,112 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}=== MigTD Custom Policy Builder ===${NC}"
 echo
 
+print_error() {
+    printf '%b\n' "${RED}Error: $1${NC}" >&2
+}
+
+print_hint_header() {
+    printf '%b\n' "${YELLOW}$1${NC}" >&2
+}
+
+print_hint_lines() {
+    local hint
+    for hint in "$@"; do
+        printf '  %s\n' "$hint" >&2
+    done
+}
+
+require_cmd() {
+    local cmd="$1"
+    local error_message="$2"
+    local hint_header="$3"
+    shift 3
+
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        print_error "$error_message"
+        print_hint_header "$hint_header"
+        print_hint_lines "$@"
+        exit 127
+    fi
+}
+
+require_pkg_config_module() {
+    local module="$1"
+    local error_message="$2"
+    local hint_header="$3"
+    shift 3
+
+    if ! pkg-config --exists "$module" >/dev/null 2>&1; then
+        print_error "$error_message"
+        print_hint_header "$hint_header"
+        print_hint_lines "$@"
+        exit 127
+    fi
+}
+
 # Default paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_MATERIAL_DIR="$PROJECT_ROOT/config/AzCVMEmu"
 OUTPUT_DIR="$PROJECT_ROOT/config/AzCVMEmu"
 TEMP_DIR=$(mktemp -d)
 TOOLS_DIR="$PROJECT_ROOT/target/release"
+AZCVM_EXTRACT_REPORT_LOCAL_BIN="$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report"
+AZCVM_EXTRACT_REPORT_WORKSPACE_BIN="$TOOLS_DIR/azcvm-extract-report"
+AZCVM_EXTRACT_REPORT_BIN=""
+
+# Ensure cargo is available (try loading rustup env first).
+if ! command -v cargo >/dev/null 2>&1; then
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck source=/dev/null
+        . "$HOME/.cargo/env"
+    fi
+fi
+
+require_cmd \
+    cargo \
+    "cargo not found in PATH." \
+    "Install Rust toolchain and reload your shell (platform-specific):" \
+    "Cross-platform (recommended): https://rustup.rs" \
+    "Debian/Ubuntu: sudo apt install -y rustup" \
+    "rustup default stable" \
+    "source \"\$HOME/.cargo/env\"" \
+    "./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report"
+
+require_cmd \
+    pkg-config \
+    "pkg-config not found in PATH." \
+    "Install required build dependencies (platform-specific):" \
+    "Debian/Ubuntu: sudo apt install -y pkg-config libtss2-dev"
+
+require_pkg_config_module \
+    tss2-sys \
+    "TPM2 system library 'tss2-sys' not found." \
+    "Install required TPM2 development package (platform-specific):" \
+    "Debian/Ubuntu: sudo apt install -y libtss2-dev"
+
+require_cmd \
+    nasm \
+    "nasm not found in PATH." \
+    "Install required assembler dependency (platform-specific):" \
+    "Debian/Ubuntu: sudo apt install -y nasm"
+
+require_cmd \
+    unzip \
+    "unzip not found in PATH." \
+    "Install required archive extraction tool (platform-specific):" \
+    "Debian/Ubuntu: sudo apt install -y unzip"
+
+require_cmd \
+    autoreconf \
+    "autoreconf not found in PATH." \
+    "Install required autotools dependencies (platform-specific):" \
+    "Debian/Ubuntu: sudo apt install -y autoconf automake libtool"
+
+require_cmd \
+    ocamlbuild \
+    "ocamlbuild not found in PATH." \
+    "Install required OCaml build tools (platform-specific):" \
+    "Debian/Ubuntu: sudo apt install -y ocaml ocamlbuild"
 
 # Input Files
 POLICY_DATA_RAW="$SOURCE_MATERIAL_DIR/policy_v2_raw.json"
@@ -376,21 +476,40 @@ echo -e "${BLUE}=== Step 1: Building Tools ===${NC}"
 cd "$PROJECT_ROOT"
 
 echo "Building azcvm-extract-report (from deps/td-shim-AzCVMEmu)..."
-(cd deps/td-shim-AzCVMEmu/azcvm-extract-report && cargo build --release) 2>&1 | grep -E "(Compiling|Finished|error)" || true
+if ! (cd deps/td-shim-AzCVMEmu/azcvm-extract-report && cargo build --release); then
+    echo -e "${RED}Error: Failed to build azcvm-extract-report${NC}" >&2
+    exit 1
+fi
 
 echo "Building json-signer..."
-cargo build --release -p json-signer 2>&1 | grep -E "(Compiling|Finished|error)" || true
+if ! cargo build --release -p json-signer; then
+    echo -e "${RED}Error: Failed to build json-signer${NC}" >&2
+    exit 1
+fi
 
 echo "Building servtd-collateral-generator..."
-cargo build --release -p servtd-collateral-generator 2>&1 | grep -E "(Compiling|Finished|error)" || true
+if ! cargo build --release -p servtd-collateral-generator; then
+    echo -e "${RED}Error: Failed to build servtd-collateral-generator${NC}" >&2
+    exit 1
+fi
 
 echo "Building migtd-policy-generator..."
-cargo build --release -p migtd-policy-generator 2>&1 | grep -E "(Compiling|Finished|error)" || true
+if ! cargo build --release -p migtd-policy-generator; then
+    echo -e "${RED}Error: Failed to build migtd-policy-generator${NC}" >&2
+    exit 1
+fi
 
 # Verify tools exist
-# Note: azcvm-extract-report is in a different location
-if [ ! -f "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" ]; then
-    echo -e "${RED}Error: Tool 'azcvm-extract-report' not found${NC}" >&2
+# azcvm-extract-report may be emitted either to the local crate target/ or the
+# workspace target/ when CARGO_TARGET_DIR is set.
+if [ -f "$AZCVM_EXTRACT_REPORT_LOCAL_BIN" ]; then
+    AZCVM_EXTRACT_REPORT_BIN="$AZCVM_EXTRACT_REPORT_LOCAL_BIN"
+elif [ -f "$AZCVM_EXTRACT_REPORT_WORKSPACE_BIN" ]; then
+    AZCVM_EXTRACT_REPORT_BIN="$AZCVM_EXTRACT_REPORT_WORKSPACE_BIN"
+else
+    echo -e "${RED}Error: Tool 'azcvm-extract-report' not found at either:${NC}" >&2
+    echo -e "${RED}  - $AZCVM_EXTRACT_REPORT_LOCAL_BIN${NC}" >&2
+    echo -e "${RED}  - $AZCVM_EXTRACT_REPORT_WORKSPACE_BIN${NC}" >&2
     exit 1
 fi
 
@@ -424,7 +543,7 @@ if [ "$USE_MOCK_REPORT" = true ]; then
         export MOCK_QUOTE_FILE
     fi
 
-    "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" \
+    "$AZCVM_EXTRACT_REPORT_BIN" \
         --mock-report \
         --output-json "migtd_report_data.json"
 
@@ -436,7 +555,7 @@ if [ "$USE_MOCK_REPORT" = true ]; then
 else
     # Use sudo to access vTPM device (requires /dev/tpmrm0 access)
     echo "Note: Using sudo to access vTPM device..."
-    sudo "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report"
+    sudo "$AZCVM_EXTRACT_REPORT_BIN"
 
     # Report extractor creates migtd_report_data.json in current directory
     if [ ! -f "migtd_report_data.json" ]; then
