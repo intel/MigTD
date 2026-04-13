@@ -280,6 +280,9 @@ pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u
         #[cfg(test)]
         {
             let logareavector = LOGAREAPTR.lock();
+            if logareavector.is_empty() {
+                return Err(MigrationResult::OutOfResource);
+            }
             let data_buffer = logareavector[0] as *mut u8;
             let data_buffer = unsafe { core::slice::from_raw_parts_mut(data_buffer, PAGE_SIZE) };
 
@@ -460,6 +463,9 @@ pub fn entrylog(msg: &Vec<u8>, loglevel: Level, request_id: u64) {
                 logareavector = PROVISIONAL_LOGAREAPTR.lock();
             } else {
                 logareavector = LOGAREAPTR.lock();
+            }
+            if logareavector.is_empty() {
+                return;
             }
             let data_buffer = logareavector[0] as *mut u8;
             let data_buffer =
@@ -654,8 +660,14 @@ pub fn init_vmm_logger() -> core::result::Result<(), SetLoggerError> {
 mod test {
     use super::*;
 
+    /// All logging tests share global state (LOGAREAPTR, LOGGING_INFORMATION, the
+    /// installed logger). Serialize them to prevent data races where one test
+    /// clears LOGAREAPTR while another test's logger callback reads from it.
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_create_logarea() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -706,6 +718,7 @@ mod test {
 
     #[tokio::test]
     async fn test_enable_logarea() {
+        let _guard = TEST_LOCK.lock().unwrap();
         let mut data: Vec<u8> = Vec::new();
         let log_max_level: u8 = 5;
 
@@ -750,6 +763,7 @@ mod test {
 
     #[tokio::test]
     async fn test_provisional_entrylog() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -832,6 +846,7 @@ mod test {
 
     #[tokio::test]
     async fn test_entrylog() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -920,6 +935,7 @@ mod test {
 
     #[tokio::test]
     async fn test_provisional_and_entrylog_combined() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -1064,6 +1080,7 @@ mod test {
 
     #[tokio::test]
     async fn test_entrylog_message_max_buffersize() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -1124,6 +1141,7 @@ mod test {
 
     #[tokio::test]
     async fn test_entrylog_message_greaterthan_buffersize() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -1166,6 +1184,7 @@ mod test {
 
     #[tokio::test]
     async fn test_entrylog_message_with_headerlen_left_at_bottom() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -1264,6 +1283,7 @@ mod test {
 
     #[tokio::test]
     async fn test_entrylog_message_with_lessthan_headerlen_at_bottom() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -1361,6 +1381,7 @@ mod test {
 
     #[tokio::test]
     async fn test_entrylog_message_with_startoffset_at_invalid_message() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // Reset the global state for testing
         LOGGING_INFORMATION.num_vcpus.store(0, Ordering::SeqCst);
         LOGGING_INFORMATION
@@ -1458,6 +1479,7 @@ mod test {
 
     #[tokio::test]
     async fn test_log_info() {
+        let _guard = TEST_LOCK.lock().unwrap();
         // cargo test --features vmcall-raw --lib migration::logging::test::test_log_info -- --nocapture
 
         // Reset the global state for testing
