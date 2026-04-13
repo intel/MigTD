@@ -1340,4 +1340,245 @@ mod test {
         let result = cal_mig_version(true, &local_info, &remote_info);
         assert!(matches!(result, Ok(6)));
     }
+
+    // ---- parse_request-level tests: simulate host data buffers ----
+
+    #[cfg(feature = "vmcall-raw")]
+    mod parse_request_tests {
+        use super::super::{parse_request, REQUESTS};
+        use crate::migration::{
+            data::{RequestDataBufferHeader, WaitForRequestResponse},
+            EnableLogAreaInfo, MigrationResult, MigtdMigrationInformation, ReportInfo,
+        };
+        use core::mem::size_of;
+        use core::task::Poll;
+
+        const HDR_LEN: usize = size_of::<RequestDataBufferHeader>();
+
+        /// Build a raw request buffer: header (datastatus + length) + payload.
+        fn build_request_buffer(operation: u8, payload: &[u8]) -> Vec<u8> {
+            let mut datastatus = [0u8; 8];
+            datastatus[0] = super::super::TDX_VMCALL_VMM_SUCCESS;
+            datastatus[1] = operation;
+            let length = payload.len() as u32;
+            let mut buf = Vec::with_capacity(HDR_LEN + payload.len());
+            buf.extend_from_slice(&datastatus);
+            buf.extend_from_slice(&length.to_le_bytes());
+            buf.extend_from_slice(payload);
+            buf
+        }
+
+        fn build_raw_buffer(datastatus: u64, length: u32, payload: &[u8]) -> Vec<u8> {
+            let mut buf = Vec::with_capacity(HDR_LEN + payload.len());
+            buf.extend_from_slice(&datastatus.to_le_bytes());
+            buf.extend_from_slice(&length.to_le_bytes());
+            buf.extend_from_slice(payload);
+            buf
+        }
+
+        fn build_migration_payload(request_id: u64, is_source: u8) -> Vec<u8> {
+            let mut payload = vec![0u8; size_of::<MigtdMigrationInformation>()];
+            payload[0..8].copy_from_slice(&request_id.to_le_bytes());
+            payload[8] = is_source;
+            payload
+        }
+
+        fn cleanup_request(request_id: u64) {
+            REQUESTS.lock().remove(&request_id);
+        }
+
+        #[test]
+        fn test_parse_empty_buffer_returns_pending() {
+            let buf = build_raw_buffer(0, 0, &[]);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(result, Poll::Pending));
+        }
+
+        #[test]
+        fn test_parse_vmm_failure_status() {
+            let mut buf = vec![0u8; HDR_LEN + 8];
+            buf[0] = 0; // NOT success
+            buf[1] = 1;
+            let length = 8u32;
+            buf[8..12].copy_from_slice(&length.to_le_bytes());
+            buf[12..20].copy_from_slice(&42u64.to_le_bytes());
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(MigrationResult::VmmInternalError))
+            ));
+            assert_eq!(pending, Some((42, MigrationResult::VmmInternalError)));
+        }
+
+        #[test]
+        fn test_parse_unknown_operation() {
+            let payload = 99u64.to_le_bytes();
+            let buf = build_request_buffer(255, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(MigrationResult::UnsupportedOperationError))
+            ));
+        }
+
+        #[test]
+        fn test_parse_start_migration_success() {
+            let request_id: u64 = 0xAA00_0000_0000_0001;
+            let payload = build_migration_payload(request_id, 1);
+            let buf = build_request_buffer(1, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            match result {
+                Poll::Ready(Ok(WaitForRequestResponse::StartMigration(info))) => {
+                    assert_eq!(info.mig_info.mig_request_id, request_id);
+                    assert_eq!(info.mig_info.migration_source, 1);
+                }
+                _ => panic!("Expected StartMigration, got unexpected variant"),
+            }
+            assert!(pending.is_none());
+            cleanup_request(request_id);
+        }
+
+        #[test]
+        fn test_parse_start_migration_truncated_payload() {
+            // Payload is too short and data_length != expected size
+            let buf = build_request_buffer(1, &[0u8; 8]);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(MigrationResult::InvalidParameter))
+            ));
+        }
+
+        #[test]
+        fn test_parse_start_migration_trailing_bytes_rejected() {
+            // Payload has correct data but data_length is too large (trailing bytes)
+            let request_id: u64 = 0xAA00_0000_0000_0099;
+            let mut payload = build_migration_payload(request_id, 1);
+            payload.extend_from_slice(&[0xFF; 8]); // trailing garbage
+            let buf = build_request_buffer(1, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            // read_from_bytes rejects because data_length != size_of::<MigtdMigrationInformation>()
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(MigrationResult::InvalidParameter))
+            ));
+        }
+
+        #[test]
+        fn test_parse_get_td_report_full() {
+            let request_id: u64 = 0xBB00_0000_0000_0002;
+            let mut payload = vec![0u8; size_of::<ReportInfo>()];
+            payload[0..8].copy_from_slice(&request_id.to_le_bytes());
+            payload[8..72].fill(0xCC);
+            let buf = build_request_buffer(3, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            match result {
+                Poll::Ready(Ok(WaitForRequestResponse::GetTdReport(info))) => {
+                    assert_eq!(info.mig_request_id, request_id);
+                    assert_eq!(info.reportdata[0], 0xCC);
+                }
+                _ => panic!("Expected GetTdReport, got unexpected variant"),
+            }
+            cleanup_request(request_id);
+        }
+
+        #[test]
+        fn test_parse_get_td_report_request_id_only() {
+            let request_id: u64 = 0xCC00_0000_0000_0003;
+            let payload = request_id.to_le_bytes();
+            let buf = build_request_buffer(3, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            match result {
+                Poll::Ready(Ok(WaitForRequestResponse::GetTdReport(info))) => {
+                    assert_eq!(info.mig_request_id, request_id);
+                    assert_eq!(info.reportdata, [0u8; 64]);
+                }
+                _ => panic!("Expected GetTdReport with zero reportdata, got unexpected variant"),
+            }
+            cleanup_request(request_id);
+        }
+
+        #[test]
+        fn test_parse_get_td_report_wrong_size_rejected() {
+            // 16 bytes is neither 8 nor 72 → read_from_bytes rejects
+            let buf = build_request_buffer(3, &[0u8; 16]);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(MigrationResult::InvalidParameter))
+            ));
+        }
+
+        #[test]
+        fn test_parse_enable_log_area_success() {
+            let request_id: u64 = 0xDD00_0000_0000_0004;
+            let mut payload = vec![0u8; size_of::<EnableLogAreaInfo>()];
+            payload[0..8].copy_from_slice(&request_id.to_le_bytes());
+            payload[8] = 4;
+            let buf = build_request_buffer(4, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            match result {
+                Poll::Ready(Ok(WaitForRequestResponse::EnableLogArea(info))) => {
+                    assert_eq!(info.mig_request_id, request_id);
+                    assert_eq!(info.log_max_level, 4);
+                }
+                _ => panic!("Expected EnableLogArea, got unexpected variant"),
+            }
+            cleanup_request(request_id);
+        }
+
+        #[test]
+        fn test_parse_enable_log_area_truncated() {
+            let buf = build_request_buffer(4, &[0u8; 4]);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(MigrationResult::InvalidParameter))
+            ));
+        }
+
+        #[test]
+        fn test_parse_duplicate_request_returns_pending() {
+            let request_id: u64 = 0xEE00_0000_0000_0005;
+            let payload = build_migration_payload(request_id, 0);
+            let buf = build_request_buffer(1, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(
+                result,
+                Poll::Ready(Ok(WaitForRequestResponse::StartMigration(_)))
+            ));
+            // Second call: duplicate → Pending
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(result, Poll::Pending));
+            cleanup_request(request_id);
+        }
+
+        #[test]
+        fn test_parse_payload_out_of_bounds() {
+            let mut buf = vec![0u8; HDR_LEN + 8];
+            buf[0] = super::super::TDX_VMCALL_VMM_SUCCESS;
+            buf[1] = 1;
+            let fake_length = 100u32;
+            buf[8..12].copy_from_slice(&fake_length.to_le_bytes());
+            buf[12..20].copy_from_slice(&42u64.to_le_bytes());
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(MigrationResult::InvalidParameter))
+            ));
+        }
+    }
 }
