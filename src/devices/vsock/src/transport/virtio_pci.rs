@@ -242,9 +242,10 @@ impl VirtioVsock {
                 return Err(VsockTransportError::InvalidVsockPacket);
             }
 
-            if self.dma_record.contains_key(&pkt[1].addr) {
+            if let Some(record) = self.dma_record.get(&pkt[1].addr) {
+                let safe_len = core::cmp::min(pkt[1].len as usize, record.dma_size);
                 let dma_buf = unsafe {
-                    &*slice_from_raw_parts(pkt[1].addr as *const u8, pkt[1].len as usize)
+                    &*slice_from_raw_parts(pkt[1].addr as *const u8, safe_len)
                 };
 
                 data_buf.extend_from_slice(dma_buf);
