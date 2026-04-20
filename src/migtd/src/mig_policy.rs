@@ -89,7 +89,6 @@ mod v2 {
     const SERVTD_TYPE_MIGTD: u16 = 0;
 
     lazy_static! {
-        pub static ref LOCAL_TCB_INFO: Once<PolicyEvaluationInfo> = Once::new();
         pub static ref VERIFIED_POLICY: Once<VerifiedPolicy<'static>> = Once::new();
     }
 
@@ -112,27 +111,16 @@ mod v2 {
             .map(|p| p.get_version().to_string())
     }
 
-    /// Initialize the global local TCB info once
-    pub fn init_tcb_info() -> Result<(), PolicyError> {
-        // Store in the global static
-        LOCAL_TCB_INFO
-            .try_call_once(|| {
-                let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-                let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
-                    .map_err(|_| PolicyError::GetTdxReport)?;
-                let quote = attestation::get_quote(tdx_report.as_bytes())
-                    .map_err(|_| PolicyError::QuoteGeneration)?;
-                let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
-                setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
-            })
-            .map(|_| ())
-    }
-
+    /// Generate a fresh local TCB evaluation info on demand by creating a
+    /// quote and verifying it against the policy collaterals.
     pub fn get_local_tcb_evaluation_info() -> Result<PolicyEvaluationInfo, PolicyError> {
-        LOCAL_TCB_INFO
-            .get()
-            .cloned()
-            .ok_or(PolicyError::InvalidParameter)
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
+            .map_err(|_| PolicyError::GetTdxReport)?;
+        let quote = attestation::get_quote(tdx_report.as_bytes())
+            .map_err(|_| PolicyError::QuoteGeneration)?;
+        let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
+        setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
     }
 
     /// Get reference to the global verified policy
