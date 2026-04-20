@@ -10,28 +10,11 @@ use core::sync::atomic::AtomicBool;
 
 use crate::{VmcallRawAddr, VmcallRawError};
 
-use alloc::{collections::BTreeMap, collections::VecDeque, vec::Vec};
+use alloc::{collections::VecDeque, vec::Vec};
 use async_io::{AsyncRead, AsyncWrite};
-use lazy_static::lazy_static;
 use rust_std_stub::io;
-use spin::Mutex;
 
 type Result<T = ()> = core::result::Result<T, VmcallRawError>;
-
-lazy_static! {
-    pub(crate) static ref CONNECTION_PKT_QUEUES: Mutex<BTreeMap<VmcallRawAddr, VecDeque<Vec<u8>>>> =
-        Mutex::new(BTreeMap::new());
-}
-
-fn add_stream_to_connection_map(stream: &VmcallRaw) {
-    CONNECTION_PKT_QUEUES
-        .lock()
-        .insert(stream.addr, VecDeque::new());
-}
-
-fn remove_stream_from_connection_map(stream: &VmcallRaw) {
-    CONNECTION_PKT_QUEUES.lock().remove(&stream.addr);
-}
 
 pub struct VmcallRaw {
     pub addr: VmcallRawAddr,
@@ -65,7 +48,6 @@ impl VmcallRaw {
     }
 
     pub async fn connect(&mut self) -> Result {
-        add_stream_to_connection_map(self);
         let _ = vmcall_raw_transport_init();
         VMCALL_MIG_CONTEXT_FLAGS
             .lock()
@@ -115,7 +97,6 @@ impl VmcallRaw {
     }
 
     async fn reset(&mut self) -> Result {
-        remove_stream_from_connection_map(self);
         VMCALL_MIG_CONTEXT_FLAGS
             .lock()
             .remove(&self.addr.transport_context());
@@ -125,10 +106,7 @@ impl VmcallRaw {
     async fn recv_packet_connected(&mut self) -> Result<()> {
         let recv = vmcall_raw_transport_dequeue(self).await?;
 
-        if recv.len() > 0 {
-            let mut recv = vmcall_raw_transport_dequeue(self).await?;
-
-            recv.truncate(recv.len() as usize);
+        if !recv.is_empty() {
             self.data_queue.push_back(recv);
         }
 
