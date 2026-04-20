@@ -399,15 +399,6 @@ fn initialize_policy() -> String {
         );
     });
 
-    // Initialize and verify the migration policy
-    let _ = mig_policy::init_tcb_info().map_err(|e| {
-        log::error!("Failed to initialize migration TCB info: {:?}\n", e);
-        panic_with_guest_crash_reg_report(
-            MigrationResult::InvalidPolicyError as u64,
-            b"Failed to initialize migration TCB info",
-        );
-    });
-
     version.expect("Failed to initialize migration policy")
 }
 
