@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use super::event::*;
-use crate::stream::{VmcallRaw, CONNECTION_PKT_QUEUES};
+use crate::stream::VmcallRaw;
 use crate::{align_up, VmcallRawError, PAGE_SIZE};
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -26,39 +26,6 @@ lazy_static! {
         Mutex::new(BTreeMap::new());
 }
 const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
-
-fn push_stream_queues(stream: &VmcallRaw, buf: Vec<u8>) {
-    if buf.is_empty() {
-        return;
-    }
-
-    if let Some(stream_queue) = CONNECTION_PKT_QUEUES.lock().get_mut(&stream.addr) {
-        stream_queue.push_back(buf);
-    }
-}
-
-fn pop_stream_queues(stream: &VmcallRaw) -> Option<Vec<u8>> {
-    if let Some(stream_queue) = CONNECTION_PKT_QUEUES.lock().get_mut(&stream.addr) {
-        stream_queue.pop_front()
-    } else {
-        None
-    }
-}
-
-// Parse the packet data from the untrusted source.
-//
-// pkt = MigTD Communication Packet
-fn recv_packet(pkt: &[u8], pkt_len: usize, stream: &VmcallRaw) -> Result<(), ()> {
-    let data: Vec<u8> = pkt
-        .get(..pkt_len)
-        .expect("pkt_len exceeds buffer length")
-        .to_vec();
-
-    assert_eq!(data.len(), pkt_len);
-    push_stream_queues(stream, data);
-
-    Ok(())
-}
 
 pub fn vmcall_raw_transport_init() -> Result<(), VmcallRawError> {
     register_callback(VMCALL_VECTOR, vmcall_raw_intr_notification)?;
@@ -96,10 +63,6 @@ pub async fn vmcall_raw_transport_enqueue(
 }
 
 pub async fn vmcall_raw_transport_dequeue(stream: &VmcallRaw) -> Result<Vec<u8>, VmcallRawError> {
-    if let Some(data) = pop_stream_queues(stream) {
-        return Ok(data);
-    }
-
     let response_buffer_page_count = MAX_VMCALL_RAW_STREAM_MTU / PAGE_SIZE;
     let mut response_buffer =
         SharedMemory::new(response_buffer_page_count).ok_or(VmcallRawError::Illegal)?;
@@ -202,13 +165,12 @@ async fn vmcall_service_migtd_receive(
             return Poll::Pending;
         }
 
-        recv_packet(&response_buf, data_length as usize, stream)?;
+        let data = match response_buf.get(..data_length as usize) {
+            Some(slice) => slice.to_vec(),
+            None => return Poll::Ready(Err(VmcallRawError::TdVmcallErr)),
+        };
 
-        //push a placeholder vector to maintain return type of this function
-        let mut placeholder_stub: Vec<u8> = Vec::new();
-        placeholder_stub.push(1);
-
-        Poll::Ready(Some(placeholder_stub).ok_or(VmcallRawError::Illegal))
+        Poll::Ready(Ok(data))
     })
     .await
 }
