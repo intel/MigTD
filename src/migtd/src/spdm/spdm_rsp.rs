@@ -487,7 +487,8 @@ pub fn handle_exchange_mig_attest_info_req(
     #[cfg(feature = "policy_v2")]
     let mig_policy_hash_src = reader
         .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?
+        .to_vec();
     #[cfg(not(feature = "policy_v2"))]
     let _mig_policy_hash_src = reader
         .take(vdm_element.length as usize)
@@ -546,7 +547,7 @@ pub fn handle_exchange_mig_attest_info_req(
         rsp_verify_peer_attestation_v2(
             &quote_src_vec,
             &event_log_src_vec,
-            mig_policy_hash_src,
+            &mig_policy_hash_src,
             &remote_policy,
             &th1,
             responder_context,
