@@ -1,13 +1,7 @@
 on:
-  push:
-    paths-ignore:
-      - "**.md"
-  pull_request:
-    paths-ignore:
-      - "**.md"
   workflow_dispatch:
 
-name: Integration Test on TDX Server
+name: Integration Test on TDX Server (Optional/Broken)
 
 env:
   AS: nasm
@@ -37,7 +31,7 @@ jobs:
       # - name: Install tools for sgx lib
       #   run:  sudo dnf group install 'Development Tools' | sudo dnf --enablerepo=powertools install ocaml ocaml-ocamlbuild wget rpm-build pkgcon
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
           egress-policy: audit
 
@@ -95,7 +89,7 @@ jobs:
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
           egress-policy: audit
 

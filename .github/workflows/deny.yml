@@ -26,7 +26,7 @@ jobs:
 
     steps:
     - name: Harden the runner (Audit all outbound calls)
-      uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+      uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
       with:
         egress-policy: audit
 
@@ -34,6 +34,6 @@ jobs:
       with:
         submodules: recursive
     - run: bash sh_script/preparation.sh
-    - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+    - uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb # v2.0.17
       with:
         command: check ${{ matrix.checks }}

@@ -487,9 +487,43 @@ pub fn handle_exchange_mig_attest_info_req(
     #[cfg(feature = "policy_v2")]
     let mig_policy_hash_src = reader
         .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?
+        .to_vec();
     #[cfg(not(feature = "policy_v2"))]
     let _mig_policy_hash_src = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+
+    // SERVTD_EXT from src
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    let servtd_ext_bytes = reader
+        .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+
+    // Store SERVTD_EXT in ResponderContextEx for later use during MSK exchange
+    #[cfg(feature = "policy_v2")]
+    unsafe {
+        let spdm_responder_ex = upcast_mut(responder_context);
+        spdm_responder_ex.servtd_ext = ServtdExt::read_from_bytes(servtd_ext_bytes);
+    };
+
+    // Init TDINFO from src (used for SERVTD_HASH verification)
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    if vdm_element.element_type != VdmMessageElementType::TdReportInit {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    let _td_report_init = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
@@ -513,7 +547,7 @@ pub fn handle_exchange_mig_attest_info_req(
         rsp_verify_peer_attestation_v2(
             &quote_src_vec,
             &event_log_src_vec,
-            mig_policy_hash_src,
+            &mig_policy_hash_src,
             &remote_policy,
             &th1,
             responder_context,
@@ -784,6 +818,19 @@ pub fn handle_exchange_mig_info_req(
         &responder_app_context.migration_info,
         &remote_information.key,
     )?;
+
+    // Write APPROVED_SERVTD_EXT_HASH if SERVTD_EXT was received during attestation
+    #[cfg(feature = "policy_v2")]
+    {
+        let servtd_ext = unsafe {
+            let spdm_responder_ex = upcast_mut(responder_context);
+            spdm_responder_ex.servtd_ext
+        };
+        if let Some(ext) = servtd_ext {
+            write_approved_servtd_ext_hash(&ext.calculate_approved_servtd_ext_hash()?)?;
+        }
+    }
+
     log::info!("Set MSK and report status\n");
 
     let min_import_version = exchange_information.min_ver;
@@ -1052,16 +1099,17 @@ pub fn handle_exchange_rebind_attest_info_req(
         let remote_policy = pre_session_data
             .get(4..4 + remote_policy_size)
             .ok_or(MigrationResult::InvalidPolicyError)?;
-        let init_policy_offset = 4 + remote_policy_size;
-        let init_policy_size = u32::from_le_bytes(
+        // Per GHCI 1.5: second item in pre_session_data is init_tdinfo (was init_policy)
+        let init_tdinfo_offset = 4 + remote_policy_size;
+        let init_tdinfo_size = u32::from_le_bytes(
             pre_session_data
-                .get(init_policy_offset..4 + init_policy_offset)
+                .get(init_tdinfo_offset..4 + init_tdinfo_offset)
                 .ok_or(MigrationResult::InvalidPolicyError)?
                 .try_into()
                 .unwrap(),
         ) as usize;
-        let init_policy = pre_session_data
-            .get(init_policy_offset + 4..init_policy_offset + 4 + init_policy_size)
+        let _init_tdinfo_from_pre_session = pre_session_data
+            .get(init_tdinfo_offset + 4..init_tdinfo_offset + 4 + init_tdinfo_size)
             .ok_or(MigrationResult::InvalidPolicyError)?;
 
         let remote_policy_hash =
@@ -1073,12 +1121,12 @@ pub fn handle_exchange_rebind_attest_info_req(
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
-        let mig_policy_init_hash =
-            digest_sha384(init_policy).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
-        if mig_policy_init_hash_src != mig_policy_init_hash.as_slice() {
-            error!(
-                "The received mig policy init hash does not match the expected init policy hash!\n"
-            );
+        // Per GHCI 1.5: init_policy_hash is mrowner from TDINFO — compare directly
+        let mrowner = td_report_init_vec
+            .get(112..160)
+            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        if mig_policy_init_hash_src != mrowner {
+            error!("The received mig policy init hash does not match mrowner from init tdinfo!\n");
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
@@ -1086,9 +1134,8 @@ pub fn handle_exchange_rebind_attest_info_req(
             &td_report_src_vec,
             &event_log_src_vec,
             remote_policy,
-            init_policy,
-            &event_log_init_vec,
             &td_report_init_vec,
+            &event_log_init_vec,
             &servtd_ext_vec,
         );
         if let Err(e) = &policy_check_result {
