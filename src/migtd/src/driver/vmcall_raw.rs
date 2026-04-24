@@ -15,7 +15,7 @@ pub fn vmcall_raw_device_init() {
 }
 
 #[track_caller]
-pub fn panic_with_guest_crash_reg_report(errorcode: u64, msg: &[u8]) {
+pub fn panic_with_guest_crash_reg_report(errorcode: u64, msg: &[u8]) -> ! {
     #[cfg(not(feature = "vmcall-raw"))]
     let _ = errorcode;
     let location = core::panic::Location::caller();

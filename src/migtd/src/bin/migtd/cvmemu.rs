@@ -12,6 +12,7 @@ use std::process;
 
 use alloc::vec::Vec;
 use migtd;
+use migtd::driver::vmcall_raw::panic_with_guest_crash_reg_report;
 use migtd::migration::event;
 use migtd::migration::logging::{
     create_logarea, enable_logarea, init_vmm_logger, u8_to_levelfilter,
@@ -31,7 +32,10 @@ pub fn main() {
     // Initialize VMM logger (outputs to console via td-logger-emu in AzCVMEmu mode)
     let result = init_vmm_logger();
     if result.is_err() {
-        panic!("Failed to initialize VMM logger");
+        panic_with_guest_crash_reg_report(
+            MigrationResult::InitializationError as u64,
+            b"Failed to initialize VMM logger",
+        );
     }
 
     // Init internal heap

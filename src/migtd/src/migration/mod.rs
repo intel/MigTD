@@ -188,6 +188,7 @@ pub enum MigrationResult {
     VmmCanceled = 10,
     VmmInternalError = 11,
     UnsupportedOperationError = 12,
+    InitializationError = 0xFF,
 }
 
 impl TryFrom<u8> for MigrationResult {
@@ -208,6 +209,7 @@ impl TryFrom<u8> for MigrationResult {
             10 => Ok(MigrationResult::VmmCanceled),
             11 => Ok(MigrationResult::VmmInternalError),
             12 => Ok(MigrationResult::UnsupportedOperationError),
+            0xFF => Ok(MigrationResult::InitializationError),
             _ => Err(()),
         }
     }
