@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use super::vmcall_raw::panic_with_guest_crash_reg_report;
+use crate::migration::MigrationResult;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Once;
 use td_payload::arch::apic::*;
@@ -42,7 +43,10 @@ pub fn init_timer() {
         TSC_DEADLINE_ENABLED.store(false, Ordering::SeqCst);
         #[cfg(not(feature = "oneshot-apic"))]
         {
-            panic!("Please enable TSC deadline mode for TD");
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InitializationError as u64,
+                b"Please enable TSC deadline mode for TD",
+            );
         }
     }
 
@@ -122,7 +126,10 @@ fn set_timer_notification(vector: u8) {
     // Setup interrupt handler
     if register_interrupt_callback(vector as usize, InterruptCallback::new(timer_handler)).is_err()
     {
-        panic_with_guest_crash_reg_report(0xFF, b"Failed to set interrupt callback for timer");
+        panic_with_guest_crash_reg_report(
+            MigrationResult::InitializationError as u64,
+            b"Failed to set interrupt callback for timer",
+        );
     }
 }
 

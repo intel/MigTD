@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use crate::driver::vmcall_raw::panic_with_guest_crash_reg_report;
+use crate::migration::MigrationResult;
 use core::sync::atomic::{AtomicBool, Ordering};
 use td_payload::arch::apic::*;
 use td_payload::arch::idt::{register_interrupt_callback, InterruptCallback, InterruptStack};
@@ -22,7 +23,7 @@ pub fn register_callback() {
     .is_err()
     {
         panic_with_guest_crash_reg_report(
-            0xFF,
+            MigrationResult::InitializationError as u64,
             b"Failed to set interrupt callback for VMCALL_SERVICE",
         );
     }
