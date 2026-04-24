@@ -497,14 +497,16 @@ impl VirtioSerial {
                 .pop_used(&mut g2h, &mut h2g)?;
 
             for vq_buf in &h2g {
-                let control_msg = unsafe {
-                    core::slice::from_raw_parts(vq_buf.addr as *const u8, vq_buf.len as usize)
-                };
+                if let Some(record) = self.dma_allocation.get(&vq_buf.addr) {
+                    let safe_len = core::cmp::min(vq_buf.len as usize, record.dma_size);
+                    let control_msg =
+                        unsafe { core::slice::from_raw_parts(vq_buf.addr as *const u8, safe_len) };
 
-                self.handle_control_msg(control_msg)?;
+                    self.handle_control_msg(control_msg)?;
 
-                self.free_dma_memory(vq_buf.addr)
-                    .ok_or(VirtioSerialError::OutOfResource)?;
+                    self.free_dma_memory(vq_buf.addr)
+                        .ok_or(VirtioSerialError::OutOfResource)?;
+                }
             }
         }
 
@@ -766,15 +768,15 @@ impl VirtioSerial {
             if remaining == 0 {
                 return Err(VirtioSerialError::InvalidParameter);
             }
-            if self.dma_allocation.contains_key(&buffer.addr) {
-                let dma_buf =
-                    unsafe { from_raw_parts(buffer.addr as *const u8, buffer.len as usize) };
+            if let Some(record) = self.dma_allocation.get(&buffer.addr) {
+                let safe_len = core::cmp::min(buffer.len as usize, record.dma_size);
+                let dma_buf = unsafe { from_raw_parts(buffer.addr as *const u8, safe_len) };
 
                 let mut data_buf = Vec::new();
-                let used_len = core::cmp::min(len, buffer.len);
-                data_buf.extend_from_slice(&dma_buf[..used_len as usize]);
+                let used_len = core::cmp::min(core::cmp::min(len, buffer.len) as usize, safe_len);
+                data_buf.extend_from_slice(&dma_buf[..used_len]);
                 remaining = remaining
-                    .checked_sub(used_len)
+                    .checked_sub(used_len as u32)
                     .ok_or(VirtioSerialError::InvalidParameter)?;
                 Self::port_queue_push(port_id, data_buf)?;
 
