@@ -368,7 +368,7 @@ name = "cc-measurement"
 version = "0.1.0"
 dependencies = [
  "sha2 0.10.8",
- "zerocopy 0.7.32",
+ "zerocopy 0.8.27",
 ]
 
 [[package]]
@@ -2297,7 +2297,6 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "serde_json",
- "spin 0.10.0",
  "spin 0.9.8",
  "sys_time 0.1.0",
  "untrusted",
@@ -2526,7 +2525,7 @@ dependencies = [
  "tdx-tdcall",
  "x86",
  "x86_64 0.14.9",
- "zerocopy 0.7.32",
+ "zerocopy 0.8.27",
 ]
 
 [[package]]
@@ -2556,7 +2555,7 @@ dependencies = [
  "td-shim-interface",
  "tdx-tdcall",
  "which",
- "zerocopy 0.7.32",
+ "zerocopy 0.8.27",
 ]
 
 [[package]]
@@ -2574,7 +2573,7 @@ dependencies = [
  "log",
  "r-efi 3.2.0",
  "scroll",
- "zerocopy 0.7.32",
+ "zerocopy 0.8.27",
 ]
 
 [[package]]
