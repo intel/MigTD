@@ -499,9 +499,8 @@ impl VirtioSerial {
             for vq_buf in &h2g {
                 if let Some(record) = self.dma_allocation.get(&vq_buf.addr) {
                     let safe_len = core::cmp::min(vq_buf.len as usize, record.dma_size);
-                    let control_msg = unsafe {
-                        core::slice::from_raw_parts(vq_buf.addr as *const u8, safe_len)
-                    };
+                    let control_msg =
+                        unsafe { core::slice::from_raw_parts(vq_buf.addr as *const u8, safe_len) };
 
                     self.handle_control_msg(control_msg)?;
 
@@ -771,8 +770,7 @@ impl VirtioSerial {
             }
             if let Some(record) = self.dma_allocation.get(&buffer.addr) {
                 let safe_len = core::cmp::min(buffer.len as usize, record.dma_size);
-                let dma_buf =
-                    unsafe { from_raw_parts(buffer.addr as *const u8, safe_len) };
+                let dma_buf = unsafe { from_raw_parts(buffer.addr as *const u8, safe_len) };
 
                 let mut data_buf = Vec::new();
                 let used_len = core::cmp::min(core::cmp::min(len, buffer.len) as usize, safe_len);
