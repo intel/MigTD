@@ -346,8 +346,7 @@ mod v2 {
         policy_issuer_chain: &[u8],
     ) -> Result<(PolicyEvaluationInfo, VerifiedPolicy<'p>, TdxReport), PolicyError> {
         // 1. Verify quote & get supplemental data
-        let tdreport_verified =
-            verify_tdreport(tdreport).map_err(|_| PolicyError::QuoteVerification)?;
+        let tdreport_verified = verify_tdreport(tdreport)?;
 
         // 2. Verify the signature of the provided policy and the integrity of the event log
         let verified_policy = verify_policy_and_event_log(
