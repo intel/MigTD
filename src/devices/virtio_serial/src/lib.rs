@@ -482,7 +482,7 @@ impl VirtioSerial {
 
         self.timer.reset_timeout();
 
-        if self
+        while self
             .queues
             .index(CONTROL_RECEIVEQ as usize)
             .borrow_mut()
@@ -537,7 +537,6 @@ impl VirtioSerial {
             ControlEvent::DeviceAdd => {
                 self.fill_port_queue(port_id)?;
                 self.port_ready(port_id)?;
-                self.recv_control()?;
             }
             ControlEvent::DeviceRemove => {
                 self.connected_ports.remove(&port_id);
