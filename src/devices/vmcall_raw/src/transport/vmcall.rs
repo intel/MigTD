@@ -139,6 +139,15 @@ async fn vmcall_service_migtd_send(
         let data_status_bytes = data_status.to_le_bytes();
 
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
+            // byte[0]=0x02 (not completed), byte[1]=0x03 (VMM cancel)
+            if data_status_bytes[0] == 0x02 && data_status_bytes[1] == 0x03 {
+                log::warn!(
+                    "VMM canceled migration session (migration_request_id={}, data_status=0x{:x})\n",
+                    mig_request_id,
+                    data_status
+                );
+                return Poll::Ready(Err(VmcallRawError::VmmCanceled));
+            }
             return Poll::Pending;
         }
 
@@ -181,6 +190,15 @@ async fn vmcall_service_migtd_receive(
         let data_status_bytes = data_status.to_le_bytes();
 
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
+            // byte[0]=0x02 (not completed), byte[1]=0x03 (VMM cancel)
+            if data_status_bytes[0] == 0x02 && data_status_bytes[1] == 0x03 {
+                log::warn!(
+                    "VMM canceled migration session (migration_request_id={}, data_status=0x{:x})\n",
+                    mig_request_id,
+                    data_status
+                );
+                return Poll::Ready(Err(VmcallRawError::VmmCanceled));
+            }
             return Poll::Pending;
         }
 

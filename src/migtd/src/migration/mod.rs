@@ -372,6 +372,7 @@ impl From<CryptoError> for MigrationResult {
 impl From<io::Error> for MigrationResult {
     fn from(e: io::Error) -> Self {
         match e.kind() {
+            io::ErrorKind::ConnectionAborted => MigrationResult::VmmCanceled,
             io::ErrorKind::InvalidData => {
                 let desc = e.to_string();
 
