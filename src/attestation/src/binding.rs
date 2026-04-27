@@ -84,7 +84,7 @@ mod attest_lib_binding {
             tdx_report_size: u32,
             p_quote: *mut ::core::ffi::c_void,
             p_quote_size: *mut u32,
-        ) -> AttestLibError;
+        ) -> i32;
 
         /// Verify the integrity of MigTD's Quote and return td report of MigTD
         /// Note: all IN/OUT memory should be managed by Caller
@@ -106,7 +106,7 @@ mod attest_lib_binding {
             root_pub_key_size: u32,
             p_tdx_report_verify: *mut ::core::ffi::c_void,
             p_tdx_report_verify_size: *mut u32,
-        ) -> AttestLibError;
+        ) -> i32;
 
         #[cfg(feature = "attest-lib-ext")]
         pub fn verify_quote_integrity_ex(
@@ -117,7 +117,7 @@ mod attest_lib_binding {
             p_collateral: *const QveCollateral,
             p_tdx_report_verify: *mut ::core::ffi::c_void,
             p_tdx_report_verify_size: *mut u32,
-        ) -> AttestLibError;
+        ) -> i32;
 
         /// Allocate heap space for MigTD Attestation library internal use,
         /// Must be called only once by MigTD before other attestation lib APIs
@@ -127,10 +127,7 @@ mod attest_lib_binding {
         ///
         /// @return true: Successfully init heap for internal use.
         /// @return false: Failed to init heap for internal use. E.g. the parameter is incorrect, etc.
-        pub fn init_heap(
-            p_td_heap_base: *const ::core::ffi::c_void,
-            td_heap_size: u32,
-        ) -> AttestLibError;
+        pub fn init_heap(p_td_heap_base: *const ::core::ffi::c_void, td_heap_size: u32) -> i32;
     }
 }
 
@@ -145,9 +142,9 @@ mod null_binding {
         _tdx_report_size: u32,
         _p_quote: *mut ::core::ffi::c_void,
         _p_quote_size: *mut u32,
-    ) -> AttestLibError {
+    ) -> i32 {
         *_p_quote_size = TD_VERIFIED_REPORT_SIZE as u32;
-        AttestLibError::Success
+        0
     }
 
     #[no_mangle]
@@ -158,8 +155,8 @@ mod null_binding {
         _root_pub_key_size: u32,
         _p_tdx_report_verify: *mut ::core::ffi::c_void,
         _p_tdx_report_verify_size: *mut u32,
-    ) -> AttestLibError {
-        AttestLibError::Success
+    ) -> i32 {
+        0
     }
 
     #[cfg(feature = "attest-lib-ext")]
@@ -172,15 +169,15 @@ mod null_binding {
         p_collateral: *const QveCollateral,
         p_tdx_report_verify: *mut ::core::ffi::c_void,
         p_tdx_report_verify_size: *mut u32,
-    ) -> AttestLibError {
-        AttestLibError::Success
+    ) -> i32 {
+        0
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn init_heap(
         _p_td_heap_base: *const ::core::ffi::c_void,
         _td_heap_size: u32,
-    ) -> AttestLibError {
-        AttestLibError::Success
+    ) -> i32 {
+        0
     }
 }
