@@ -39,11 +39,41 @@ pub(super) async fn setup_transport(
 
     #[cfg(all(feature = "virtio-serial", not(feature = "vmcall-raw")))]
     {
-        use virtio_serial::VirtioSerialPort;
+        use crate::driver::ticks::Timer;
+        use core::time::Duration;
+        use virtio_serial::{VirtioSerial, VirtioSerialError, VirtioSerialPort};
         const VIRTIO_SERIAL_PORT_ID: u32 = 1;
+        const VIRTIO_SERIAL_OPEN_RETRY_TIMES: usize = 100;
+        const VIRTIO_SERIAL_OPEN_RETRY_DELAY: Duration = Duration::from_millis(10);
 
         let port = VirtioSerialPort::new(VIRTIO_SERIAL_PORT_ID);
-        port.open()?;
+        let mut opened = false;
+        for _ in 0..VIRTIO_SERIAL_OPEN_RETRY_TIMES {
+            match port.open() {
+                Ok(()) => {
+                    opened = true;
+                    break;
+                }
+                Err(VirtioSerialError::PortNotAvailable(_)) => {
+                    // `PORT_OPEN` can arrive after init_control; pump control queue during retry.
+                    // If we drained pending control msgs, try open again immediately to avoid
+                    // waiting for the next retry tick.
+                    Timer::after(VIRTIO_SERIAL_OPEN_RETRY_DELAY).await;
+                    VirtioSerial::try_poll_control()?;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        if !opened {
+            log::error!(
+                "virtio-serial port {} not available after {} retries ({}ms total)\n",
+                VIRTIO_SERIAL_PORT_ID,
+                VIRTIO_SERIAL_OPEN_RETRY_TIMES,
+                VIRTIO_SERIAL_OPEN_RETRY_TIMES
+                    * VIRTIO_SERIAL_OPEN_RETRY_DELAY.as_millis() as usize,
+            );
+            return Err(VirtioSerialError::PortNotAvailable(VIRTIO_SERIAL_PORT_ID).into());
+        }
         return Ok(port);
     }
 

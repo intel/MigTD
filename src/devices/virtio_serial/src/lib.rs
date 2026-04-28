@@ -467,6 +467,53 @@ impl VirtioSerial {
         Ok(())
     }
 
+    /// Non-blocking control-queue pump: drains any already-pending control
+    /// messages without waiting for new IRQ/events.
+    fn recv_control_nonblock(&mut self) -> Result<()> {
+        let vq = self.queues.index(CONTROL_RECEIVEQ as usize);
+        if !vq.borrow_mut().can_pop() {
+            return Ok(());
+        }
+
+        while self
+            .queues
+            .index(CONTROL_RECEIVEQ as usize)
+            .borrow_mut()
+            .can_pop()
+        {
+            let mut g2h = Vec::new();
+            let mut h2g = Vec::new();
+            let _ = self
+                .queues
+                .index(CONTROL_RECEIVEQ as usize)
+                .borrow_mut()
+                .pop_used(&mut g2h, &mut h2g)?;
+
+            for vq_buf in &h2g {
+                if let Some(record) = self.dma_allocation.get(&vq_buf.addr) {
+                    let safe_len = core::cmp::min(vq_buf.len as usize, record.dma_size);
+                    let control_msg =
+                        unsafe { core::slice::from_raw_parts(vq_buf.addr as *const u8, safe_len) };
+                    self.handle_control_msg(control_msg)?;
+                    self.free_dma_memory(vq_buf.addr)
+                        .ok_or(VirtioSerialError::OutOfResource)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Non-blocking control-queue pump to help consume late `PORT_OPEN` events.
+    /// Returns `Ok(true)` if at least one control message was drained.
+    pub fn try_poll_control() -> Result<()> {
+        SERIAL_DEVICE
+            .lock()
+            .get_mut()
+            .ok_or(VirtioSerialError::InvalidParameter)?
+            .recv_control_nonblock()
+    }
+
     fn recv_control(&mut self) -> Result<()> {
         let vq = self.queues.index(CONTROL_RECEIVEQ as usize);
 
