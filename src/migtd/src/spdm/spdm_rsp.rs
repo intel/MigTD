@@ -1097,18 +1097,6 @@ pub fn handle_exchange_rebind_attest_info_req(
         let remote_policy = pre_session_data
             .get(4..4 + remote_policy_size)
             .ok_or(MigrationResult::InvalidPolicyError)?;
-        // Per GHCI 1.5: second item in pre_session_data is init_tdinfo (was init_policy)
-        let init_tdinfo_offset = 4 + remote_policy_size;
-        let init_tdinfo_size = u32::from_le_bytes(
-            pre_session_data
-                .get(init_tdinfo_offset..4 + init_tdinfo_offset)
-                .ok_or(MigrationResult::InvalidPolicyError)?
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let _init_tdinfo_from_pre_session = pre_session_data
-            .get(init_tdinfo_offset + 4..init_tdinfo_offset + 4 + init_tdinfo_size)
-            .ok_or(MigrationResult::InvalidPolicyError)?;
 
         let remote_policy_hash =
             digest_sha384(remote_policy).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;
