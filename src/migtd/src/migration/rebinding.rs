@@ -128,7 +128,6 @@ impl RebindingInfo {
 
 pub(super) async fn rebinding_old_pre_session_data_exchange(
     transport: &mut TransportType,
-    init_tdinfo: &[u8],
 ) -> Result<Vec<u8>, MigrationResult> {
     let version = exchange_hello_packet(transport).await.map_err(|e| {
         log::error!(
@@ -164,15 +163,6 @@ pub(super) async fn rebinding_old_pre_session_data_exchange(
             e
         })?;
 
-    send_pre_session_data_packet(init_tdinfo, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
 
     send_start_session_packet(transport).await.map_err(|e| {
         log::error!(
@@ -229,16 +219,6 @@ pub(super) async fn rebinding_new_pre_session_data_exchange(
             e
         })?;
 
-    let init_tdinfo = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive init_tdinfo error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
     send_start_session_packet(transport).await.map_err(|e| {
         log::error!(
             "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
@@ -254,12 +234,9 @@ pub(super) async fn rebinding_new_pre_session_data_exchange(
         e
     })?;
 
-    // FIXME: Refactor the TLS verification callback to enable easier access to pre-session data.
     let mut policy_buffer = Vec::new();
     policy_buffer.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
     policy_buffer.extend_from_slice(&remote_policy);
-    policy_buffer.extend_from_slice(&(init_tdinfo.len() as u32).to_le_bytes());
-    policy_buffer.extend_from_slice(&init_tdinfo);
 
     Ok(policy_buffer)
 }
@@ -282,7 +259,7 @@ pub async fn start_rebinding(
             .ok_or(MigrationResult::InvalidParameter)?;
         let remote_policy = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
-            rebinding_old_pre_session_data_exchange(&mut transport, &init_migtd_data.init_tdinfo),
+            rebinding_old_pre_session_data_exchange(&mut transport),
         ))
         .await
         .map_err(|e| {
