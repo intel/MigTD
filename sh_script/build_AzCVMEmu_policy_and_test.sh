@@ -50,9 +50,9 @@
 #   3. Extracts report data from Azure vTPM OR generates mock data
 #   4. Updates td_identity.json template with extracted measurements
 #   5. Updates tcb_mapping.json template with extracted measurements
-#   6. Generates certificate chain (root CA + policy signing cert)
-#   7. Signs td_identity.json with policy signing key (testing only)
-#   8. Signs tcb_mapping.json with policy signing key (testing only)
+#   6. Generates certificate chains (root CA + policy/tcb_mapping/td_identity leaves)
+#   7. Signs td_identity.json with the td_identity leaf key (testing only)
+#   8. Signs tcb_mapping.json with the tcb_mapping leaf key (testing only)
 #   9. Generates servtd_collateral.json from signed components
 #   10. Merges policy data with collaterals
 #   11. Signs final policy with policy signing key
@@ -206,6 +206,10 @@ POLICY_DATA_MERGED="$TEMP_DIR/policy_data_merged.json"
 OUTPUT_POLICY="$OUTPUT_DIR/policy_v2_signed.json"
 OUTPUT_POLICY_A="$OUTPUT_DIR/policy_v2_signed_a.json"
 OUTPUT_POLICY_B="$OUTPUT_DIR/policy_v2_signed_b.json"
+# Variant B with policy + tcb_mapping leaf certs both rotated
+OUTPUT_POLICY_PM_B="$OUTPUT_DIR/policy_v2_signed_pm_b.json"
+# Variant B with policy + tcb_mapping + td_identity leaf certs all rotated
+OUTPUT_POLICY_PMI_B="$OUTPUT_DIR/policy_v2_signed_pmi_b.json"
 OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
 OUTPUT_CERT_CHAIN_A="$OUTPUT_DIR/policy_issuer_chain_a.pem"
 OUTPUT_CERT_CHAIN_B="$OUTPUT_DIR/policy_issuer_chain_b.pem"
@@ -213,6 +217,13 @@ CERT_DIR="$TEMP_DIR/certs"
 PRIVATE_KEY="$CERT_DIR/policy_signing_pkcs8.key"
 PRIVATE_KEY_A="$CERT_DIR/policy_signing_a_pkcs8.key"
 PRIVATE_KEY_B="$CERT_DIR/policy_signing_b_pkcs8.key"
+# Independent leaf signing keys for tcb_mapping and td_identity (both variants
+# under the same root CA). Used to exercise rotation of the inner cert chains
+# embedded in servtd_collateral.
+MAPPING_PRIVATE_KEY_A="$CERT_DIR/mapping_signing_a_pkcs8.key"
+MAPPING_PRIVATE_KEY_B="$CERT_DIR/mapping_signing_b_pkcs8.key"
+IDENTITY_PRIVATE_KEY_A="$CERT_DIR/identity_signing_a_pkcs8.key"
+IDENTITY_PRIVATE_KEY_B="$CERT_DIR/identity_signing_b_pkcs8.key"
 
 # Cleanup on exit
 cleanup() {
@@ -277,39 +288,61 @@ generate_certificates() {
         -$hash_algo
 
     # Generate two leaf certs (a and b) from the same root CA with the same CN
-    # This exercises the peer cert chain validation / key rotation path
-    for suffix in a b; do
-        echo "3${suffix}. Generating policy signing private key (${suffix})..."
-        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name -out "$output_dir/policy_signing_${suffix}.key"
+    # This exercises the peer cert chain validation / key rotation path.
+    # Three leaf families are generated, all under the same root CA:
+    #   - policy_signing_{a,b}    : signs the outer policy
+    #   - mapping_signing_{a,b}   : signs tcb_mapping (embedded in servtd_collateral)
+    #   - identity_signing_{a,b}  : signs td_identity  (embedded in servtd_collateral)
+    # Variant "a" uses the same logical leaf for all three; variant "b" rotates
+    # one or more of them depending on the test mode.
+    for family_subject in \
+        "policy_signing:/CN=MigTD Policy Issuer/O=Intel Corporation" \
+        "mapping_signing:/CN=MigTD TCB Mapping Issuer/O=Intel Corporation" \
+        "identity_signing:/CN=MigTD TD Identity Issuer/O=Intel Corporation"; do
+        local family="${family_subject%%:*}"
+        local subject="${family_subject#*:}"
+        # Default to the script's leaf_subject for the policy family to preserve
+        # backward-compatible certificate subjects.
+        if [ "$family" = "policy_signing" ]; then
+            subject="$leaf_subject"
+        fi
+        local family_chain_prefix
+        case "$family" in
+            policy_signing)   family_chain_prefix="policy_issuer_chain" ;;
+            mapping_signing)  family_chain_prefix="mapping_issuer_chain" ;;
+            identity_signing) family_chain_prefix="identity_issuer_chain" ;;
+        esac
 
-        echo "4${suffix}. Converting key to PKCS8 format (${suffix})..."
-        openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt \
-            -in "$output_dir/policy_signing_${suffix}.key" \
-            -out "$output_dir/policy_signing_${suffix}_pkcs8.key"
+        for suffix in a b; do
+            echo "Generating ${family}_${suffix} key + cert..."
+            openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name \
+                -out "$output_dir/${family}_${suffix}.key"
 
-        echo "5${suffix}. Generating certificate signing request (${suffix})..."
-        openssl req -new \
-            -key "$output_dir/policy_signing_${suffix}.key" \
-            -out "$output_dir/policy_signing_${suffix}.csr" \
-            -subj "$leaf_subject"
+            openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt \
+                -in "$output_dir/${family}_${suffix}.key" \
+                -out "$output_dir/${family}_${suffix}_pkcs8.key"
 
-        echo "6${suffix}. Signing leaf certificate with root CA (${suffix})..."
-        openssl x509 -req \
-            -in "$output_dir/policy_signing_${suffix}.csr" \
-            -CA "$output_dir/root_ca.pem" \
-            -CAkey "$output_dir/root_ca.key" \
-            -CAcreateserial \
-            -out "$output_dir/policy_signing_${suffix}.pem" \
-            -days $cert_validity_days \
-            -$hash_algo \
-            -extensions v3_ca \
-            -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
+            openssl req -new \
+                -key "$output_dir/${family}_${suffix}.key" \
+                -out "$output_dir/${family}_${suffix}.csr" \
+                -subj "$subject"
 
-        echo "7${suffix}. Creating certificate chain (${suffix})..."
-        cat "$output_dir/policy_signing_${suffix}.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain_${suffix}.pem"
+            openssl x509 -req \
+                -in "$output_dir/${family}_${suffix}.csr" \
+                -CA "$output_dir/root_ca.pem" \
+                -CAkey "$output_dir/root_ca.key" \
+                -CAcreateserial \
+                -out "$output_dir/${family}_${suffix}.pem" \
+                -days $cert_validity_days \
+                -$hash_algo \
+                -extensions v3_ca \
+                -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
 
-        # Clean up CSR
-        rm -f "$output_dir/policy_signing_${suffix}.csr"
+            cat "$output_dir/${family}_${suffix}.pem" "$output_dir/root_ca.pem" \
+                > "$output_dir/${family_chain_prefix}_${suffix}.pem"
+
+            rm -f "$output_dir/${family}_${suffix}.csr"
+        done
     done
 
     # Keep backward-compatible aliases (default to "a")
@@ -331,6 +364,8 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_POLICY="$OUTPUT_DIR/policy_v2_signed.json"
             OUTPUT_POLICY_A="$OUTPUT_DIR/policy_v2_signed_a.json"
             OUTPUT_POLICY_B="$OUTPUT_DIR/policy_v2_signed_b.json"
+            OUTPUT_POLICY_PM_B="$OUTPUT_DIR/policy_v2_signed_pm_b.json"
+            OUTPUT_POLICY_PMI_B="$OUTPUT_DIR/policy_v2_signed_pmi_b.json"
             OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
             OUTPUT_CERT_CHAIN_A="$OUTPUT_DIR/policy_issuer_chain_a.pem"
             OUTPUT_CERT_CHAIN_B="$OUTPUT_DIR/policy_issuer_chain_b.pem"
@@ -647,81 +682,86 @@ echo -e "${GREEN}✓ Certificates generated in: $CERT_DIR${NC}"
 echo
 
 #
-# Step 6: Sign td_identity.json
+# Steps 6-10: Sign all policy variants
 #
-echo -e "${BLUE}=== Step 6: Signing TD Identity ===${NC}"
-"$TOOLS_DIR/json-signer" \
-    --sign \
-    --name "tdIdentity" \
-    --private-key "$PRIVATE_KEY" \
-    --input "$TD_IDENTITY_UPDATED" \
-    --output "$TD_IDENTITY_SIGNED"
-
-echo -e "${GREEN}✓ TD Identity signed: $TD_IDENTITY_SIGNED${NC}"
-echo
-
+# Each variant is built by:
+#   1. Signing td_identity with an identity leaf key
+#   2. Signing tcb_mapping with a mapping leaf key
+#   3. Building servtd_collateral embedding the corresponding identity and
+#      mapping issuer chains
+#   4. Merging policy data with collaterals + servtd_collateral
+#   5. Signing the merged policy with a policy leaf key
 #
-# Step 7: Sign tcb_mapping.json
+# All leaves chain to the same root CA so cert-chain validation succeeds.
 #
-echo -e "${BLUE}=== Step 7: Signing TCB Mapping ===${NC}"
-"$TOOLS_DIR/json-signer" \
-    --sign \
-    --name "tdTcbMapping" \
-    --private-key "$PRIVATE_KEY" \
-    --input "$TCB_MAPPING_UPDATED" \
-    --output "$TCB_MAPPING_SIGNED"
-
-echo -e "${GREEN}✓ TCB Mapping signed: $TCB_MAPPING_SIGNED${NC}"
-echo
-
+# Variants emitted:
+#   _a       : (identity_a, mapping_a, policy_a)               -- baseline
+#   _b       : (identity_a, mapping_a, policy_b)               -- policy leaf rotated
+#   _pm_b    : (identity_a, mapping_b, policy_b)               -- policy + tcb_mapping rotated
+#   _pmi_b   : (identity_b, mapping_b, policy_b)               -- all 3 leaves rotated
 #
-# Step 8: Generate servtd_collateral.json
-#
-echo -e "${BLUE}=== Step 8: Generating ServTD Collateral ===${NC}"
-IDENTITY_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
-MAPPING_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
+build_signed_policy_variant() {
+    local label="$1"
+    local identity_suffix="$2"   # a or b
+    local mapping_suffix="$3"    # a or b
+    local policy_suffix="$4"     # a or b
+    local output_policy="$5"
 
-"$TOOLS_DIR/servtd-collateral-generator" \
-    --identity "$TD_IDENTITY_SIGNED" \
-    --identity-chain "$IDENTITY_CHAIN" \
-    --mapping "$TCB_MAPPING_SIGNED" \
-    --mapping-chain "$MAPPING_CHAIN" \
-    --output "$SERVTD_COLLATERAL"
+    local identity_key="$CERT_DIR/identity_signing_${identity_suffix}_pkcs8.key"
+    local mapping_key="$CERT_DIR/mapping_signing_${mapping_suffix}_pkcs8.key"
+    local policy_key="$CERT_DIR/policy_signing_${policy_suffix}_pkcs8.key"
+    local identity_chain="$CERT_DIR/identity_issuer_chain_${identity_suffix}.pem"
+    local mapping_chain="$CERT_DIR/mapping_issuer_chain_${mapping_suffix}.pem"
 
-echo -e "${GREEN}✓ ServTD Collateral generated: $SERVTD_COLLATERAL${NC}"
-echo
+    local td_identity_signed="$TEMP_DIR/td_identity_signed_${label}.json"
+    local tcb_mapping_signed="$TEMP_DIR/tcb_mapping_signed_${label}.json"
+    local servtd_collateral="$TEMP_DIR/servtd_collateral_${label}.json"
+    local policy_data_merged="$TEMP_DIR/policy_data_merged_${label}.json"
 
-#
-# Step 9: Merge policy data with collaterals and servtd_collateral
-#
-echo -e "${BLUE}=== Step 9: Merging Policy Data ===${NC}"
-"$TOOLS_DIR/migtd-policy-generator" v2 \
-    --policy-data "$POLICY_DATA_RAW" \
-    --collaterals "$COLLATERALS_FILE" \
-    --servtd-collateral "$SERVTD_COLLATERAL" \
-    --output "$POLICY_DATA_MERGED"
+    echo -e "${BLUE}--- Variant ${label}: identity=${identity_suffix}, mapping=${mapping_suffix}, policy=${policy_suffix} ---${NC}"
 
-echo -e "${GREEN}✓ Policy data merged: $POLICY_DATA_MERGED${NC}"
-echo
+    "$TOOLS_DIR/json-signer" \
+        --sign \
+        --name "tdIdentity" \
+        --private-key "$identity_key" \
+        --input "$TD_IDENTITY_UPDATED" \
+        --output "$td_identity_signed"
 
-#
-# Step 10: Sign the final policy with both leaf keys
-#
-echo -e "${BLUE}=== Step 10: Signing Final Policy (two variants) ===${NC}"
-for suffix in a b; do
-    PRIVATE_KEY_CUR="$CERT_DIR/policy_signing_${suffix}_pkcs8.key"
-    OUTPUT_POLICY_CUR_VAR="OUTPUT_POLICY_$(echo $suffix | tr '[:lower:]' '[:upper:]')"
-    OUTPUT_POLICY_CUR="${!OUTPUT_POLICY_CUR_VAR}"
+    "$TOOLS_DIR/json-signer" \
+        --sign \
+        --name "tdTcbMapping" \
+        --private-key "$mapping_key" \
+        --input "$TCB_MAPPING_UPDATED" \
+        --output "$tcb_mapping_signed"
+
+    "$TOOLS_DIR/servtd-collateral-generator" \
+        --identity "$td_identity_signed" \
+        --identity-chain "$identity_chain" \
+        --mapping "$tcb_mapping_signed" \
+        --mapping-chain "$mapping_chain" \
+        --output "$servtd_collateral"
+
+    "$TOOLS_DIR/migtd-policy-generator" v2 \
+        --policy-data "$POLICY_DATA_RAW" \
+        --collaterals "$COLLATERALS_FILE" \
+        --servtd-collateral "$servtd_collateral" \
+        --output "$policy_data_merged"
 
     "$TOOLS_DIR/json-signer" \
         --sign \
         --name "policyData" \
-        --private-key "$PRIVATE_KEY_CUR" \
-        --input "$POLICY_DATA_MERGED" \
-        --output "$OUTPUT_POLICY_CUR"
+        --private-key "$policy_key" \
+        --input "$policy_data_merged" \
+        --output "$output_policy"
 
-    echo -e "${GREEN}✓ Policy signed (${suffix}): $OUTPUT_POLICY_CUR${NC}"
-done
+    echo -e "${GREEN}✓ Policy signed (${label}): $output_policy${NC}"
+}
+
+echo -e "${BLUE}=== Step 6-10: Building Signed Policy Variants ===${NC}"
+build_signed_policy_variant "a"     a a a "$OUTPUT_POLICY_A"
+build_signed_policy_variant "b"     a a b "$OUTPUT_POLICY_B"
+build_signed_policy_variant "pm_b"  a b b "$OUTPUT_POLICY_PM_B"
+build_signed_policy_variant "pmi_b" b b b "$OUTPUT_POLICY_PMI_B"
 
 # Also keep a default signed policy (variant a) for backward compat
 cp "$OUTPUT_POLICY_A" "$OUTPUT_POLICY"
@@ -746,7 +786,10 @@ echo
 # Step 12: Securely delete private keys
 #
 echo -e "${BLUE}=== Step 12: Cleaning Up Private Keys ===${NC}"
-for keyfile in "$PRIVATE_KEY_A" "$PRIVATE_KEY_B" "$PRIVATE_KEY"; do
+for keyfile in \
+    "$PRIVATE_KEY_A" "$PRIVATE_KEY_B" "$PRIVATE_KEY" \
+    "$MAPPING_PRIVATE_KEY_A" "$MAPPING_PRIVATE_KEY_B" \
+    "$IDENTITY_PRIVATE_KEY_A" "$IDENTITY_PRIVATE_KEY_B"; do
     if [ -f "$keyfile" ]; then
         shred -u "$keyfile" 2>/dev/null || rm -f "$keyfile"
     fi
@@ -760,12 +803,14 @@ echo
 echo -e "${GREEN}=== Build Complete ===${NC}"
 echo
 echo "Generated files:"
-echo "  📄 Policy (source/a): $OUTPUT_POLICY_A"
-echo "  📄 Policy (dest/b):   $OUTPUT_POLICY_B"
-echo "  📄 Policy (default):  $OUTPUT_POLICY"
-echo "  📄 Cert chain (a): $OUTPUT_CERT_CHAIN_A"
-echo "  📄 Cert chain (b): $OUTPUT_CERT_CHAIN_B"
-echo "  📄 Cert chain (default): $OUTPUT_CERT_CHAIN"
+echo "  📄 Policy (source/a):      $OUTPUT_POLICY_A"
+echo "  📄 Policy (dest/b, policy leaf rotated):                  $OUTPUT_POLICY_B"
+echo "  📄 Policy (dest, policy + tcb_mapping leaves rotated):    $OUTPUT_POLICY_PM_B"
+echo "  📄 Policy (dest, policy + tcb_mapping + td_identity all rotated): $OUTPUT_POLICY_PMI_B"
+echo "  📄 Policy (default):       $OUTPUT_POLICY"
+echo "  📄 Cert chain (a):         $OUTPUT_CERT_CHAIN_A"
+echo "  📄 Cert chain (b):         $OUTPUT_CERT_CHAIN_B"
+echo "  📄 Cert chain (default):   $OUTPUT_CERT_CHAIN"
 echo
 
 if [ "$USE_MOCK_REPORT" = true ]; then

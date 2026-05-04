@@ -113,6 +113,20 @@ jobs:
             test-command: "./migtdemu.sh --policy-v2 --src-policy-file ./config/AzCVMEmu/policy_v2_signed_a.json --src-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_a.pem --dst-policy-file ./config/AzCVMEmu/policy_v2_signed_b.json --dst-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_b.pem --mock-report --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-policy-v2-key-rotation-test-logs"
 
+          - test-name: "Policy v2 Policy + TCB Mapping Leaf Rotation (Mock Report)"
+            test-type: "policy-v2-policy-mapping-rotation"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --src-policy-file ./config/AzCVMEmu/policy_v2_signed_a.json --src-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_a.pem --dst-policy-file ./config/AzCVMEmu/policy_v2_signed_pm_b.json --dst-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_b.pem --mock-report --both --no-sudo --log-level info"
+            artifact-name: "policy-v2-policy-mapping-rotation-test-logs"
+
+          - test-name: "Policy v2 All Three Chains Rotation (Mock Report)"
+            test-type: "policy-v2-all-chains-rotation"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --src-policy-file ./config/AzCVMEmu/policy_v2_signed_a.json --src-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_a.pem --dst-policy-file ./config/AzCVMEmu/policy_v2_signed_pmi_b.json --dst-policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain_b.pem --mock-report --both --no-sudo --log-level info"
+            artifact-name: "policy-v2-all-chains-rotation-test-logs"
+
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -319,6 +333,8 @@ jobs:
             config/AzCVMEmu/policy_v2_signed.json
             config/AzCVMEmu/policy_v2_signed_a.json
             config/AzCVMEmu/policy_v2_signed_b.json
+            config/AzCVMEmu/policy_v2_signed_pm_b.json
+            config/AzCVMEmu/policy_v2_signed_pmi_b.json
             config/AzCVMEmu/policy_issuer_chain.pem
             config/AzCVMEmu/policy_issuer_chain_a.pem
             config/AzCVMEmu/policy_issuer_chain_b.pem
