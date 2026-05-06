@@ -7,8 +7,10 @@ use crate::mig_policy;
 use crate::migration::rebinding::{
     write_rebinding_session_token, write_servtd_rebind_attr, RebindingInfo,
 };
+#[cfg(not(feature = "policy_v2"))]
+use crate::migration::servtd_ext::verify_servtd_attr;
 #[cfg(feature = "policy_v2")]
-use crate::migration::servtd_ext::{write_approved_servtd_ext_hash, ServtdExt};
+use crate::migration::servtd_ext::{verify_servtd_attr, write_approved_servtd_ext_hash, ServtdExt};
 use crate::{
     config::get_policy,
     event_log::get_event_log,
@@ -816,6 +818,11 @@ pub fn handle_exchange_mig_info_req(
     let responder_app_context =
         SpdmAppContextData::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let exchange_information = exchange_info(&responder_app_context.migration_info, false)?;
+
+    verify_servtd_attr(
+        responder_app_context.migration_info.binding_handle,
+        &responder_app_context.migration_info.target_td_uuid,
+    )?;
 
     let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)?;
     set_mig_version(&responder_app_context.migration_info, mig_ver)?;

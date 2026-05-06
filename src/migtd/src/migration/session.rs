@@ -6,6 +6,8 @@
 use crate::migration::pre_session_data::pre_session_data_exchange;
 #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
 use crate::migration::rebinding::RebindingInfo;
+#[cfg(not(feature = "spdm_attestation"))]
+use crate::migration::servtd_ext::verify_servtd_attr;
 use crate::migration::transport::setup_transport;
 use crate::migration::transport::shutdown_transport;
 use crate::migration::transport::TransportType;
@@ -1092,6 +1094,14 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: cal_mig_version error: {:?}\n", e);
                 e
             })?;
+        verify_servtd_attr(
+            info.mig_info.binding_handle,
+            &info.mig_info.target_td_uuid,
+        )
+        .map_err(|e| {
+            log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: verify_servtd_attr error: {:?}\n", e);
+            e
+        })?;
         set_mig_version(&info.mig_info, mig_ver).map_err(|e| {
             log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: set_mig_version error: {:?}\n", e);
             e
