@@ -14,9 +14,9 @@ use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 
 use crate::migration::servtd_ext::read_servtd_ext;
+use crate::migration::transport::*;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
-use crate::{event_log, migration::transport::*};
 
 use crate::{
     config,
@@ -582,18 +582,12 @@ async fn rebinding_old_prepare(
     // The TDINFO_STRUCT contains all the measurement fields needed for verification.
     let init_tdinfo = &init_migtd_data.init_tdinfo;
 
-    // Per GHCI 1.5: init_event_log is no longer part of MIGTD_DATA.
-    // Use local event log; RATLS cert still carries init_event_log extension
-    // for responder-side verification of init RTMRs.
-    let init_event_log = event_log::get_event_log().unwrap_or(&[]);
-
     // TLS client
     let mut ratls_client = ratls::client_rebinding(
         transport,
         remote_policy,
         &init_policy_hash,
         init_tdinfo,
-        init_event_log,
         &servtd_ext,
     )
     .map_err(|_| {

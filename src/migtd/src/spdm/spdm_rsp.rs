@@ -1058,20 +1058,6 @@ pub fn handle_exchange_rebind_attest_info_req(
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let td_report_init_vec = td_report_init.to_vec();
 
-    // event log init
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if vdm_element.element_type != VdmMessageElementType::EventLogInit {
-        error!(
-            "Invalid VDM message element_type: {:x?}\n",
-            vdm_element.element_type
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    };
-    let event_log_init = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let event_log_init_vec = event_log_init.to_vec();
-
     // mig policy init hash
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::MigPolicyInit {
@@ -1140,7 +1126,6 @@ pub fn handle_exchange_rebind_attest_info_req(
             &event_log_src_vec,
             remote_policy,
             &td_report_init_vec,
-            &event_log_init_vec,
             &servtd_ext_vec,
         );
         if let Err(e) = &policy_check_result {

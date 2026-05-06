@@ -185,7 +185,6 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     remote_policy: Vec<u8>,
     init_policy_hash: &[u8],
     init_tdinfo: &[u8],
-    init_event_log: &[u8],
     servtd_ext: &ServtdExt,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
@@ -199,7 +198,6 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
         &signing_key,
         init_policy_hash,
         init_tdinfo,
-        init_event_log,
         servtd_ext,
     )
     .map_err(|e| {
@@ -410,7 +408,6 @@ fn create_certificate_for_rebinding_old(
     signing_key: &EcdsaPk,
     init_policy_hash: &[u8],
     init_tdinfo: &[u8],
-    init_event_log: &[u8],
     servtd_ext: &ServtdExt,
 ) -> Result<Vec<u8>> {
     let pub_key = signing_key.public_key().map_err(|e| {
@@ -518,27 +515,6 @@ fn create_certificate_for_rebinding_old(
         .map_err(|e| {
             log::error!(
                 "gen_cert policy_v2 add_extension for tdreport init failed with error {:?}.\n",
-                e
-            );
-            e
-        })?
-        .add_extension(
-            Extension::new(
-                EXTNID_MIGTD_EVENT_LOG_INIT,
-                Some(false),
-                Some(&init_event_log),
-            )
-            .map_err(|e| {
-                log::error!(
-                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
-                    e
-                );
-                e
-            })?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert policy_v2 add_extension for event log init failed with error {:?}.\n",
                 e
             );
             e
@@ -995,11 +971,6 @@ mod verify {
                 log::error!("Failed to find init tdinfo extension.\n");
                 CryptoError::ParseCertificate
             })?;
-        let init_event_log =
-            find_extension(extensions, &EXTNID_MIGTD_EVENT_LOG_INIT).ok_or_else(|| {
-                log::error!("Failed to find init event log extension.\n");
-                CryptoError::ParseCertificate
-            })?;
         // Per GHCI 1.5: init_policy_hash is now mrowner from the initial TDINFO_STRUCT
         let init_policy_hash = find_extension(extensions, &EXTNID_MIGTD_INIT_POLICY_HASH)
             .ok_or_else(|| {
@@ -1061,7 +1032,6 @@ mod verify {
             event_log,
             remote_policy,
             init_tdinfo,
-            init_event_log,
             servtd_ext,
         );
 
