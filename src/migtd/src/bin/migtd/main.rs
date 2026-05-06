@@ -275,6 +275,21 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
 
     let version = initialize_policy();
 
+    // Per GHCI 1.5: Verify own TDINFO.MROWNER/MROWNERCONFIG matches policy key/SVN
+    // Skip in AzCVMEmu mode — emulator uses mock TD reports where VMM does not
+    // populate MROWNER/MROWNERCONFIG.
+    #[cfg(not(feature = "AzCVMEmu"))]
+    {
+        use migtd::mig_policy;
+        if let Err(e) = mig_policy::verify_own_tdinfo() {
+            log::error!("TDINFO policy binding verification failed: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"TDINFO MROWNER/MROWNERCONFIG mismatch with policy",
+            );
+        }
+    }
+
     let event_data = version.as_bytes();
 
     // Measure and extend the migration policy to RTMR

@@ -4,6 +4,8 @@
 
 pub mod data;
 pub mod event;
+#[cfg(feature = "policy_v2")]
+pub mod init_data;
 pub mod logging;
 #[cfg(feature = "policy_v2")]
 pub mod pre_session_data;
@@ -152,7 +154,11 @@ pub struct MigtdMigrationInformation {
 
     // If set, current MigTD is MigTD-s else current MigTD is MigTD-d
     pub migration_source: u8,
-    _pad: [u8; 7],
+
+    // Per GHCI 1.5: hasInitMigtdData — true if initMigtdData follows at offset 56
+    pub has_init_data: u8,
+
+    _reserved: [u8; 6],
 
     // UUID of target TD
     pub target_td_uuid: [u64; 4],
@@ -171,7 +177,29 @@ pub struct MigtdMigrationInformation {
 }
 
 #[cfg(feature = "vmcall-raw")]
-impl_read_from_bytes!(MigtdMigrationInformation);
+impl MigtdMigrationInformation {
+    pub fn read_from_bytes(
+        data_length: u32,
+        payload: &[u8],
+    ) -> core::result::Result<Self, MigrationResult> {
+        let fixed_size = core::mem::size_of::<Self>() as u32;
+        if (data_length as usize) < fixed_size as usize {
+            return Err(MigrationResult::InvalidParameter);
+        }
+        let info: Self = payload
+            .pread(0)
+            .map_err(|_| MigrationResult::InvalidParameter)?;
+        // Reject trailing bytes unless has_init_data is set
+        if data_length > fixed_size && info.has_init_data != 1 {
+            return Err(MigrationResult::InvalidParameter);
+        }
+        // Reject reserved fields that must be zero
+        if info._reserved != [0; 6] {
+            return Err(MigrationResult::InvalidParameter);
+        }
+        Ok(info)
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Pread, Pwrite)]

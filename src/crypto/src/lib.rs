@@ -97,6 +97,25 @@ pub fn pem_cert_to_der(cert: &[u8]) -> Result<CertificateDer<'static>> {
     CertificateDer::from_pem_slice(cert).map_err(|_| Error::DecodePemCert)
 }
 
+/// Returns the SHA-384 hash of the leaf certificate's public key from a PEM cert chain.
+/// Per GHCI 1.5: this hash is placed in tdinfo.MROWNER as the policy signing key identifier.
+pub fn get_policy_signer_key_hash(cert_chain_pem: &[u8]) -> Result<[u8; SHA384_DIGEST_SIZE]> {
+    let cert_chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    if cert_chain.is_empty() {
+        return Err(Error::CertChainVerification(
+            "No certificates found in chain".into(),
+        ));
+    }
+    let leaf_cert = &cert_chain[0];
+    let cert =
+        x509::Certificate::from_der(leaf_cert.as_ref()).map_err(|_| Error::ParseCertificate)?;
+    let public_key = extract_public_key_from_cert(&cert)?;
+    let hash_vec = hash::digest_sha384(&public_key).map_err(|_| Error::CalculateDigest)?;
+    let mut hash = [0u8; SHA384_DIGEST_SIZE];
+    hash.copy_from_slice(&hash_vec);
+    Ok(hash)
+}
+
 /// Verifies a certificate chain and then verifies a message signature
 pub fn verify_cert_chain_and_signature(
     cert_chain_pem: &[u8],
