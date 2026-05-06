@@ -399,9 +399,50 @@ fn parse_request(
 
     match op {
         DataStatusOperation::StartMigration => {
-            decode_and_dispatch!(MigtdMigrationInformation, |mig_info| {
-                WaitForRequestResponse::StartMigration(MigrationInformation { mig_info })
-            })
+            #[cfg(feature = "policy_v2")]
+            {
+                match MigtdMigrationInformation::read_from_bytes(data_length, slice) {
+                    Ok(mig_info) => {
+                        use crate::migration::init_data::InitData;
+                        let init_migtd_data = if mig_info.has_init_data == 1 {
+                            let fixed_size = core::mem::size_of::<MigtdMigrationInformation>();
+                            Some(
+                                InitData::read_from_bytes(&slice[fixed_size..])
+                                    .ok_or(MigrationResult::InvalidParameter)
+                                    .map_err(|status| {
+                                        log_request_error!(
+                                            request_id,
+                                            "wait_for_request: StartMigration failed to decode init_migtd_data\n"
+                                        );
+                                        status
+                                    })?,
+                            )
+                        } else {
+                            None
+                        };
+                        try_accept_request(
+                            mig_info.mig_request_id,
+                            WaitForRequestResponse::StartMigration(MigrationInformation {
+                                mig_info,
+                                init_migtd_data,
+                            }),
+                        )
+                    }
+                    Err(status) => {
+                        log_request_error!(
+                            request_id,
+                            "wait_for_request: StartMigration failed to decode payload\n"
+                        );
+                        reject_request(pending_error_report, request_id, status)
+                    }
+                }
+            }
+            #[cfg(not(feature = "policy_v2"))]
+            {
+                decode_and_dispatch!(MigtdMigrationInformation, |mig_info| {
+                    WaitForRequestResponse::StartMigration(MigrationInformation { mig_info })
+                })
+            }
         }
         DataStatusOperation::StartRebinding => {
             #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
@@ -674,7 +715,7 @@ pub async fn get_migtd_data(
     data: &mut Vec<u8>,
     request_id: u64,
 ) -> Result<()> {
-    use crate::migration::rebinding::InitData;
+    use crate::migration::init_data::InitData;
 
     let init_data = InitData::get_from_local(additional_data).ok_or_else(|| {
         log::error!( migration_request_id = request_id;
@@ -950,6 +991,8 @@ async fn migration_src_exchange_msk(
             &mut spdm_requester,
             &info.mig_info,
             #[cfg(feature = "policy_v2")]
+            info.init_migtd_data.as_ref(),
+            #[cfg(feature = "policy_v2")]
             remote_policy,
         ),
     )
@@ -1021,6 +1064,18 @@ async fn migration_dst_exchange_msk(
 
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
+    // Per GHCI 1.5: if VMM provided initMigtdData, verify policy binding
+    #[cfg(feature = "policy_v2")]
+    if let Some(ref init_data) = info.init_migtd_data {
+        crate::mig_policy::verify_init_migtd_data_policy_binding(init_data).map_err(|e| {
+            log::error!(
+                migration_request_id = info.mig_info.mig_request_id;
+                "exchange_msk: initMigtdData policy binding verification failed: {:?}\n", e
+            );
+            MigrationResult::PolicyUnsatisfiedError
+        })?;
+    }
+
     let mut transport = setup_transport(
         info.mig_info.mig_request_id,
         #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]

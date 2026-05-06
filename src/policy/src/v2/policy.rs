@@ -294,6 +294,10 @@ impl<'a> PolicyData<'a> {
         !self.id.is_empty() && self.version == "2.0"
     }
 
+    pub fn get_policy_svn(&self) -> u32 {
+        self.policy_svn
+    }
+
     pub fn evaluate_policy_forward(
         &self,
         value: &PolicyEvaluationInfo,

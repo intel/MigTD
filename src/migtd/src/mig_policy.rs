@@ -689,6 +689,73 @@ mod v2 {
         })
     }
 
+    /// Per GHCI 1.5: Verify that own TDINFO.MROWNER matches policy signing key hash
+    /// and TDINFO.MROWNERCONFIG matches policy SVN.
+    /// Must be called at MigTD startup to ensure VMM correctly provisioned the TD.
+    pub fn verify_own_tdinfo() -> Result<(), PolicyError> {
+        use crate::config::get_policy_issuer_chain;
+
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let policy_svn = policy.policy_data.get_policy_svn();
+
+        // Get own TDINFO from TDReport
+        let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
+            .map_err(|_| PolicyError::GetTdxReport)?;
+        let td_info = &tdx_report.td_info;
+
+        // Verify MROWNERCONFIG == policy_svn (stored as little-endian u32 in first 4 bytes,
+        // remaining 44 bytes must be zero)
+        let mut expected_mrownerconfig = [0u8; SHA384_DIGEST_SIZE];
+        expected_mrownerconfig[..4].copy_from_slice(&policy_svn.to_le_bytes());
+        if td_info.mrownerconfig != expected_mrownerconfig {
+            return Err(PolicyError::SvnMismatch);
+        }
+
+        // Verify MROWNER == SHA384(policy signing public key)
+        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        let policy_key_hash = crypto::get_policy_signer_key_hash(policy_issuer_chain)
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+        if td_info.mrowner != policy_key_hash {
+            return Err(PolicyError::PolicyHashMismatch);
+        }
+
+        Ok(())
+    }
+
+    /// Per GHCI 1.5: Verify initMigtdData.MROWNER matches own policy signer key hash
+    /// and initMigtdData.MROWNERCONFIG <= own policy SVN.
+    pub fn verify_init_migtd_data_policy_binding(
+        init_data: &crate::migration::init_data::InitData,
+    ) -> Result<(), PolicyError> {
+        use crate::config::get_policy_issuer_chain;
+
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let my_policy_svn = policy.policy_data.get_policy_svn();
+
+        // Check MROWNER == own policy signer key hash
+        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+        let policy_key_hash = crypto::get_policy_signer_key_hash(policy_issuer_chain)
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+        if init_data.mrowner() != policy_key_hash {
+            return Err(PolicyError::PolicyHashMismatch);
+        }
+
+        // Check MROWNERCONFIG (init policy_svn) <= my policy_svn
+        let init_mrownerconfig = init_data.mrownerconfig();
+        let mut init_svn_bytes = [0u8; 4];
+        init_svn_bytes.copy_from_slice(&init_mrownerconfig[..4]);
+        let init_policy_svn = u32::from_le_bytes(init_svn_bytes);
+        // Remaining 44 bytes should be zero
+        if init_mrownerconfig[4..] != [0u8; SHA384_DIGEST_SIZE - 4] {
+            return Err(PolicyError::InvalidParameter);
+        }
+        if init_policy_svn > my_policy_svn {
+            return Err(PolicyError::SvnMismatch);
+        }
+
+        Ok(())
+    }
+
     #[test]
     fn test_unix_to_iso8601() {
         let timestamp = 1704067200; // Corresponds to 2024-01-01T00:00:00Z
