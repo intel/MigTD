@@ -8,7 +8,7 @@
 extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
-use der::{Decode, Encode};
+use der::{Decode, Encode, Sequence};
 use pki_types::{pem::PemObject, CertificateDer};
 
 cfg_if::cfg_if! {
@@ -269,6 +269,24 @@ fn verify_signature_with_algorithm(
 /// 1. Verifies the peer chain's internal signature integrity
 /// 2. Root CA must match between local and peer chains
 /// 3. Leaf certificate Subject Name must match
+/// 4. Every issuer certificate in the peer chain MUST carry the X.509
+///    `BasicConstraints` extension with `cA=TRUE` (RFC 5280 §4.2.1.9). This
+///    prevents a peer from presenting `[fake_leaf, legit_leaf, …]` where the
+///    legit leaf's private key was stolen and used to sign a synthetic
+///    sub-leaf — the legit leaf is not a CA, so it is not a valid issuer.
+///
+/// Intentionally not checked:
+/// - **Intermediate cert identity** — intermediate cert contents are not
+///   compared against the local chain's intermediates. This lets either
+///   side rotate its intermediate CA(s) independently, as long as the
+///   shared root and the leaf Subject Name remain stable and every issuer
+///   in the peer chain is itself a CA (check 4). Intermediate certs are
+///   still validated structurally (signature integrity in check 1 and
+///   CA-attribute in check 4).
+///
+/// Assumption: the leaf cert's Subject Name uniquely identifies the
+/// intended usage for the product/model — distinct usages must use
+/// distinct Subject Names in their leaf certs.
 pub fn validate_peer_cert_chain(local_chain_pem: &[u8], peer_chain_pem: &[u8]) -> Result<()> {
     let local_chain = extract_cert_chain_from_pem(local_chain_pem)?;
     let peer_chain = extract_cert_chain_from_pem(peer_chain_pem)?;
@@ -292,7 +310,61 @@ pub fn validate_peer_cert_chain(local_chain_pem: &[u8], peer_chain_pem: &[u8]) -
         ));
     }
 
+    // 4. Every issuer in the peer chain must be a CA.
+    for cert_der in peer_chain.iter().skip(1) {
+        let issuer =
+            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
+        if !is_ca_certificate(&issuer)? {
+            return Err(Error::PeerCertChainValidation(
+                "Peer chain contains a non-CA issuer certificate (BasicConstraints \
+                 cA=TRUE missing)"
+                    .into(),
+            ));
+        }
+    }
+
     Ok(())
+}
+
+/// X.509 BasicConstraints extension OID (RFC 5280 §4.2.1.9).
+const BASIC_CONSTRAINTS_OID: x509::ObjectIdentifier =
+    x509::ObjectIdentifier::new_unwrap("2.5.29.19");
+
+/// Minimal DER representation of `BasicConstraints` per RFC 5280 §4.2.1.9:
+///
+/// ```text
+/// BasicConstraints ::= SEQUENCE {
+///     cA                      BOOLEAN DEFAULT FALSE,
+///     pathLenConstraint       INTEGER (0..MAX) OPTIONAL
+/// }
+/// ```
+///
+/// Both fields are encoded as ASN.1 OPTIONAL. `cA` is omitted when FALSE
+/// (DEFAULT) and `pathLenConstraint` is intentionally OPTIONAL, so a
+/// tolerant parser is needed.
+#[derive(Debug, Sequence)]
+struct BasicConstraints {
+    ca: Option<bool>,
+    path_len: Option<u32>,
+}
+
+/// Returns `true` if the certificate carries the BasicConstraints extension
+/// with `cA=TRUE`. Returns `false` if the extension is absent or `cA` is
+/// FALSE. Returns `Error::ParseCertificate` if the extension cannot be
+/// decoded.
+fn is_ca_certificate(cert: &x509::Certificate<'_>) -> Result<bool> {
+    let Some(extensions) = cert.tbs_certificate.extensions.as_ref() else {
+        return Ok(false);
+    };
+    for ext in extensions.get() {
+        if ext.extn_id == BASIC_CONSTRAINTS_OID {
+            let value = ext.extn_value.as_ref().ok_or(Error::ParseCertificate)?;
+            let bc = BasicConstraints::from_der(value.as_bytes())
+                .map_err(|_| Error::ParseCertificate)?;
+            return Ok(bc.ca.unwrap_or(false));
+        }
+    }
+    Ok(false)
 }
 
 fn check_root_ca_match(
@@ -316,108 +388,56 @@ fn check_root_ca_match(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_cert_chain_verification() {
-        let test_pem = b"-----BEGIN CERTIFICATE-----
-MIICVzCCAd6gAwIBAgIUVKXleE/7DfWQZ7seyT3TqMXwAqcwCgYIKoZIzj0EAwMw
-dDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
-YTEiMCAGA1UECgwZTWlnVEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwV
-TWlnVEQgSW50ZXJtZWRpYXRlIENBMB4XDTI1MDkwNTA1NTI1M1oXDTI2MDkwNTA1
-NTI1M1owYzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50
-YSBDbGFyYTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRowGAYDVQQDDBFNaWdURCBJ
-bmZvIElzc3VlcjB2MBAGByqGSM49AgEGBSuBBAAiA2IABL1rH/Pc4KUchfNLqm2z
-Wc1FC7RfBI4xGUSU/hBnRDmEj5HKWdN2p7YIeUn+z0RiYXUxr5nHed+pvaD2CZ1b
-y2wymsVZQpWIwtf8shfePFJcQrHsYsmmvvwi5ocOXe6ZkaNCMEAwHQYDVR0OBBYE
-FHIbR1J8L+HjJNaHdXioZJ5r9zrSMB8GA1UdIwQYMBaAFJYGgWjSezCJ0vsgGDCl
-W1a/KQLdMAoGCCqGSM49BAMDA2cAMGQCMCshcjFfbTVDx6XJL+ERXKqfTJdhK1oH
-tMQ+m74KW6AfKZt0lqZ5eeFXc/RFW8pKpQIwHsObyRhFH6OaFqxw+oItj2qCRUlz
-cCnHD8l/TBHhUoubb2OMLoENlBLECLtFHV2X
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIICVDCCAdqgAwIBAgIUY4sE3O7mKGtP/otJ0s4WQtwn4ZswCgYIKoZIzj0EAwMw
-XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
-YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
-MB4XDTI1MDkwNTA1NDQ0M1oXDTMwMDkwNDA1NDQ0M1owdDELMAkGA1UEBhMCVVMx
-CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEiMCAGA1UECgwZTWln
-VEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwVTWlnVEQgSW50ZXJtZWRp
-YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEhf4d4GTrO4NhJ24aG5A3i4Qu
-mwGZ+Jsfo3siVVy1/vke9tN+ylkZlR5M2bl4O4y2eeUMGrzwSu84L/7crgqnnZsH
-XrOQslNsSYJzB+YrbeJ1GBG+oDnCxvYgLTvCDtDio0IwQDAdBgNVHQ4EFgQUlgaB
-aNJ7MInS+yAYMKVbVr8pAt0wHwYDVR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8
-FY0wCgYIKoZIzj0EAwMDaAAwZQIwHoKqUxUqI2Zw8omp82svEjmN477njoK9YtOU
-XtukW4+7RkU6VqSR6ND/9H83PMrLAjEAkPcCM/8QG3yZL1pxvKv87JwOIMJd5eUu
-QDT7gy1UxPCjOETC2ygJyjJdYxBbXQrr
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIICTzCCAdagAwIBAgIUeUyrqFAE0stc3jxOpGo12mTasB0wCgYIKoZIzj0EAwMw
-XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
-YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
-MB4XDTI1MDkwNTA1NDIxNVoXDTM1MDkwMzA1NDIxNVowXzELMAkGA1UEBhMCVVMx
-CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEVMBMGA1UECgwMTWln
-VEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENBMHYwEAYHKoZIzj0CAQYF
-K4EEACIDYgAEDnCmBt1r87/4VTwChvkyyrbfL79z5cx0NrVN4Gmp6HvpndL95MCd
-ArnSdslXL/WmupFbxzy+a6mP4jdmR3oC7KyEaCKftOAct+Pz/e1KVI+QA3arR3IK
-xW5TYzSQpoMdo1MwUTAdBgNVHQ4EFgQUpXzUSS/yVomZP8e814EZVbC8FY0wHwYD
-VR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8FY0wDwYDVR0TAQH/BAUwAwEB/zAK
-BggqhkjOPQQDAwNnADBkAjBLN5JiAwPChO4RWfAMy+XjUbllaTFTxRqwCRliwx0v
-f4aNNQ6Vrzv3pYXXmwl0CaoCMGFKKLm6EVwvQcILpSL3JpkfcKMfsUlJgdkVlF/W
-rPSb+wS9KsT0dcF2DU5F12BycQ==
------END CERTIFICATE-----
-";
-
-        let cert_chain = extract_cert_chain_from_pem(test_pem).unwrap();
-        assert!(verify_certificate_chain(&cert_chain).is_ok());
-    }
-
-    // Test chain for peer cert chain validation tests:
-    // Leaf: CN=MigTD Info Issuer, expires 2026-09-05
-    // Intermediate: CN=MigTD Intermediate CA, expires 2030-09-04
-    // Root: CN=MigTD Root CA, expires 2035-09-03
+    // Full 3-cert chain from key_gen.sh (leaf-to-root).
+    // - Leaf:         CN=MigTD Info Issuer (NOT a CA — KeyUsage=digitalSignature only).
+    // - Intermediate: CN=MigTD Intermediate CA (CA:TRUE, keyCertSign+cRLSign).
+    // - Root:         CN=MigTD Root CA (CA:TRUE, self-signed).
     fn test_chain() -> &'static [u8] {
         b"-----BEGIN CERTIFICATE-----
-MIICVzCCAd6gAwIBAgIUVKXleE/7DfWQZ7seyT3TqMXwAqcwCgYIKoZIzj0EAwMw
+MIICaTCCAe6gAwIBAgIUSrdf9Y+hTcE9dH+1uihg7mKJCXswCgYIKoZIzj0EAwMw
 dDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
 YTEiMCAGA1UECgwZTWlnVEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwV
-TWlnVEQgSW50ZXJtZWRpYXRlIENBMB4XDTI1MDkwNTA1NTI1M1oXDTI2MDkwNTA1
-NTI1M1owYzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50
+TWlnVEQgSW50ZXJtZWRpYXRlIENBMB4XDTI2MDUxMjIwNDA0MFoXDTI3MDUxMjIw
+NDA0MFowYzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50
 YSBDbGFyYTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRowGAYDVQQDDBFNaWdURCBJ
-bmZvIElzc3VlcjB2MBAGByqGSM49AgEGBSuBBAAiA2IABL1rH/Pc4KUchfNLqm2z
-Wc1FC7RfBI4xGUSU/hBnRDmEj5HKWdN2p7YIeUn+z0RiYXUxr5nHed+pvaD2CZ1b
-y2wymsVZQpWIwtf8shfePFJcQrHsYsmmvvwi5ocOXe6ZkaNCMEAwHQYDVR0OBBYE
-FHIbR1J8L+HjJNaHdXioZJ5r9zrSMB8GA1UdIwQYMBaAFJYGgWjSezCJ0vsgGDCl
-W1a/KQLdMAoGCCqGSM49BAMDA2cAMGQCMCshcjFfbTVDx6XJL+ERXKqfTJdhK1oH
-tMQ+m74KW6AfKZt0lqZ5eeFXc/RFW8pKpQIwHsObyRhFH6OaFqxw+oItj2qCRUlz
-cCnHD8l/TBHhUoubb2OMLoENlBLECLtFHV2X
+bmZvIElzc3VlcjB2MBAGByqGSM49AgEGBSuBBAAiA2IABP8JXaMsqGwwMJy3Ec5i
+d/3/KF+Ti11YD0y866xGWT6xfuWqBljkvwy+xFBnwAh+SNisDYpldJ7y9iuA/jPf
+YzbREHvU4CglU5oO96+9ZQacPFsSaN6OD1CwR5DhVGhi+6NSMFAwDgYDVR0PAQH/
+BAQDAgeAMB0GA1UdDgQWBBRvBEchXoNXCUv5K48Q45ARGecJhDAfBgNVHSMEGDAW
+gBRedFi0rhq/hbdRGgjzV1Q62kPMRDAKBggqhkjOPQQDAwNpADBmAjEAx/vI59IH
+mdG27TBGsOS6KzfZ7avUDurwwFx++58HjoLq68p8jvKQBQJjco9bcwUFAjEA7otq
+20JSaBxpLxkBJCcunZc7i9ySGRywIPCiynvgp4SLMCqXSr9po/wjufNMVyDc
 -----END CERTIFICATE-----
 -----BEGIN CERTIFICATE-----
-MIICVDCCAdqgAwIBAgIUY4sE3O7mKGtP/otJ0s4WQtwn4ZswCgYIKoZIzj0EAwMw
+MIICdDCCAfugAwIBAgIUHMVbFQp3McoskjA3z+fkDslYWqowCgYIKoZIzj0EAwMw
 XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
 YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
-MB4XDTI1MDkwNTA1NDQ0M1oXDTMwMDkwNDA1NDQ0M1owdDELMAkGA1UEBhMCVVMx
+MB4XDTI2MDUxMjIwNDA0MFoXDTMxMDUxMTIwNDA0MFowdDELMAkGA1UEBhMCVVMx
 CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEiMCAGA1UECgwZTWln
 VEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwVTWlnVEQgSW50ZXJtZWRp
-YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEhf4d4GTrO4NhJ24aG5A3i4Qu
-mwGZ+Jsfo3siVVy1/vke9tN+ylkZlR5M2bl4O4y2eeUMGrzwSu84L/7crgqnnZsH
-XrOQslNsSYJzB+YrbeJ1GBG+oDnCxvYgLTvCDtDio0IwQDAdBgNVHQ4EFgQUlgaB
-aNJ7MInS+yAYMKVbVr8pAt0wHwYDVR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8
-FY0wCgYIKoZIzj0EAwMDaAAwZQIwHoKqUxUqI2Zw8omp82svEjmN477njoK9YtOU
-XtukW4+7RkU6VqSR6ND/9H83PMrLAjEAkPcCM/8QG3yZL1pxvKv87JwOIMJd5eUu
-QDT7gy1UxPCjOETC2ygJyjJdYxBbXQrr
+YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE8AtBvl6xficPzPr/1HKbVR2G
+pqPAeoAB9+j/N58VbzOViyn0IUdnBGbHAcbbWgJnJJnCKikaLo0LYsIXr43zhu6h
+KSn/Y6zqYvQX6Vg7P1fXykqOjD/BHTufsT6nbCVeo2MwYTAPBgNVHRMBAf8EBTAD
+AQH/MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUXnRYtK4av4W3URoI81dUOtpD
+zEQwHwYDVR0jBBgwFoAUgcamhlxuWjL7bCdkQ/Wlio7wcqcwCgYIKoZIzj0EAwMD
+ZwAwZAIwRq/4NxR8KpRKwAKRPmt/XPGpCwmVSwo3iz9Qg8bkXrgwm/eVaPm0ujH9
+a87fGPZEAjAjOp2/u/qcNxJA/9TYwIazlGcIpgaicZsxrmNJO7/wvyKTqhnhqjD9
+kXYiyuG9OEI=
 -----END CERTIFICATE-----
 -----BEGIN CERTIFICATE-----
-MIICTzCCAdagAwIBAgIUeUyrqFAE0stc3jxOpGo12mTasB0wCgYIKoZIzj0EAwMw
+MIICUDCCAdagAwIBAgIUHhqbod5/KXrSjOsYEXscanAe+BMwCgYIKoZIzj0EAwMw
 XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
 YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
-MB4XDTI1MDkwNTA1NDIxNVoXDTM1MDkwMzA1NDIxNVowXzELMAkGA1UEBhMCVVMx
+MB4XDTI2MDUxMjIwNDA0MFoXDTM2MDUwOTIwNDA0MFowXzELMAkGA1UEBhMCVVMx
 CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEVMBMGA1UECgwMTWln
 VEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENBMHYwEAYHKoZIzj0CAQYF
-K4EEACIDYgAEDnCmBt1r87/4VTwChvkyyrbfL79z5cx0NrVN4Gmp6HvpndL95MCd
-ArnSdslXL/WmupFbxzy+a6mP4jdmR3oC7KyEaCKftOAct+Pz/e1KVI+QA3arR3IK
-xW5TYzSQpoMdo1MwUTAdBgNVHQ4EFgQUpXzUSS/yVomZP8e814EZVbC8FY0wHwYD
-VR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8FY0wDwYDVR0TAQH/BAUwAwEB/zAK
-BggqhkjOPQQDAwNnADBkAjBLN5JiAwPChO4RWfAMy+XjUbllaTFTxRqwCRliwx0v
-f4aNNQ6Vrzv3pYXXmwl0CaoCMGFKKLm6EVwvQcILpSL3JpkfcKMfsUlJgdkVlF/W
-rPSb+wS9KsT0dcF2DU5F12BycQ==
+K4EEACIDYgAEYTrowfeGuVxrFtuJe8VYRR97M+JIKnuDYSp/Lajw89O2nsvRqj0Q
+Z6ZrLwnU+vVmvcWINKuh34BnXytkceZNb1CrLTd/u99fkFjwG3yzZkyIWdChSY8j
+N7tLRdr/H5wVo1MwUTAdBgNVHQ4EFgQUgcamhlxuWjL7bCdkQ/Wlio7wcqcwHwYD
+VR0jBBgwFoAUgcamhlxuWjL7bCdkQ/Wlio7wcqcwDwYDVR0TAQH/BAUwAwEB/zAK
+BggqhkjOPQQDAwNoADBlAjAG1gB8KRE9HtDQ6prOldA5698qAroyH2pcbfdSEFn3
+LKLJ4Rm2r0hbHToxLm7QhBkCMQDUwcFqYZYHpjJXojYkH50o4erRwY/hz6XtjvTt
+m07Y31+o+LpsZuEnlIETx/zemHA=
 -----END CERTIFICATE-----
 "
     }
@@ -425,19 +445,19 @@ rPSb+wS9KsT0dcF2DU5F12BycQ==
     // Extract only root CA cert (last in chain)
     fn root_ca_only() -> &'static [u8] {
         b"-----BEGIN CERTIFICATE-----
-MIICTzCCAdagAwIBAgIUeUyrqFAE0stc3jxOpGo12mTasB0wCgYIKoZIzj0EAwMw
+MIICUDCCAdagAwIBAgIUHhqbod5/KXrSjOsYEXscanAe+BMwCgYIKoZIzj0EAwMw
 XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
 YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
-MB4XDTI1MDkwNTA1NDIxNVoXDTM1MDkwMzA1NDIxNVowXzELMAkGA1UEBhMCVVMx
+MB4XDTI2MDUxMjIwNDA0MFoXDTM2MDUwOTIwNDA0MFowXzELMAkGA1UEBhMCVVMx
 CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEVMBMGA1UECgwMTWln
 VEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENBMHYwEAYHKoZIzj0CAQYF
-K4EEACIDYgAEDnCmBt1r87/4VTwChvkyyrbfL79z5cx0NrVN4Gmp6HvpndL95MCd
-ArnSdslXL/WmupFbxzy+a6mP4jdmR3oC7KyEaCKftOAct+Pz/e1KVI+QA3arR3IK
-xW5TYzSQpoMdo1MwUTAdBgNVHQ4EFgQUpXzUSS/yVomZP8e814EZVbC8FY0wHwYD
-VR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8FY0wDwYDVR0TAQH/BAUwAwEB/zAK
-BggqhkjOPQQDAwNnADBkAjBLN5JiAwPChO4RWfAMy+XjUbllaTFTxRqwCRliwx0v
-f4aNNQ6Vrzv3pYXXmwl0CaoCMGFKKLm6EVwvQcILpSL3JpkfcKMfsUlJgdkVlF/W
-rPSb+wS9KsT0dcF2DU5F12BycQ==
+K4EEACIDYgAEYTrowfeGuVxrFtuJe8VYRR97M+JIKnuDYSp/Lajw89O2nsvRqj0Q
+Z6ZrLwnU+vVmvcWINKuh34BnXytkceZNb1CrLTd/u99fkFjwG3yzZkyIWdChSY8j
+N7tLRdr/H5wVo1MwUTAdBgNVHQ4EFgQUgcamhlxuWjL7bCdkQ/Wlio7wcqcwHwYD
+VR0jBBgwFoAUgcamhlxuWjL7bCdkQ/Wlio7wcqcwDwYDVR0TAQH/BAUwAwEB/zAK
+BggqhkjOPQQDAwNoADBlAjAG1gB8KRE9HtDQ6prOldA5698qAroyH2pcbfdSEFn3
+LKLJ4Rm2r0hbHToxLm7QhBkCMQDUwcFqYZYHpjJXojYkH50o4erRwY/hz6XtjvTt
+m07Y31+o+LpsZuEnlIETx/zemHA=
 -----END CERTIFICATE-----
 "
     }
@@ -446,21 +466,106 @@ rPSb+wS9KsT0dcF2DU5F12BycQ==
     fn different_root_chain() -> &'static [u8] {
         // Use intermediate cert as "root" to simulate different root CA
         b"-----BEGIN CERTIFICATE-----
-MIICVDCCAdqgAwIBAgIUY4sE3O7mKGtP/otJ0s4WQtwn4ZswCgYIKoZIzj0EAwMw
+MIICdDCCAfugAwIBAgIUHMVbFQp3McoskjA3z+fkDslYWqowCgYIKoZIzj0EAwMw
 XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
 YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
-MB4XDTI1MDkwNTA1NDQ0M1oXDTMwMDkwNDA1NDQ0M1owdDELMAkGA1UEBhMCVVMx
+MB4XDTI2MDUxMjIwNDA0MFoXDTMxMDUxMTIwNDA0MFowdDELMAkGA1UEBhMCVVMx
 CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEiMCAGA1UECgwZTWln
 VEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwVTWlnVEQgSW50ZXJtZWRp
-YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEhf4d4GTrO4NhJ24aG5A3i4Qu
-mwGZ+Jsfo3siVVy1/vke9tN+ylkZlR5M2bl4O4y2eeUMGrzwSu84L/7crgqnnZsH
-XrOQslNsSYJzB+YrbeJ1GBG+oDnCxvYgLTvCDtDio0IwQDAdBgNVHQ4EFgQUlgaB
-aNJ7MInS+yAYMKVbVr8pAt0wHwYDVR0jBBgwFoAUpXzUSS/yVomZP8e814EZVbC8
-FY0wCgYIKoZIzj0EAwMDaAAwZQIwHoKqUxUqI2Zw8omp82svEjmN477njoK9YtOU
-XtukW4+7RkU6VqSR6ND/9H83PMrLAjEAkPcCM/8QG3yZL1pxvKv87JwOIMJd5eUu
-QDT7gy1UxPCjOETC2ygJyjJdYxBbXQrr
+YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE8AtBvl6xficPzPr/1HKbVR2G
+pqPAeoAB9+j/N58VbzOViyn0IUdnBGbHAcbbWgJnJJnCKikaLo0LYsIXr43zhu6h
+KSn/Y6zqYvQX6Vg7P1fXykqOjD/BHTufsT6nbCVeo2MwYTAPBgNVHRMBAf8EBTAD
+AQH/MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUXnRYtK4av4W3URoI81dUOtpD
+zEQwHwYDVR0jBBgwFoAUgcamhlxuWjL7bCdkQ/Wlio7wcqcwCgYIKoZIzj0EAwMD
+ZwAwZAIwRq/4NxR8KpRKwAKRPmt/XPGpCwmVSwo3iz9Qg8bkXrgwm/eVaPm0ujH9
+a87fGPZEAjAjOp2/u/qcNxJA/9TYwIazlGcIpgaicZsxrmNJO7/wvyKTqhnhqjD9
+kXYiyuG9OEI=
 -----END CERTIFICATE-----
 "
+    }
+
+    // Adversarial chain demonstrating the stolen-leaf-key attack:
+    //   [fake_leaf, legit_leaf, intermediate, root]
+    // The legit leaf has no BasicConstraints; the fake leaf was signed by
+    // the legit leaf's key while reusing the legit leaf's Subject Name, so
+    // the existing subject-name + root-match + signature-integrity checks
+    // all pass. Only the CA-attribute check on the legit leaf (as issuer)
+    // rejects this chain.
+    fn attacker_chain() -> &'static [u8] {
+        b"-----BEGIN CERTIFICATE-----
+MIICVzCCAd2gAwIBAgIUHTraNuO2R92W3rj+VUu757uTU/0wCgYIKoZIzj0EAwMw
+YzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRowGAYDVQQDDBFNaWdURCBJbmZvIElz
+c3VlcjAeFw0yNjA1MTIyMDQwNTFaFw0yNzA1MTIyMDQwNTFaMGMxCzAJBgNVBAYT
+AlVTMQswCQYDVQQIDAJDQTEUMBIGA1UEBwwLU2FudGEgQ2xhcmExFTATBgNVBAoM
+DE1pZ1REIElzc3VlcjEaMBgGA1UEAwwRTWlnVEQgSW5mbyBJc3N1ZXIwdjAQBgcq
+hkjOPQIBBgUrgQQAIgNiAASSxgLL0LwBReD+XOcpX+sofsCF1cuwD1V78omG4FTR
+sM9BiUlLMzx3wS7eGyfc2E06LE0Yoe701LU0HbpoA7dh48ZaAiov18ACmaJzjCU+
+WwKqLkk3pzv+ZI4D9/b0CoqjUjBQMA4GA1UdDwEB/wQEAwIHgDAdBgNVHQ4EFgQU
+EJLTAf3lyV3K8sZTp2rn0H1WNoMwHwYDVR0jBBgwFoAUbwRHIV6DVwlL+SuPEOOQ
+ERnnCYQwCgYIKoZIzj0EAwMDaAAwZQIwME3HTmUH1tI0jQgwPhcF0r/xIMsI6suv
+T42M1YqZtbLc7OYmG5PXfvTH1PwPFkAFAjEApGGfk3iBkY0QRybxwbE2bmL+7HqN
+yCfVJCtt1codfb8+xNkUHsH+kXEIzAqRAU5+
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICaTCCAe6gAwIBAgIUSrdf9Y+hTcE9dH+1uihg7mKJCXswCgYIKoZIzj0EAwMw
+dDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEiMCAGA1UECgwZTWlnVEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwV
+TWlnVEQgSW50ZXJtZWRpYXRlIENBMB4XDTI2MDUxMjIwNDA0MFoXDTI3MDUxMjIw
+NDA0MFowYzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50
+YSBDbGFyYTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRowGAYDVQQDDBFNaWdURCBJ
+bmZvIElzc3VlcjB2MBAGByqGSM49AgEGBSuBBAAiA2IABP8JXaMsqGwwMJy3Ec5i
+d/3/KF+Ti11YD0y866xGWT6xfuWqBljkvwy+xFBnwAh+SNisDYpldJ7y9iuA/jPf
+YzbREHvU4CglU5oO96+9ZQacPFsSaN6OD1CwR5DhVGhi+6NSMFAwDgYDVR0PAQH/
+BAQDAgeAMB0GA1UdDgQWBBRvBEchXoNXCUv5K48Q45ARGecJhDAfBgNVHSMEGDAW
+gBRedFi0rhq/hbdRGgjzV1Q62kPMRDAKBggqhkjOPQQDAwNpADBmAjEAx/vI59IH
+mdG27TBGsOS6KzfZ7avUDurwwFx++58HjoLq68p8jvKQBQJjco9bcwUFAjEA7otq
+20JSaBxpLxkBJCcunZc7i9ySGRywIPCiynvgp4SLMCqXSr9po/wjufNMVyDc
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICdDCCAfugAwIBAgIUHMVbFQp3McoskjA3z+fkDslYWqowCgYIKoZIzj0EAwMw
+XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
+MB4XDTI2MDUxMjIwNDA0MFoXDTMxMDUxMTIwNDA0MFowdDELMAkGA1UEBhMCVVMx
+CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEiMCAGA1UECgwZTWln
+VEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwVTWlnVEQgSW50ZXJtZWRp
+YXRlIENBMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE8AtBvl6xficPzPr/1HKbVR2G
+pqPAeoAB9+j/N58VbzOViyn0IUdnBGbHAcbbWgJnJJnCKikaLo0LYsIXr43zhu6h
+KSn/Y6zqYvQX6Vg7P1fXykqOjD/BHTufsT6nbCVeo2MwYTAPBgNVHRMBAf8EBTAD
+AQH/MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUXnRYtK4av4W3URoI81dUOtpD
+zEQwHwYDVR0jBBgwFoAUgcamhlxuWjL7bCdkQ/Wlio7wcqcwCgYIKoZIzj0EAwMD
+ZwAwZAIwRq/4NxR8KpRKwAKRPmt/XPGpCwmVSwo3iz9Qg8bkXrgwm/eVaPm0ujH9
+a87fGPZEAjAjOp2/u/qcNxJA/9TYwIazlGcIpgaicZsxrmNJO7/wvyKTqhnhqjD9
+kXYiyuG9OEI=
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIICUDCCAdagAwIBAgIUHhqbod5/KXrSjOsYEXscanAe+BMwCgYIKoZIzj0EAwMw
+XzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENB
+MB4XDTI2MDUxMjIwNDA0MFoXDTM2MDUwOTIwNDA0MFowXzELMAkGA1UEBhMCVVMx
+CzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFyYTEVMBMGA1UECgwMTWln
+VEQgSXNzdWVyMRYwFAYDVQQDDA1NaWdURCBSb290IENBMHYwEAYHKoZIzj0CAQYF
+K4EEACIDYgAEYTrowfeGuVxrFtuJe8VYRR97M+JIKnuDYSp/Lajw89O2nsvRqj0Q
+Z6ZrLwnU+vVmvcWINKuh34BnXytkceZNb1CrLTd/u99fkFjwG3yzZkyIWdChSY8j
+N7tLRdr/H5wVo1MwUTAdBgNVHQ4EFgQUgcamhlxuWjL7bCdkQ/Wlio7wcqcwHwYD
+VR0jBBgwFoAUgcamhlxuWjL7bCdkQ/Wlio7wcqcwDwYDVR0TAQH/BAUwAwEB/zAK
+BggqhkjOPQQDAwNoADBlAjAG1gB8KRE9HtDQ6prOldA5698qAroyH2pcbfdSEFn3
+LKLJ4Rm2r0hbHToxLm7QhBkCMQDUwcFqYZYHpjJXojYkH50o4erRwY/hz6XtjvTt
+m07Y31+o+LpsZuEnlIETx/zemHA=
+-----END CERTIFICATE-----
+"
+    }
+
+    fn run_with_cert<R>(pem: &[u8], f: impl FnOnce(&x509::Certificate<'_>) -> R) -> R {
+        let der = pem_cert_to_der(pem).unwrap();
+        let cert = x509::Certificate::from_der(der.as_ref()).unwrap();
+        f(&cert)
+    }
+
+    #[test]
+    fn test_cert_chain_verification() {
+        let cert_chain = extract_cert_chain_from_pem(test_chain()).unwrap();
+        assert!(verify_certificate_chain(&cert_chain).is_ok());
     }
 
     #[test]
@@ -494,6 +599,65 @@ QDT7gy1UxPCjOETC2ygJyjJdYxBbXQrr
                 assert!(msg.contains("Subject Name mismatch"));
             }
             _ => panic!("Expected PeerCertChainValidation error"),
+        }
+    }
+
+    #[test]
+    fn test_is_ca_certificate_leaf_is_not_ca() {
+        // Extract the leaf cert (first cert in test_chain).
+        let leaf_pem = b"-----BEGIN CERTIFICATE-----
+MIICaTCCAe6gAwIBAgIUSrdf9Y+hTcE9dH+1uihg7mKJCXswCgYIKoZIzj0EAwMw
+dDELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50YSBDbGFy
+YTEiMCAGA1UECgwZTWlnVEQgSW50ZXJtZWRpYXRlIElzc3VlcjEeMBwGA1UEAwwV
+TWlnVEQgSW50ZXJtZWRpYXRlIENBMB4XDTI2MDUxMjIwNDA0MFoXDTI3MDUxMjIw
+NDA0MFowYzELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRQwEgYDVQQHDAtTYW50
+YSBDbGFyYTEVMBMGA1UECgwMTWlnVEQgSXNzdWVyMRowGAYDVQQDDBFNaWdURCBJ
+bmZvIElzc3VlcjB2MBAGByqGSM49AgEGBSuBBAAiA2IABP8JXaMsqGwwMJy3Ec5i
+d/3/KF+Ti11YD0y866xGWT6xfuWqBljkvwy+xFBnwAh+SNisDYpldJ7y9iuA/jPf
+YzbREHvU4CglU5oO96+9ZQacPFsSaN6OD1CwR5DhVGhi+6NSMFAwDgYDVR0PAQH/
+BAQDAgeAMB0GA1UdDgQWBBRvBEchXoNXCUv5K48Q45ARGecJhDAfBgNVHSMEGDAW
+gBRedFi0rhq/hbdRGgjzV1Q62kPMRDAKBggqhkjOPQQDAwNpADBmAjEAx/vI59IH
+mdG27TBGsOS6KzfZ7avUDurwwFx++58HjoLq68p8jvKQBQJjco9bcwUFAjEA7otq
+20JSaBxpLxkBJCcunZc7i9ySGRywIPCiynvgp4SLMCqXSr9po/wjufNMVyDc
+-----END CERTIFICATE-----
+";
+        run_with_cert(leaf_pem, |cert| {
+            assert!(!is_ca_certificate(cert).unwrap());
+        });
+    }
+
+    #[test]
+    fn test_is_ca_certificate_intermediate_is_ca() {
+        run_with_cert(different_root_chain(), |cert| {
+            assert!(is_ca_certificate(cert).unwrap());
+        });
+    }
+
+    #[test]
+    fn test_is_ca_certificate_root_is_ca() {
+        run_with_cert(root_ca_only(), |cert| {
+            assert!(is_ca_certificate(cert).unwrap());
+        });
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_non_ca_intermediate() {
+        // Sanity: ensure the attacker chain otherwise passes lower-level
+        // checks — its signature integrity verifies because the legit leaf
+        // private key was used to sign the fake leaf.
+        let attacker = attacker_chain();
+        let cert_chain = extract_cert_chain_from_pem(attacker).unwrap();
+        assert!(verify_certificate_chain(&cert_chain).is_ok());
+
+        // The full validation must reject the attacker chain because the
+        // legit leaf (acting as the issuer of the fake leaf) is not a CA.
+        let local = test_chain();
+        let result = validate_peer_cert_chain(local, attacker);
+        match result {
+            Err(Error::PeerCertChainValidation(msg)) => {
+                assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
+            }
+            other => panic!("Expected PeerCertChainValidation, got: {other:?}"),
         }
     }
 }

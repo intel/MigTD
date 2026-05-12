@@ -20,7 +20,12 @@ if [ ! -s "$OUTPUT_DIR/intermediate_ca.key" ]; then
 	exit 1
 fi
 openssl req -new -nodes -key "$OUTPUT_DIR/intermediate_ca.key" -sha384 -out "$OUTPUT_DIR/intermediate_ca.csr" -subj "/C=US/ST=CA/L=Santa Clara/O=MigTD Intermediate Issuer/CN=MigTD Intermediate CA"
-openssl x509 -req -in "$OUTPUT_DIR/intermediate_ca.csr" -CA "$OUTPUT_DIR/root_ca.crt" -CAkey "$OUTPUT_DIR/ca.key" -CAcreateserial -sha384 -days 1825 -out "$OUTPUT_DIR/intermediate_ca.crt"
+# Sign the intermediate CA with RFC 5280 §4.2.1.9 BasicConstraints cA=TRUE
+# and §4.2.1.3 KeyUsage keyCertSign,cRLSign so it is recognised as a real
+# issuing CA. Without these extensions, a stolen leaf key could be used to
+# sign a new "fake leaf" and extend the peer chain — see
+# validate_peer_cert_chain's CA-attribute check.
+openssl x509 -req -in "$OUTPUT_DIR/intermediate_ca.csr" -CA "$OUTPUT_DIR/root_ca.crt" -CAkey "$OUTPUT_DIR/ca.key" -CAcreateserial -sha384 -days 1825 -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n') -out "$OUTPUT_DIR/intermediate_ca.crt"
 
 # 3. Create the End-Entity (Server/Client) Key and Certificate
 openssl ecparam -name secp384r1 -genkey -noout -out "$OUTPUT_DIR/issuer.key"
@@ -29,7 +34,11 @@ if [ ! -s "$OUTPUT_DIR/issuer.key" ]; then
 	exit 1
 fi
 openssl req -new -nodes -key "$OUTPUT_DIR/issuer.key" -sha384 -out "$OUTPUT_DIR/issuer.csr" -subj "/C=US/ST=CA/L=Santa Clara/O=MigTD Issuer/CN=MigTD Info Issuer"
-openssl x509 -req -in "$OUTPUT_DIR/issuer.csr" -CA "$OUTPUT_DIR/intermediate_ca.crt" -CAkey "$OUTPUT_DIR/intermediate_ca.key" -CAcreateserial -sha384 -days 365 -out "$OUTPUT_DIR/issuer.crt"
+# Add an explicit Key Usage so the cert is encoded as X.509 v3 (openssl
+# omits the [0] version field and produces a v1 certificate when no v3
+# extensions are present, which the in-tree x509 parser rejects). The
+# leaf MUST NOT be a CA — no BasicConstraints, no keyCertSign.
+openssl x509 -req -in "$OUTPUT_DIR/issuer.csr" -CA "$OUTPUT_DIR/intermediate_ca.crt" -CAkey "$OUTPUT_DIR/intermediate_ca.key" -CAcreateserial -sha384 -days 365 -extfile <(printf 'keyUsage=critical,digitalSignature\n') -out "$OUTPUT_DIR/issuer.crt"
 
 # 4. Concat them into cert chain
 cat "$OUTPUT_DIR/issuer.crt" "$OUTPUT_DIR/intermediate_ca.crt" "$OUTPUT_DIR/root_ca.crt" > "$OUTPUT_DIR/migtd_issuer_chain.pem"
