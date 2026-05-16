@@ -91,6 +91,9 @@ pub fn vmcall_raw_transport_can_recv() -> Result<bool, ()> {
 /// Returns `Poll::Pending` if the operation is still in flight,
 /// `Poll::Ready(Ok((payload, data_length)))` on success, or
 /// `Poll::Ready(Err(...))` on VMM cancellation or missing context.
+///
+/// NOTE: `data_length` is owned by MigTD when status=0; on the send path
+/// the post-completion value is not meaningful and must be discarded.
 fn poll_vmcall_completion<'a>(
     mig_request_id: u64,
     data_buffer: &'a mut [u8],
@@ -133,11 +136,12 @@ async fn vmcall_service_migtd_send(
     tdx::tdvmcall_migtd_send(mig_request_id, data_buffer, VMCALL_VECTOR)
         .map_err(|_e| VmcallRawError::TdVmcallErr)?;
 
+    // Discard `data_length`: not a meaningful VMM-reported value on send.
     poll_fn(
         |_cx| match poll_vmcall_completion(mig_request_id, data_buffer) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Ready(Ok((_payload, data_length))) => Poll::Ready(Ok(data_length as usize)),
+            Poll::Ready(Ok((_payload, _data_length))) => Poll::Ready(Ok(0usize)),
         },
     )
     .await
@@ -166,10 +170,21 @@ async fn vmcall_service_migtd_receive(
         |_cx| match poll_vmcall_completion(mig_request_id, data_buffer) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Ready(Ok((payload, data_length))) => match payload.get(..data_length as usize) {
-                Some(slice) => Poll::Ready(Ok(slice.to_vec())),
-                None => Poll::Ready(Err(VmcallRawError::TdVmcallErr)),
-            },
+            Poll::Ready(Ok((payload, data_length))) => {
+                // Reject zero-length success as malformed: defense against a
+                // hostile VMM that would otherwise stall the caller.
+                if data_length == 0 {
+                    log::error!(
+                        "vmcall_service_migtd_receive: VMM reported success with zero-length payload (mig_request_id={})\n",
+                        mig_request_id
+                    );
+                    return Poll::Ready(Err(VmcallRawError::Malformed));
+                }
+                match payload.get(..data_length as usize) {
+                    Some(slice) => Poll::Ready(Ok(slice.to_vec())),
+                    None => Poll::Ready(Err(VmcallRawError::TdVmcallErr)),
+                }
+            }
         },
     )
     .await
