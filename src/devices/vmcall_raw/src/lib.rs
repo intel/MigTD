@@ -142,6 +142,26 @@ pub enum State {
 }
 
 /// Align `size` up to a page.
-pub(crate) fn align_up(size: usize) -> usize {
-    (size & !(PAGE_SIZE - 1)) + if size % PAGE_SIZE != 0 { PAGE_SIZE } else { 0 }
+pub(crate) fn align_up(size: usize) -> Option<usize> {
+    size.checked_add(PAGE_SIZE - 1)
+        .map(|size| size & !(PAGE_SIZE - 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn align_up_handles_page_boundaries() {
+        assert_eq!(align_up(0), Some(0));
+        assert_eq!(align_up(1), Some(PAGE_SIZE));
+        assert_eq!(align_up(PAGE_SIZE - 1), Some(PAGE_SIZE));
+        assert_eq!(align_up(PAGE_SIZE), Some(PAGE_SIZE));
+        assert_eq!(align_up(PAGE_SIZE + 1), Some(PAGE_SIZE * 2));
+    }
+
+    #[test]
+    fn align_up_rejects_unrepresentable_size() {
+        assert_eq!(align_up(usize::MAX), None);
+    }
 }
