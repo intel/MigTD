@@ -53,7 +53,7 @@ pub enum State {
     Closed,
     Listening,
     RequestSend,
-    Establised,
+    Established,
     Closing,
 }
 
@@ -164,7 +164,7 @@ impl VsockStream {
         let peer_addr = VsockAddr::new(request.src_cid() as u32, request.src_port());
 
         let new_stream = VsockStream {
-            state: State::Establised,
+            state: State::Established,
             listen_backlog: 0,
             addr: VsockAddrPair {
                 local: self.addr.local,
@@ -219,7 +219,7 @@ impl VsockStream {
             && packet.src_port() == self.addr.remote.port()
             && packet.src_cid() == self.addr.remote.cid() as u64
         {
-            self.state = State::Establised;
+            self.state = State::Established;
             self.peer_buf_alloc = packet.buf_alloc();
             self.peer_fwd_cnt = packet.fwd_cnt();
             Ok(())
@@ -233,7 +233,7 @@ impl VsockStream {
             self.state = State::Closed;
             remove_stream_from_binding_map(self);
             Ok(())
-        } else if self.state == State::Establised {
+        } else if self.state == State::Established {
             let mut buf = [0; HEADER_LEN];
             let mut packet = Packet::new_unchecked(&mut buf[..]);
             packet.set_src_cid(self.addr.local.cid() as u64);
@@ -257,7 +257,7 @@ impl VsockStream {
 
     pub async fn send(&mut self, buf: &[u8], _flags: u32) -> Result<usize> {
         let state = self.state;
-        if state != State::Establised {
+        if state != State::Established {
             return Err(VsockError::Illegal);
         }
 
@@ -302,7 +302,7 @@ impl VsockStream {
 
     pub async fn recv(&mut self, buf: &mut [u8], _flags: u32) -> Result<usize> {
         let state = self.state;
-        if state != State::Establised {
+        if state != State::Established {
             return Err(VsockError::Illegal);
         }
 
