@@ -67,6 +67,13 @@ pub fn get_event_log_mut() -> Option<&'static mut [u8]> {
 
 pub fn get_event_log() -> Option<&'static [u8]> {
     let raw = get_ccel().map(event_log_slice)?;
+    // The `+1` is required: `cc_measurement::log::CcEvents::next()` only
+    // yields an event when `end_of_event < bytes.len()` (strict inequality).
+    // If we sliced to exactly `size`, the buffer would end at the last
+    // event boundary and that final event would be silently dropped by the
+    // iterator, breaking `parse_events()` (e.g. losing the policy tag) and
+    // any downstream RTMR replay. The runtime layout has trailing zeros in
+    // the CCEL area, so including one extra byte is safe.
     event_log_size(raw).map(|size| &raw[..size + 1])
 }
 
@@ -285,7 +292,7 @@ mod tests {
     use super::*;
     use cc_measurement::{TcgEfiSpecIdevent, TPML_ALG_SHA384};
 
-    fn event_log_with_single_cc_event(event_type: u32, event_data: &[u8]) -> Vec<u8> {
+    fn event_log_with_single_cc_event_unpadded(event_type: u32, event_data: &[u8]) -> Vec<u8> {
         let mut event_log = Vec::new();
         let spec_id_event = TcgEfiSpecIdevent::new();
         let spec_header = TcgPcrEventHeader {
@@ -311,10 +318,17 @@ mod tests {
         };
         event_log.extend_from_slice(event_header.as_bytes());
         event_log.extend_from_slice(event_data);
+
+        event_log
+    }
+
+    fn event_log_with_single_cc_event(event_type: u32, event_data: &[u8]) -> Vec<u8> {
+        let mut event_log = event_log_with_single_cc_event_unpadded(event_type, event_data);
         // CcEvents currently yields only when the parsed event ends before
         // the remaining buffer ends, matching the runtime event-log layout.
+        // See `last_event_visible_only_with_trailing_padding` below and
+        // https://github.com/confidential-containers/td-shim/issues/848.
         event_log.push(0);
-
         event_log
     }
 
@@ -331,5 +345,47 @@ mod tests {
             event_log_with_single_cc_event(EV_EFI_PLATFORM_FIRMWARE_BLOB2, &[0x10, b'T']);
 
         assert!(parse_events(&event_log).is_none());
+    }
+
+    // Regression test for the `+1` workaround in `get_event_log()`.
+    //
+    // The upstream `cc_measurement::log::CcEvents::next()` iterator yields an
+    // event only when `end_of_event < bytes.len()` (strict inequality). A
+    // slice that ends exactly at the last event boundary therefore silently
+    // drops the last event, which in the runtime is typically the tagged
+    // policy event. `get_event_log()` works around this by extending the
+    // returned slice by one byte (the runtime CCEL area is zero-padded).
+    //
+    // If the upstream iterator is fixed (`<` -> `<=`) this test will fail at
+    // the first assertion, signaling that the `+1` workaround – and this
+    // test – can be removed. See
+    // https://github.com/confidential-containers/td-shim/issues/848.
+    #[test]
+    fn last_event_visible_only_with_trailing_padding() {
+        let mut event_data = TAGGED_EVENT_ID_POLICY.to_le_bytes().to_vec();
+        // Tagged event payload: u32 tag id, u32 size, then `size` bytes.
+        let payload = [0xAA, 0xBB, 0xCC, 0xDD];
+        event_data.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        event_data.extend_from_slice(&payload);
+
+        let unpadded = event_log_with_single_cc_event_unpadded(EV_EVENT_TAG, &event_data);
+        let map_without_padding =
+            parse_events(&unpadded).expect("parse_events should not fail on a valid log");
+        assert!(
+            !map_without_padding.contains_key(&EventName::MigTdPolicy),
+            "upstream CcEvents iterator unexpectedly yielded the last event \
+             without trailing padding; the `+1` workaround in get_event_log() \
+             can likely be removed"
+        );
+
+        let mut padded = unpadded;
+        padded.push(0);
+        let map_with_padding =
+            parse_events(&padded).expect("parse_events should not fail on a valid log");
+        assert!(
+            map_with_padding.contains_key(&EventName::MigTdPolicy),
+            "policy event must be visible once the slice is extended by one \
+             byte, matching the get_event_log() workaround"
+        );
     }
 }
