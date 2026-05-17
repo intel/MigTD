@@ -105,7 +105,7 @@ fn poll_vmcall_completion<'a>(
             return Poll::Pending;
         }
     } else {
-        let _ = Poll::Ready(Err::<(&mut [u8], u32), _>(VmcallRawError::Illegal));
+        return Poll::Ready(Err(VmcallRawError::Illegal));
     }
 
     let (payload, data_status, data_length) = process_buffer(data_buffer);
