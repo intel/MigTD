@@ -175,7 +175,8 @@ pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEve
         match event_header.event_type {
             EV_EFI_PLATFORM_FIRMWARE_BLOB2 => {
                 let desc_size = event_data[0] as usize;
-                if &event_data[1..1 + desc_size] == PLATFORM_FIRMWARE_BLOB2_PAYLOAD {
+                let desc = event_data.get(1..1 + desc_size)?;
+                if desc == PLATFORM_FIRMWARE_BLOB2_PAYLOAD {
                     map.insert(EventName::MigTdCore, CcEvent::new(event_header, None));
                 }
             }
@@ -198,7 +199,7 @@ pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEve
                 }
             }
             EV_EVENT_TAG => {
-                let tag_id = u32::from_le_bytes(event_data[..4].try_into().ok()?);
+                let tag_id = u32::from_le_bytes(event_data.get(..4)?.try_into().ok()?);
                 if tag_id == TAGGED_EVENT_ID_POLICY {
                     map.insert(EventName::MigTdPolicy, CcEvent::new(event_header, None));
                 } else if tag_id == TAGGED_EVENT_ID_ROOT_CA {
@@ -276,5 +277,59 @@ fn replay_event_log_with_report(
         }
         #[cfg(not(any(feature = "AzCVMEmu", feature = "use-mock-quote")))]
         Err(anyhow!("Invalid event log"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cc_measurement::{TcgEfiSpecIdevent, TPML_ALG_SHA384};
+
+    fn event_log_with_single_cc_event(event_type: u32, event_data: &[u8]) -> Vec<u8> {
+        let mut event_log = Vec::new();
+        let spec_id_event = TcgEfiSpecIdevent::new();
+        let spec_header = TcgPcrEventHeader {
+            mr_index: 0,
+            event_type: 0,
+            digest: [0; 20],
+            event_size: spec_id_event.as_bytes().len() as u32,
+        };
+        event_log.extend_from_slice(spec_header.as_bytes());
+        event_log.extend_from_slice(spec_id_event.as_bytes());
+
+        let event_header = CcEventHeader {
+            mr_index: 0,
+            event_type,
+            digest: TpmlDigestValues {
+                count: 1,
+                digests: [TpmtHa {
+                    hash_alg: TPML_ALG_SHA384,
+                    digest: TpmuHa { sha384: [0; 48] },
+                }],
+            },
+            event_size: event_data.len() as u32,
+        };
+        event_log.extend_from_slice(event_header.as_bytes());
+        event_log.extend_from_slice(event_data);
+        // CcEvents currently yields only when the parsed event ends before
+        // the remaining buffer ends, matching the runtime event-log layout.
+        event_log.push(0);
+
+        event_log
+    }
+
+    #[test]
+    fn parse_events_rejects_short_tagged_event_without_panicking() {
+        let event_log = event_log_with_single_cc_event(EV_EVENT_TAG, &[0x01, 0x00, 0x00]);
+
+        assert!(parse_events(&event_log).is_none());
+    }
+
+    #[test]
+    fn parse_events_rejects_truncated_firmware_blob_description_without_panicking() {
+        let event_log =
+            event_log_with_single_cc_event(EV_EFI_PLATFORM_FIRMWARE_BLOB2, &[0x10, b'T']);
+
+        assert!(parse_events(&event_log).is_none());
     }
 }
