@@ -223,6 +223,39 @@ pub fn verify_report_data_binding(
     verify_peer_report_data(supplemental_data, &report_data)
 }
 
+/// Verify that a TDREPORT's REPORTDATA is bound to the expected prefix and TH1.
+///
+/// This is the rebind-path counterpart of [`verify_report_data_binding`], which
+/// operates on quote supplemental data.  In the rebind flow the peer provides a
+/// raw TDREPORT instead of a quote; the REPORTDATA field is accessed via the
+/// parsed `TdxReport.report_mac.report_data` struct field.
+pub fn verify_tdreport_data_binding(
+    tdreport_bytes: &[u8],
+    peer_prefix: &[u8],
+    th1: &SpdmDigestStruct,
+) -> Result<(), MigrationResult> {
+    use scroll::Pread;
+    use tdx_tdcall::tdreport::TdxReport;
+
+    const REPORT_DATA_HASH_SIZE: usize = 48;
+
+    let tdreport: TdxReport = tdreport_bytes.pread(0).map_err(|_| {
+        error!("Failed to parse TDREPORT\n");
+        MigrationResult::InvalidParameter
+    })?;
+
+    let expected_report_data =
+        build_report_data(peer_prefix, th1).map_err(|_| MigrationResult::InvalidParameter)?;
+    let expected_hash = digest_sha384(&expected_report_data)?;
+    let actual = &tdreport.report_mac.report_data[..REPORT_DATA_HASH_SIZE];
+
+    if actual != expected_hash.as_slice() {
+        return Err(MigrationResult::InvalidParameter);
+    }
+
+    Ok(())
+}
+
 const ECDSA_P384_SHA384_PRIVATE_KEY_LENGTH: usize = 0xb9;
 
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop, Eq, PartialEq)]
