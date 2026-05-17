@@ -12,7 +12,8 @@ use crate::{
     },
     spdm::{
         build_report_data, gen_quote_spdm, spdm_rsp::SECRET_ASYM_IMPL_INSTANCE, spdm_verify_quote,
-        verify_report_data_binding, vmcall_msg::VmCallTransportEncap, *,
+        verify_report_data_binding, verify_tdreport_data_binding, vmcall_msg::VmCallTransportEncap,
+        *,
     },
 };
 use async_io::{AsyncRead, AsyncWrite};
@@ -1181,6 +1182,18 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
             error!("{:x?}\n", e);
+            let session = spdm_requester
+                .common
+                .get_session_via_id(session_id)
+                .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
+            session.teardown();
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+
+        // Verify that the peer's REPORTDATA is bound to this SPDM session's TH1
+        let verified_report_peer = policy_check_result.unwrap();
+        if verify_tdreport_data_binding(&verified_report_peer, b"MigTDRsp", &th1).is_err() {
+            error!("Rebind peer REPORTDATA does not match expected TH1 binding!\n");
             let session = spdm_requester
                 .common
                 .get_session_via_id(session_id)
