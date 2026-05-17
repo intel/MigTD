@@ -75,10 +75,13 @@ pub async fn vmcall_raw_transport_enqueue(
     buf: &[u8],
 ) -> Result<usize, VmcallRawError> {
     let data_status: u64 = 0;
-    let data_length: u32 = buf.len() as u32;
+    let data_length: u32 = buf.len().try_into().map_err(|_| VmcallRawError::Illegal)?;
 
-    let data_buffer_size = 8 + 4 + buf.len();
-    let data_buffer_page_count = align_up(data_buffer_size) / PAGE_SIZE;
+    let data_buffer_size = 12usize
+        .checked_add(buf.len())
+        .ok_or(VmcallRawError::Illegal)?;
+    let data_buffer_page_count =
+        align_up(data_buffer_size).ok_or(VmcallRawError::Illegal)? / PAGE_SIZE;
     let mut data_buffer =
         SharedMemory::new(data_buffer_page_count).ok_or(VmcallRawError::Illegal)?;
 
