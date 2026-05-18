@@ -1036,21 +1036,6 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         .extend_from_slice(tdinfo_init)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
-    //mig policy init hash
-    // Per GHCI 1.5: policy_key is in tdinfo.mrowner; sent as init_policy_hash.
-    // NOTE: MigPolicyInit VDM element name retained for wire compatibility.
-    let mig_policy_init_hash = init_migtd_data.mrowner().to_vec();
-    let mig_policy_init_element = VdmMessageElement {
-        element_type: VdmMessageElementType::MigPolicyInit,
-        length: mig_policy_init_hash.len() as u32,
-    };
-    cnt += mig_policy_init_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer
-        .extend_from_slice(&mig_policy_init_hash)
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
-
     spdm_requester.common.reset_buffer_via_request_code(
         SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
         None,
