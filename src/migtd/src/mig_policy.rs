@@ -275,6 +275,15 @@ mod v2 {
             )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
+        // Per GHCI 1.5: cross-check the peer's wire-claimed init TDINFO against
+        // the peer's verified TDREPORT — init policy signer and init SVN must
+        // be consistent with the peer's current self-report.
+        verify_peer_init_tdinfo_against_owner(
+            init_tdinfo,
+            &tdx_report.td_info.mrowner,
+            &tdx_report.td_info.mrownerconfig,
+        )?;
+
         // Verify the init tdinfo against servtd_ext hash
         let servtd_ext_src_obj =
             ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
@@ -719,6 +728,111 @@ mod v2 {
         Ok(())
     }
 
+    /// Per GHCI 1.5: Cross-check a peer's wire-supplied init TDINFO_STRUCT against
+    /// the peer's authenticated TDREPORT (or equivalent verified report data).
+    ///
+    /// The peer's `init.MROWNER` must equal the peer's report MROWNER (policy
+    /// signer hash). The peer's `init.MROWNERCONFIG` first 4 bytes encode the
+    /// init policy SVN as little-endian u32 with the remaining 44 bytes zero;
+    /// that init SVN must be less than or equal to the SVN encoded the same way
+    /// in the peer's report MROWNERCONFIG.
+    ///
+    /// `peer_mrowner` and `peer_mrownerconfig` are the peer's authentic values,
+    /// taken from a verified TDREPORT (`TdInfo::mrowner` / `mrownerconfig`) or
+    /// from quote-verification supplemental data
+    /// (`Report::R_MIGTD_MROWNER` / `R_MIGTD_MROWNERCONFIG`).
+    pub fn verify_peer_init_tdinfo_against_owner(
+        peer_init_td_info: &[u8],
+        peer_mrowner: &[u8],
+        peer_mrownerconfig: &[u8],
+    ) -> Result<(), PolicyError> {
+        use crate::migration::{td_info_mrowner, td_info_mrownerconfig, TD_INFO_SIZE};
+
+        if peer_init_td_info.len() != TD_INFO_SIZE
+            || peer_mrowner.len() != SHA384_DIGEST_SIZE
+            || peer_mrownerconfig.len() != SHA384_DIGEST_SIZE
+        {
+            return Err(PolicyError::InvalidParameter);
+        }
+
+        let init: &[u8; TD_INFO_SIZE] = peer_init_td_info
+            .try_into()
+            .map_err(|_| PolicyError::InvalidParameter)?;
+        let init_mrowner = td_info_mrowner(init);
+        let init_mrownerconfig = td_info_mrownerconfig(init);
+
+        // 1. MROWNER (policy signer key hash) must match peer's current report
+        if init_mrowner.as_slice() != peer_mrowner {
+            return Err(PolicyError::PolicyHashMismatch);
+        }
+
+        // 2. init MROWNERCONFIG must be well-formed: first 4 bytes encode SVN,
+        //    remaining 44 bytes must be zero.
+        if init_mrownerconfig[4..] != [0u8; SHA384_DIGEST_SIZE - 4] {
+            return Err(PolicyError::InvalidParameter);
+        }
+
+        // 3. Peer report MROWNERCONFIG must also be well-formed: a genuine
+        //    MigTD enforces this at startup, but we verify it locally instead
+        //    of relying on the peer's self-check.
+        if peer_mrownerconfig[4..] != [0u8; SHA384_DIGEST_SIZE - 4] {
+            return Err(PolicyError::InvalidParameter);
+        }
+
+        // 4. init policy SVN must be ≤ peer report policy SVN.
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&init_mrownerconfig[..4]);
+        let init_svn = u32::from_le_bytes(buf);
+        buf.copy_from_slice(&peer_mrownerconfig[..4]);
+        let peer_svn = u32::from_le_bytes(buf);
+        if init_svn > peer_svn {
+            return Err(PolicyError::SvnMismatch);
+        }
+
+        Ok(())
+    }
+
+    /// Cross-check a peer's wire-supplied init `TDINFO_STRUCT` against the
+    /// MROWNER/MROWNERCONFIG bytes carried in the peer's verified quote
+    /// supplemental data (see `Report::R_MIGTD_MROWNER` /
+    /// `Report::R_MIGTD_MROWNERCONFIG`).
+    ///
+    /// This is a pure function: it length-checks `verified_suppl_data` before
+    /// slicing so it cannot panic on a too-short buffer, and it does not
+    /// invoke quote verification. Callers that want the combined attestation
+    /// + cross-check should use `authenticate_migration_source_with_init_tdinfo`.
+    pub fn verify_peer_init_tdinfo_against_suppl_data(
+        peer_init_td_info: &[u8],
+        verified_suppl_data: &[u8],
+    ) -> Result<(), PolicyError> {
+        if verified_suppl_data.len() < REPORT_DATA_SIZE {
+            return Err(PolicyError::InvalidParameter);
+        }
+        verify_peer_init_tdinfo_against_owner(
+            peer_init_td_info,
+            &verified_suppl_data[Report::R_MIGTD_MROWNER],
+            &verified_suppl_data[Report::R_MIGTD_MROWNERCONFIG],
+        )
+    }
+
+    /// Destination-side migration helper: verify the peer's quote/event log
+    /// via `authenticate_remote(false, ...)` and cross-check the peer's
+    /// wire-supplied init `TDINFO_STRUCT` against the resulting supplemental
+    /// data.
+    ///
+    /// Returns the verified supplemental data on success so the caller can
+    /// reuse it for SPDM-level bindings (e.g., REPORTDATA / TH1).
+    pub fn authenticate_migration_source_with_init_tdinfo(
+        quote_peer: &[u8],
+        peer_data: &[u8],
+        event_log_peer: &[u8],
+        peer_init_td_info: &[u8],
+    ) -> Result<Vec<u8>, PolicyError> {
+        let verified = authenticate_remote(false, quote_peer, peer_data, event_log_peer)?;
+        verify_peer_init_tdinfo_against_suppl_data(peer_init_td_info, &verified)?;
+        Ok(verified)
+    }
+
     #[test]
     fn test_unix_to_iso8601() {
         let timestamp = 1704067200; // Corresponds to 2024-01-01T00:00:00Z
@@ -839,6 +953,169 @@ mod v2 {
         assert_eq!(rtmrs[1], [0x02; 48]);
         assert_eq!(rtmrs[2], [0x03; 48]);
         assert_eq!(rtmrs[3], [0x04; 48]);
+    }
+
+    // Build a 512-byte TDINFO_STRUCT with the supplied MROWNER bytes and an
+    // MROWNERCONFIG whose first 4 LE bytes encode `svn` and trailing 44 are
+    // zero (the well-formed shape defined by GHCI 1.5).
+    fn make_init_tdinfo(mrowner: &[u8; 48], svn: u32) -> [u8; 512] {
+        let mut bytes = [0u8; 512];
+        bytes[112..160].copy_from_slice(mrowner); // mrowner
+        let svn_le = svn.to_le_bytes();
+        bytes[160..164].copy_from_slice(&svn_le);
+        // bytes[164..208] already zero (trailing of mrownerconfig)
+        bytes
+    }
+
+    fn make_peer_mrownerconfig(svn: u32) -> [u8; 48] {
+        let mut buf = [0u8; 48];
+        buf[..4].copy_from_slice(&svn.to_le_bytes());
+        buf
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_match_equal_svn() {
+        let mrowner = [0xAAu8; 48];
+        let init = make_init_tdinfo(&mrowner, 5);
+        let peer_mrownerconfig = make_peer_mrownerconfig(5);
+
+        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_init_svn_less_than_peer() {
+        let mrowner = [0xAAu8; 48];
+        let init = make_init_tdinfo(&mrowner, 3);
+        let peer_mrownerconfig = make_peer_mrownerconfig(7);
+
+        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_init_svn_greater_rejected() {
+        let mrowner = [0xAAu8; 48];
+        let init = make_init_tdinfo(&mrowner, 10);
+        let peer_mrownerconfig = make_peer_mrownerconfig(5);
+
+        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
+        assert!(matches!(result, Err(PolicyError::SvnMismatch)));
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_mrowner_mismatch_rejected() {
+        let init_mrowner = [0xAAu8; 48];
+        let peer_mrowner = [0xBBu8; 48];
+        let init = make_init_tdinfo(&init_mrowner, 5);
+        let peer_mrownerconfig = make_peer_mrownerconfig(5);
+
+        let result =
+            verify_peer_init_tdinfo_against_owner(&init, &peer_mrowner, &peer_mrownerconfig);
+        assert!(matches!(result, Err(PolicyError::PolicyHashMismatch)));
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_malformed_mrownerconfig_rejected() {
+        let mrowner = [0xAAu8; 48];
+        let mut init = make_init_tdinfo(&mrowner, 5);
+        // Corrupt the trailing-zero portion of MROWNERCONFIG (bytes 164..208).
+        init[200] = 0x01;
+        let peer_mrownerconfig = make_peer_mrownerconfig(5);
+
+        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
+        assert!(matches!(result, Err(PolicyError::InvalidParameter)));
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_malformed_peer_mrownerconfig_rejected() {
+        let mrowner = [0xAAu8; 48];
+        let init = make_init_tdinfo(&mrowner, 5);
+        let mut peer_mrownerconfig = make_peer_mrownerconfig(5);
+        // Corrupt the trailing-zero portion of the peer's MROWNERCONFIG.
+        peer_mrownerconfig[20] = 0x01;
+
+        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
+        assert!(matches!(result, Err(PolicyError::InvalidParameter)));
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_wrong_lengths_rejected() {
+        let mrowner = [0xAAu8; 48];
+        let init = make_init_tdinfo(&mrowner, 5);
+        let peer_mrownerconfig = make_peer_mrownerconfig(5);
+
+        // Short init buffer
+        let short_init = &init[..256];
+        assert!(matches!(
+            verify_peer_init_tdinfo_against_owner(short_init, &mrowner, &peer_mrownerconfig),
+            Err(PolicyError::InvalidParameter)
+        ));
+
+        // Wrong mrowner length
+        let short_mrowner = &mrowner[..32];
+        assert!(matches!(
+            verify_peer_init_tdinfo_against_owner(&init, short_mrowner, &peer_mrownerconfig),
+            Err(PolicyError::InvalidParameter)
+        ));
+
+        // Wrong mrownerconfig length
+        let short_mrownerconfig = &peer_mrownerconfig[..32];
+        assert!(matches!(
+            verify_peer_init_tdinfo_against_owner(&init, &mrowner, short_mrownerconfig),
+            Err(PolicyError::InvalidParameter)
+        ));
+    }
+
+    fn make_suppl_data(mrowner: &[u8; 48], svn: u32) -> Vec<u8> {
+        let mut suppl = alloc::vec![0u8; REPORT_DATA_SIZE];
+        suppl[Report::R_MIGTD_MROWNER].copy_from_slice(mrowner);
+        suppl[Report::R_MIGTD_MROWNERCONFIG][..4].copy_from_slice(&svn.to_le_bytes());
+        suppl
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_against_suppl_data_ok() {
+        let mrowner = [0xCDu8; 48];
+        let init = make_init_tdinfo(&mrowner, 3);
+        let suppl = make_suppl_data(&mrowner, 5);
+        assert!(verify_peer_init_tdinfo_against_suppl_data(&init, &suppl).is_ok());
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_against_suppl_data_short_buffer() {
+        let mrowner = [0xCDu8; 48];
+        let init = make_init_tdinfo(&mrowner, 3);
+        let short = alloc::vec![0u8; REPORT_DATA_SIZE - 1];
+        // Must return InvalidParameter, not panic, even though
+        // R_MIGTD_MROWNERCONFIG = 280..328 would otherwise slice OOB.
+        assert!(matches!(
+            verify_peer_init_tdinfo_against_suppl_data(&init, &short),
+            Err(PolicyError::InvalidParameter)
+        ));
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_against_suppl_data_mrowner_mismatch() {
+        let init_mrowner = [0xCDu8; 48];
+        let peer_mrowner = [0xEEu8; 48];
+        let init = make_init_tdinfo(&init_mrowner, 3);
+        let suppl = make_suppl_data(&peer_mrowner, 5);
+        assert!(matches!(
+            verify_peer_init_tdinfo_against_suppl_data(&init, &suppl),
+            Err(PolicyError::PolicyHashMismatch)
+        ));
+    }
+
+    #[test]
+    fn test_verify_peer_init_tdinfo_against_suppl_data_svn_greater_rejected() {
+        let mrowner = [0xCDu8; 48];
+        let init = make_init_tdinfo(&mrowner, 7);
+        let suppl = make_suppl_data(&mrowner, 5);
+        assert!(matches!(
+            verify_peer_init_tdinfo_against_suppl_data(&init, &suppl),
+            Err(PolicyError::SvnMismatch)
+        ));
     }
 }
 
