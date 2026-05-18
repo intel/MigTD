@@ -75,6 +75,22 @@ pub async fn start_rebinding(
     info: &MigtdMigrationInformation,
     data: &mut Vec<u8>,
 ) -> Result<(), MigrationResult> {
+    // Per GHCI 1.5: if VMM provided initMigtdData, verify policy binding
+    // before driving the rebinding exchange. Mirrors exchange_msk; without
+    // this check a hostile VMM could cause the rebind attestation to be
+    // built over an initial TDINFO whose policy signer hash / SVN would
+    // be rejected on the standard migration path.
+    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
+    if let Some(init_td_info) = info.init_td_info_if_present() {
+        crate::mig_policy::verify_init_migtd_data_policy_binding(init_td_info).map_err(|e| {
+            log::error!(
+                migration_request_id = info.mig_request_id;
+                "start_rebinding: initMigtdData policy binding verification failed: {:?}\n", e
+            );
+            MigrationResult::PolicyUnsatisfiedError
+        })?;
+    }
+
     let mut transport = setup_transport(info.mig_request_id).await?;
 
     let policy = config::get_policy()
