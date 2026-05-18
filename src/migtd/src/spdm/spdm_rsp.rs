@@ -1065,19 +1065,6 @@ pub fn handle_exchange_rebind_attest_info_req(
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let td_report_init_vec = td_report_init.to_vec();
 
-    // mig policy init hash
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if vdm_element.element_type != VdmMessageElementType::MigPolicyInit {
-        error!(
-            "Invalid VDM message element_type: {:x?}\n",
-            vdm_element.element_type
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    };
-    let mig_policy_init_hash_src = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-
     // attestation verification
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
@@ -1104,15 +1091,6 @@ pub fn handle_exchange_rebind_attest_info_req(
             error!(
                 "The received mig policy hash does not match the expected remote policy hash!\n"
             );
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-        }
-
-        // Per GHCI 1.5: init_policy_hash is mrowner from TDINFO — compare directly
-        let mrowner = td_report_init_vec
-            .get(112..160)
-            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-        if mig_policy_init_hash_src != mrowner {
-            error!("The received mig policy init hash does not match mrowner from init tdinfo!\n");
             return Err(SPDM_STATUS_INVALID_MSG_FIELD);
         }
 
