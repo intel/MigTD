@@ -815,22 +815,82 @@ mod v2 {
         )
     }
 
-    /// Destination-side migration helper: verify the peer's quote/event log
-    /// via `authenticate_remote(false, ...)` and cross-check the peer's
-    /// wire-supplied init `TDINFO_STRUCT` against the resulting supplemental
-    /// data.
+    /// Destination-side migration helper: verify the source MigTD's
+    /// quote/event log, cross-check init TDINFO against the quote's
+    /// supplemental data, verify init TDINFO integrity against ServtdExt,
+    /// and allowlist-gate init measurements against servtd_tcb_mapping.
+    ///
+    /// This mirrors the checks that `authenticate_rebinding_old` performs
+    /// for the rebinding path, ensuring parity between migration and
+    /// rebinding attestation.
     ///
     /// Returns the verified supplemental data on success so the caller can
     /// reuse it for SPDM-level bindings (e.g., REPORTDATA / TH1).
     pub fn authenticate_migration_source_with_init_tdinfo(
-        quote_peer: &[u8],
-        peer_data: &[u8],
-        event_log_peer: &[u8],
-        peer_init_td_info: &[u8],
+        quote_src: &[u8],
+        mig_policy_src: &[u8],
+        event_log_src: &[u8],
+        init_tdinfo: &[u8],
+        servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let verified = authenticate_remote(false, quote_peer, peer_data, event_log_peer)?;
-        verify_peer_init_tdinfo_against_suppl_data(peer_init_td_info, &verified)?;
-        Ok(verified)
+        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
+
+        let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
+            quote_src,
+            event_log_src,
+            mig_policy_src,
+            policy_issuer_chain,
+        )?;
+
+        let relative_reference = get_local_tcb_evaluation_info()?;
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+
+        // Existing migration-source policy checks (common + backward)
+        policy.policy_data.evaluate_policy_common(
+            &evaluation_data_src,
+            &relative_reference,
+            false,
+        )?;
+        policy.policy_data.evaluate_policy_backward(
+            &evaluation_data_src,
+            &relative_reference,
+            false,
+        )?;
+
+        // Cross-check init TDINFO against MROWNER/MROWNERCONFIG from
+        // verified quote supplemental data, verify init TDINFO integrity
+        // against ServtdExt hash, and allowlist-gate init measurements.
+        //
+        // Skipped when running with mock quotes/reports that carry static
+        // test data — the mock init TDINFO does not have measurements
+        // that match the policy servtd_tcb_mapping.
+        #[cfg(not(any(
+            feature = "AzCVMEmu",
+            feature = "test_mock_report",
+            feature = "use-mock-quote"
+        )))]
+        {
+            verify_peer_init_tdinfo_against_suppl_data(init_tdinfo, &suppl_data)?;
+
+            // Verify init TDINFO integrity against ServtdExt hash
+            let servtd_ext_obj =
+                ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
+            let init_td_info = verify_init_tdinfo(init_tdinfo, &servtd_ext_obj)?;
+
+            // Allowlist gate: init MigTD measurements must be in servtd_tcb_mapping
+            let _engine_svn = policy
+                .servtd_tcb_mapping
+                .get_engine_svn_by_measurements(&Measurements::new_from_bytes(
+                    &init_td_info.mrtd,
+                    &init_td_info.rtmr0,
+                    &init_td_info.rtmr1,
+                    None,
+                    None,
+                ))
+                .ok_or(PolicyError::SvnMismatch)?;
+        }
+
+        Ok(suppl_data)
     }
 
     #[test]

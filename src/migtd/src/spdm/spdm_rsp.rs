@@ -506,6 +506,8 @@ pub fn handle_exchange_mig_attest_info_req(
     let servtd_ext_bytes = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    #[cfg(feature = "policy_v2")]
+    let servtd_ext_bytes_vec = servtd_ext_bytes.to_vec();
 
     // Store SERVTD_EXT in ResponderContextEx for later use during MSK exchange
     #[cfg(feature = "policy_v2")]
@@ -562,6 +564,7 @@ pub fn handle_exchange_mig_attest_info_req(
             &event_log_src_vec,
             &mig_policy_hash_src,
             &td_report_init_vec,
+            &servtd_ext_bytes_vec,
             &remote_policy,
             &th1,
             responder_context,
@@ -691,6 +694,7 @@ fn rsp_verify_peer_attestation_v2(
     event_log_peer: &[u8],
     mig_policy_hash_peer: &[u8],
     peer_init_td_info: &[u8],
+    servtd_ext_peer: &[u8],
     remote_policy: &[u8],
     th1: &SpdmDigestStruct,
     responder_context: &mut ResponderContext,
@@ -703,9 +707,8 @@ fn rsp_verify_peer_attestation_v2(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
-    // 2. Authenticate remote + cross-check the peer's wire-supplied init
-    //    TDINFO_STRUCT against the peer's authenticated TDREPORT
-    //    (MROWNER / MROWNERCONFIG, per GHCI 1.5).
+    // 2. Authenticate remote, verify init TDINFO integrity against ServtdExt,
+    //    and evaluate policy with init TDINFO as reference.
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
         let verified_report_peer = match mig_policy::authenticate_migration_source_with_init_tdinfo(
@@ -713,6 +716,7 @@ fn rsp_verify_peer_attestation_v2(
             remote_policy,
             event_log_peer,
             peer_init_td_info,
+            servtd_ext_peer,
         ) {
             Err(e) => {
                 error!("Policy v2 check failed, below is the detail information:\n");
@@ -754,7 +758,7 @@ fn rsp_verify_peer_attestation_v2(
     }
 
     #[cfg(feature = "test_disable_ra_and_accept_all")]
-    let _ = peer_init_td_info;
+    let _ = (peer_init_td_info, servtd_ext_peer);
 
     Ok(())
 }
