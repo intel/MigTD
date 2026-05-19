@@ -124,7 +124,7 @@ build-igvm-mock-quote-allow-all: pre-build generate-policy-mock-quote-allow-all
 	cd ../../ && cargo image --policy-v2 --debug \
 	 --image-format igvm \
 	 --no-default-features \
-	 --features vmcall-raw,stack-guard,main,vmcall-interrupt,oneshot-apic,spdm_attestation,use-mock-quote \
+	 --features $(IGVM_FEATURES_BASE),use-mock-quote \
 	 --log-level $(LOG_LEVEL) \
 	 --policy-issuer-chain config/Azure/policy_issuer_chain.pem \
 	 --policy config/Azure/policy_v2_signed.json \
