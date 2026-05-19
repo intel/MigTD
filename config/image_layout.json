@@ -4,7 +4,8 @@
     "TempStack": "0x010000",
     "TempHeap": "0x010000",
     "Metadata": "0x001000",
-    "Payload": "0xEE6000",
+    "TdInfo": "0x001000",
+    "Payload": "0xEE5000",
     "Ipl": "0x50000",
     "ResetVector": "0x008000"
 }
