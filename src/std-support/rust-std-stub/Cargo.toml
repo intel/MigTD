@@ -8,6 +8,10 @@ license = "MIT"
 description = "for rustls no_std use, export rustls used functions, traits and structs in std"
 readme = "readme.md"
 
+[features]
+# Enable to run tests copied from std (requires nightly + full std environment)
+std_tests = []
+
 [dependencies]
 sys_time = {path = "../sys_time"}
 

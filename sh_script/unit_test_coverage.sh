@@ -1,26 +1,22 @@
 #!/bin/bash
 
-if [[ ! $PWD =~ firmware.security.tdx.migtd.td$ ]];then
-    pushd ..
-fi
-
-unittest_folders=(
-    "policy"
-    "migtd"
-)
+# Navigate to repo root if run from sh_script/
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
 export RUSTFLAGS="-Cinstrument-coverage"
 export LLVM_PROFILE_FILE="unittest-%p-%m.profraw"
 
-find . -name "*.profraw" | xargs rm -rf
+find . -name "*.profraw" -not -path "./deps/*" -delete
 
-for path in ${unittest_folders[@]}; do
-    pushd $path
-    cargo test
-    popd
-done
+cargo test -p policy -p migtd -p crypto -p virtio -p vsock
 
-grcov . --binary-path ./target/debug/ -s . -t html --branch --ignore-not-existing -o unit_test_coverage
+grcov . --binary-path ./target/debug/ -s . -t html --branch \
+    --ignore-not-existing \
+    --ignore "deps/*" \
+    --ignore "target/*" \
+    -o unit_test_coverage
 
 unset RUSTFLAGS
 unset LLVM_PROFILE_FILE

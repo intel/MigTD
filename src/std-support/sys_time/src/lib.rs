@@ -31,6 +31,7 @@ pub fn get_sys_time() -> Option<i64> {
 mod tests {
     use super::get_sys_time;
     #[test]
+    #[ignore = "requires x86 I/O port access (CMOS/RTC), segfaults in userspace"]
     fn it_works() {
         assert_ne!(get_sys_time().unwrap(), 0);
     }
