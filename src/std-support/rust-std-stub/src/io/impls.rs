@@ -1,4 +1,5 @@
-#[cfg(test)]
+// Tests require #[bench] (unstable) and std prelude unavailable in this no_std stub
+#[cfg(all(test, feature = "std_tests"))]
 mod tests;
 
 use crate::io::{self, Error, ErrorKind, Initializer, IoSlice, IoSliceMut, Read, Write};

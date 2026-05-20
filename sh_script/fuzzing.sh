@@ -139,11 +139,6 @@ run_single_case() {
     echo $test_case | grep "^afl"
     if [ "$?" == "0" ];then
         echo "The test method is afl"
-        if [ "${collect_coverage}" == "YES" ]; then
-            export RUSTFLAGS="-C instrument-coverage"
-            export LLVM_PROFILE_FILE="fuzz-%p-%m.profraw"
-            find . -name "*.profraw" | xargs rm -rf
-        fi
 
         cargo_build=`cargo afl build --manifest-path fuzz/Cargo.toml --bin $test_case --features fuzz --no-default-features`
 	    if [ "$?" != "0" ];then
@@ -174,8 +169,20 @@ run_single_case() {
             
             if [ "${collect_coverage}" == "YES" ]; then
                 [ -d "${test_case}_cov" ] && rm -rf "${test_case}_cov"
+                rm -rf cov_profraw && mkdir -p cov_profraw
 
-                grcov . -s src --binary-path fuzz/target/debug/$test_case -t html --branch --ignore-not-existing -o "${test_case}_cov"
+                # Build without AFL runtime for coverage replay
+                RUSTFLAGS="-C instrument-coverage" cargo build --manifest-path fuzz/Cargo.toml --bin $test_case --no-default-features
+                export LLVM_PROFILE_FILE="cov_profraw/fuzz-%p-%m.profraw"
+
+                # Replay the AFL queue through the instrumented binary
+                find fuzz/artifacts/$test_case/default/queue -maxdepth 1 -type f | while read input; do
+                    fuzz/target/debug/$test_case "$input" || true
+                done
+                unset LLVM_PROFILE_FILE
+
+                grcov cov_profraw -s src --binary-path fuzz/target/debug/ -t html --branch --ignore-not-existing -o "${test_case}_cov"
+                rm -rf cov_profraw
             fi
 	    fi
         popd
@@ -208,7 +215,7 @@ run_single_case() {
 
             find . -name "*.profraw" | xargs rm -rf
             cargo fuzz coverage $test_case
-            grcov . -s src -b fuzz/target/x86_64-unknown-linux-gnu/release/$test_case -t html --branch --ignore-not-existing -o "${test_case}_fuzz_cov"
+            grcov fuzz/coverage/$test_case/raw -s src -b fuzz/target/x86_64-unknown-linux-gnu/release/ -t html --branch --ignore-not-existing -o "${test_case}_fuzz_cov"
         fi
         popd
     fi
@@ -236,12 +243,12 @@ run_all_case(){
                 timeout $test_time cargo fuzz run $fuzz
                 
                 if [ "${collect_coverage}" == "YES" ]; then
-                    if [ ! -d "${fuzz}_fuzz_cov" ]; then
+                    if [ -d "${fuzz}_fuzz_cov" ]; then
                         rm -rf ${fuzz}_fuzz_cov
                     fi
                     find . -name "*.profraw" | xargs rm -rf
                     cargo fuzz coverage $fuzz
-                    grcov . -s src -b fuzz/target/x86_64-unknown-linux-gnu/release/$fuzz -t html --branch --ignore-not-existing -o "${fuzz}_fuzz_cov"
+                    grcov fuzz/coverage/$fuzz/raw -s src -b fuzz/target/x86_64-unknown-linux-gnu/release/ -t html --branch --ignore-not-existing -o "${fuzz}_fuzz_cov"
                 fi
             done
             popd
@@ -252,12 +259,6 @@ run_all_case(){
             fuzz_list=$(cargo fuzz list)
             for fuzz in $fuzz_list;do
                 if [[ "$fuzz" =~ "afl" ]];then
-                    if [ "${collect_coverage}" == "YES" ]; then
-                        export RUSTFLAGS="-C instrument-coverage"
-                        export LLVM_PROFILE_FILE="fuzz-%p-%m.profraw"
-                        find . -name "*.profraw" | xargs rm -rf
-                    fi
-
                     cargo_build=`cargo afl build --manifest-path fuzz/Cargo.toml --bin $fuzz --features fuzz --no-default-features`
                     if [ "$?" != "0" ];then
                         echo "Error: Build execution failed"
@@ -279,7 +280,20 @@ run_all_case(){
                             if [ -d "${fuzz}_cov" ]; then
                                 rm -rf "${fuzz}_cov"
                             fi
-                            grcov . -s src --binary-path fuzz/target/debug/$fuzz -t html --branch --ignore-not-existing -o "${fuzz}_cov"
+                            rm -rf cov_profraw && mkdir -p cov_profraw
+
+                            # Build without AFL runtime for coverage replay
+                            RUSTFLAGS="-C instrument-coverage" cargo build --manifest-path fuzz/Cargo.toml --bin $fuzz --no-default-features
+                            export LLVM_PROFILE_FILE="cov_profraw/fuzz-%p-%m.profraw"
+
+                            # Replay the AFL queue through the instrumented binary
+                            find fuzz/artifacts/$fuzz/default/queue -maxdepth 1 -type f | while read input; do
+                                fuzz/target/debug/$fuzz "$input" || true
+                            done
+                            unset LLVM_PROFILE_FILE
+
+                            grcov cov_profraw -s src --binary-path fuzz/target/debug/ -t html --branch --ignore-not-existing -o "${fuzz}_cov"
+                            rm -rf cov_profraw
                         fi
                     fi
                 else
