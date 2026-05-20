@@ -52,7 +52,7 @@ jobs:
 
           - test-name: "Rebind Prepare (Skip RA)"
             test-type: "rebind-skip-ra"
-            install-jq: 'false'
+            install-jq: 'true'
             timeout-seconds: 300
             test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both --no-sudo --log-level info"
             artifact-name: "rebind-skip-ra-test-logs"
@@ -80,7 +80,7 @@ jobs:
 
           - test-name: "SPDM Rebind Prepare (Skip RA)"
             test-type: "spdm-rebind-skip-ra"
-            install-jq: 'false'
+            install-jq: 'true'
             timeout-seconds: 300
             test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-rebind-skip-ra-test-logs"
@@ -188,6 +188,14 @@ jobs:
         run: |
           chmod +x ./migtdemu.sh
           chmod +x ./sh_script/build_AzCVMEmu_policy_and_test.sh
+
+      - name: Generate policy files
+        if: matrix.install-jq == 'true'
+        run: |
+          echo "Generating AzCVMEmu policy files with mock measurements..."
+          ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report --skip-test
+          echo "Policy files generated:"
+          ls -la config/AzCVMEmu/policy_v2_signed*.json config/AzCVMEmu/policy_issuer_chain*.pem
 
       - name: Run test
         id: test_run
