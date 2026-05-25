@@ -289,14 +289,6 @@ mod v2 {
             ))
             .ok_or(PolicyError::SvnMismatch)?;
 
-        // Use local policy's tcb_mapping with init tdinfo measurements
-        let relative_reference = setup_evaluation_data_with_tdinfo(&init_td_info, policy)?;
-        policy.policy_data.evaluate_policy_common(
-            &evaluation_data_src,
-            &relative_reference,
-            true,
-        )?;
-
         // If backward policy exists, evaluate the migration src based on it.
         let relative_reference = get_local_tcb_evaluation_info()?;
         policy.policy_data.evaluate_policy_backward(
@@ -538,36 +530,6 @@ mod v2 {
         rtmrs[2].copy_from_slice(&td_info.rtmr2);
         rtmrs[3].copy_from_slice(&td_info.rtmr3);
         Ok(rtmrs)
-    }
-
-    fn setup_evaluation_data_with_tdinfo(
-        td_info: &TdInfo,
-        policy: &VerifiedPolicy,
-    ) -> Result<PolicyEvaluationInfo, PolicyError> {
-        let migtd_svn = policy.servtd_tcb_mapping.get_engine_svn_by_measurements(
-            &Measurements::new_from_bytes(
-                &td_info.mrtd,
-                &td_info.rtmr0,
-                &td_info.rtmr1,
-                None,
-                None,
-            ),
-        );
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
-
-        Ok(PolicyEvaluationInfo {
-            tee_tcb_svn: None,
-            tcb_date: None,
-            tcb_status: None,
-            tcb_evaluation_number: None,
-            fmspc: None,
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
-            pck_crl_num: None,
-            root_ca_crl_num: None,
-        })
     }
 
     fn setup_evaluation_data(
