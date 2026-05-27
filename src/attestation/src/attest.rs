@@ -11,7 +11,7 @@ use crate::binding::get_quote as get_quote_inner;
 use crate::{
     binding::{init_heap, verify_quote_integrity, QveCollateral},
     root_ca::ROOT_CA_PUBLIC_KEY,
-    Error, TD_VERIFIED_REPORT_SIZE,
+    Error, TD_VERIFIED_REPORT_SIZE, TD_VERIFIED_REPORT_SIZE_LEGACY,
 };
 use alloc::{ffi::CString, vec, vec::Vec};
 use core::{alloc::Layout, ffi::c_void, ops::Range};
@@ -135,6 +135,16 @@ pub fn verify_quote(quote: &[u8]) -> Result<Vec<u8>, Error> {
         }
     }
 
+    if report_verify_size as usize == TD_VERIFIED_REPORT_SIZE_LEGACY {
+        log::info!(
+            "Legacy report size {}, normalizing to {}\n",
+            TD_VERIFIED_REPORT_SIZE_LEGACY,
+            TD_VERIFIED_REPORT_SIZE
+        );
+        normalize_legacy_report(&mut td_report_verify);
+        report_verify_size = TD_VERIFIED_REPORT_SIZE as u32;
+    }
+
     if report_verify_size as usize != TD_VERIFIED_REPORT_SIZE {
         log::error!(
             "Invalid report size: expected {}, got {}\n",
@@ -180,6 +190,16 @@ pub fn verify_quote_with_collaterals(
         }
     }
 
+    if report_verify_size as usize == TD_VERIFIED_REPORT_SIZE_LEGACY {
+        log::info!(
+            "Legacy report size {}, normalizing to {}\n",
+            TD_VERIFIED_REPORT_SIZE_LEGACY,
+            TD_VERIFIED_REPORT_SIZE
+        );
+        normalize_legacy_report(&mut td_report_verify);
+        report_verify_size = TD_VERIFIED_REPORT_SIZE as u32;
+    }
+
     mask_verified_report_values(&mut td_report_verify[..report_verify_size as usize]);
     Ok(td_report_verify[..report_verify_size as usize].to_vec())
 }
@@ -195,5 +215,32 @@ fn mask_verified_report_values(report: &mut [u8]) {
     }
     for (i, j) in R_ATTRIBUTES.zip(R_ATTRIBUTES_MASK) {
         report[i] &= report[j]
+    }
+}
+
+/// Normalize a 774-byte legacy report to 822 bytes by mirroring the effective
+/// tcb_date into platform_tcb_date and qe_tcb_date, and tcb_status into qe_tcb_status.
+fn normalize_legacy_report(report: &mut [u8]) {
+    const TCB_DATE: Range<usize> = 734..742;
+    const TCB_STATUS: Range<usize> = 742..774;
+    const PLATFORM_TCB_DATE: Range<usize> = 774..782;
+    const QE_TCB_DATE: Range<usize> = 782..790;
+    const QE_TCB_STATUS: Range<usize> = 790..822;
+
+    // Copy effective tcb_date -> platform_tcb_date
+    let tcb_date_start = TCB_DATE.start;
+    let tcb_date_len = TCB_DATE.len();
+    for i in 0..tcb_date_len {
+        report[PLATFORM_TCB_DATE.start + i] = report[tcb_date_start + i];
+    }
+    // Copy effective tcb_date -> qe_tcb_date
+    for i in 0..tcb_date_len {
+        report[QE_TCB_DATE.start + i] = report[tcb_date_start + i];
+    }
+    // Copy tcb_status -> qe_tcb_status
+    let tcb_status_start = TCB_STATUS.start;
+    let tcb_status_len = TCB_STATUS.len();
+    for i in 0..tcb_status_len {
+        report[QE_TCB_STATUS.start + i] = report[tcb_status_start + i];
     }
 }

@@ -80,6 +80,9 @@ pub use attest::*;
 /// }
 pub const TD_VERIFIED_REPORT_SIZE: usize = 822;
 
+/// Legacy supplemental data size (before platform_tcb_date, qe_tcb_date, qe_tcb_status were added).
+pub const TD_VERIFIED_REPORT_SIZE_LEGACY: usize = 774;
+
 #[derive(Debug)]
 pub enum Error {
     InvalidRootCa,
