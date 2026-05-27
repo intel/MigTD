@@ -460,7 +460,13 @@ async fn rebinding_old_prepare(
     data: &mut Vec<u8>,
     remote_policy: Vec<u8>,
 ) -> Result<(), MigrationResult> {
-    let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
+    let servtd_ext =
+        read_servtd_ext(info.binding_handle, &info.target_td_uuid)?.ok_or_else(|| {
+            log::error!(
+                "rebinding_old_prepare: rebind feature not supported but rebinding flow reached"
+            );
+            MigrationResult::Unsupported
+        })?;
 
     // Per GHCI 1.5: init policy key hash is in tdinfo.mrowner.
     // Use mrowner directly as the init_policy_hash equivalent.

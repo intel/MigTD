@@ -5,9 +5,16 @@
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
-use tdx_tdcall::tdx::{tdcall_servtd_rd, tdcall_vm_write};
+use tdx_tdcall::tdx::{tdcall_servtd_rd, tdcall_sys_rd, tdcall_vm_write};
 
 use crate::migration::MigrationResult;
+
+/// TDX_FEATURES0 metadata field identifier (SYS scope, readable via TDG.SYS.RD).
+const SYS_FIELD_TDX_FEATURES0: u64 = 0x0A00_0003_0000_0008;
+
+/// BIT48 of TDX_FEATURES0: SERVTD_REBIND — indicates support for service TD
+/// rebinding and per-binding SERVICE_TD class metadata fields.
+const TDX_FEATURES0_SERVTD_REBIND: u64 = 1 << 48;
 
 /// SERVTD_EXT_STRUCT fields in target TD’s TDCS
 pub const TDCS_FIELD_SERVTD_INIT_SERVTD_INFO_HASH: u64 = 0x191000030000020E;
@@ -34,6 +41,28 @@ const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 /// Bits 15:0  = SERVTD_TYPE (0 = MigTD)
 /// Bits 40:32 = IGNORE flags for SERVTD_HASH computation
 pub const EXPECTED_SERVTD_ATTR: u64 = 0;
+
+/// Check whether the TDX module supports the SERVTD_REBIND feature (BIT48 of
+/// TDX_FEATURES0). When this feature is not supported, per-binding SERVICE_TD
+/// class metadata fields are unavailable.
+pub fn is_rebind_supported() -> bool {
+    match tdcall_sys_rd(SYS_FIELD_TDX_FEATURES0) {
+        Ok((_field_id, value)) => {
+            let supported = (value & TDX_FEATURES0_SERVTD_REBIND) != 0;
+            if !supported {
+                log::info!("TDX_FEATURES0.SERVTD_REBIND (BIT48) not set: rebind not supported");
+            }
+            supported
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to read TDX_FEATURES0: {:?}, assuming rebind not supported",
+                e
+            );
+            false
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -90,7 +119,11 @@ pub struct TeeModel {
 pub fn read_servtd_ext(
     binding_handle: u64,
     target_td_uuid: &[u64],
-) -> Result<ServtdExt, MigrationResult> {
+) -> Result<Option<ServtdExt>, MigrationResult> {
+    if !is_rebind_supported() {
+        return Ok(None);
+    }
+
     let read_field =
         |field_base: u64, elem_size: usize, buf: &mut [u8]| -> Result<(), MigrationResult> {
             for (idx, chunk) in buf.chunks_mut(elem_size).enumerate() {
@@ -140,7 +173,7 @@ pub fn read_servtd_ext(
         return Err(MigrationResult::InvalidParameter);
     }
 
-    Ok(ServtdExt {
+    Ok(Some(ServtdExt {
         init_servtd_info_hash,
         init_attr,
         init_cpusvn,
@@ -151,7 +184,7 @@ pub fn read_servtd_ext(
         cur_servtd_attr,
         reserved: [0u8; 8],
         reserved2: [0u8; 104],
-    })
+    }))
 }
 
 /// Verify that CURR_SERVTD_ATTR of the target TD matches both the hardcoded
@@ -159,11 +192,28 @@ pub fn read_servtd_ext(
 ///
 /// Per GHCI 1.5: Both source and destination MigTDs must verify this before
 /// any TDG.SERVTD.WR operations (mig_dec_key, mig_version).
+///
+/// If the TDX module does not support the rebind feature (TDX_FEATURES0.BIT48),
+/// the per-binding fields are unavailable and the check is skipped.
+/// If the module DOES support rebind, the field must be readable and correct.
 pub fn verify_servtd_attr(
     binding_handle: u64,
     target_td_uuid: &[u64],
 ) -> Result<(), MigrationResult> {
-    let result = tdcall_servtd_rd(binding_handle, TDCS_FIELD_SERVTD_ATTR, target_td_uuid)?;
+    if !is_rebind_supported() {
+        return Ok(());
+    }
+
+    let result = tdcall_servtd_rd(binding_handle, TDCS_FIELD_SERVTD_ATTR, target_td_uuid)
+        .map_err(|e| {
+            log::error!(
+                "TDG.SERVTD.RD(SERVTD_ATTR) failed: {:?}, binding_handle={binding_handle:#x}, field_id={:#x}",
+                e,
+                TDCS_FIELD_SERVTD_ATTR
+            );
+            MigrationResult::TdxModuleError
+        })?;
+
     let actual_attr = result.content;
     if actual_attr != EXPECTED_SERVTD_ATTR {
         log::error!(
@@ -185,6 +235,10 @@ pub fn verify_servtd_attr(
 }
 
 pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), MigrationResult> {
+    if !is_rebind_supported() {
+        return Ok(());
+    }
+
     if servtd_ext_hash.len() != SHA384_DIGEST_SIZE {
         return Err(MigrationResult::InvalidParameter);
     }

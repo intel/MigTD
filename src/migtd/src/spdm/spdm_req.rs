@@ -399,20 +399,26 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     // SERVTD_EXT: read from target TD via TDG.SERVTD.RD and send to peer
+    // If rebind is not supported, send a zeroed struct to maintain protocol format.
     {
         use crate::migration::servtd_ext::read_servtd_ext;
 
         let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
             .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        let servtd_ext_bytes: &[u8] = if let Some(ref ext) = servtd_ext {
+            ext.as_bytes()
+        } else {
+            &[0u8; core::mem::size_of::<crate::migration::servtd_ext::ServtdExt>()]
+        };
         let servtd_ext_element = VdmMessageElement {
             element_type: VdmMessageElementType::SerVtdExt,
-            length: servtd_ext.as_bytes().len() as u32,
+            length: servtd_ext_bytes.len() as u32,
         };
         cnt += servtd_ext_element
             .encode(&mut writer)
             .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
         cnt += writer
-            .extend_from_slice(servtd_ext.as_bytes())
+            .extend_from_slice(servtd_ext_bytes)
             .ok_or(SPDM_STATUS_BUFFER_FULL)?;
     }
 
@@ -1008,7 +1014,8 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     let init_migtd_data = rebind_info.init_migtd_data.as_ref().unwrap_or(&local_data);
 
     let servtd_ext = read_servtd_ext(binding_handle, target_td_uuid)
-        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
+        .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?
+        .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
 
     let servtd_ext_element = VdmMessageElement {
         element_type: VdmMessageElementType::SerVtdExt,
