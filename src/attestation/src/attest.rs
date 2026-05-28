@@ -27,7 +27,36 @@ compile_error!(
 
 pub const TD_QUOTE_SIZE: usize = 0x2000;
 const TD_REPORT_VERIFY_SIZE: usize = 1024;
-const ATTEST_HEAP_SIZE: usize = 0x80000;
+// Private heap for the C verifier (servtd_attest). Bumped from 0x80000
+// (512 KiB) to 0x200000 (2 MiB) because the arena's high-water mark grows
+// monotonically across calls in the same MigTD process:
+//
+//   1. dlmalloc's auto-trim only runs when the top free chunk exceeds
+//      DEFAULT_TRIM_THRESHOLD (2 MiB). With a sub-2 MiB heap that gate is
+//      never satisfied, so sys_trim never calls sbrk(-n) and sbrk's
+//      high-water mark never shrinks — even when every chunk is freed.
+//      HAVE_MMAP is also 0, so there is no second release path. (free()
+//      itself does coalesce; the freed space is reusable within the
+//      arena, but never returned to sbrk.)
+//
+//   2. OpenSSL, sgxssl, and libstdc++ inside the verifier lazily allocate
+//      per-process state on first use (error strings, OBJ_NAME tables,
+//      EC precompute, C++ exception storage, locale facets, ...). Those
+//      chunks stay live for the rest of the process and the set grows as
+//      new quote / cert / policy code paths are exercised.
+//
+// LOCAL_TCB_INFO caching was removed in 673fe2c, so a single migration
+// now invokes verify_quote_integrity_ex() up to 4 times in the same MigTD
+// process (loopback). With the old 512 KiB arena, the cumulative live set
+// plus the per-call peak working set exhausted the budget by call ~3:
+// dlmalloc returned NULL, an uncaught std::bad_alloc reached
+// std::terminate -> abort(), and servtd_attest's abort() is literally
+// `__asm__("ud2")` — the failure surfaced as a #UD with no error code
+// propagated to the Rust caller.
+//
+// 2 MiB just raises the ceiling so the cumulative footprint fits with
+// headroom; it does not enable trimming.
+const ATTEST_HEAP_SIZE: usize = 0x200000;
 
 /// C-compatible version of Collateral with null-terminated strings
 #[derive(Debug)]
