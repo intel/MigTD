@@ -25,7 +25,9 @@ lazy_static! {
     pub static ref VMCALL_MIG_CONTEXT_FLAGS: Mutex<BTreeMap<u64, AtomicBool>> =
         Mutex::new(BTreeMap::new());
 }
-const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
+const TDX_VMCALL_VMM_SUCCESS: u8 = 0x01;
+const TDX_VMCALL_STATUS_NOT_COMPLETED: u8 = 0x02;
+const TDX_VMCALL_STATUS_VMM_CANCEL: u8 = 0x03;
 
 fn push_stream_queues(stream: &VmcallRaw, buf: Vec<u8>) {
     if buf.is_empty() {
@@ -139,6 +141,16 @@ async fn vmcall_service_migtd_send(
         let data_status_bytes = data_status.to_le_bytes();
 
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
+            if data_status_bytes[0] == TDX_VMCALL_STATUS_NOT_COMPLETED
+                && data_status_bytes[1] == TDX_VMCALL_STATUS_VMM_CANCEL
+            {
+                log::warn!(
+                    "VMM canceled migration session (migration_request_id={}, data_status=0x{:x})\n",
+                    mig_request_id,
+                    data_status
+                );
+                return Poll::Ready(Err(VmcallRawError::VmmCanceled));
+            }
             return Poll::Pending;
         }
 
@@ -181,6 +193,16 @@ async fn vmcall_service_migtd_receive(
         let data_status_bytes = data_status.to_le_bytes();
 
         if data_status_bytes[0] != TDX_VMCALL_VMM_SUCCESS {
+            if data_status_bytes[0] == TDX_VMCALL_STATUS_NOT_COMPLETED
+                && data_status_bytes[1] == TDX_VMCALL_STATUS_VMM_CANCEL
+            {
+                log::warn!(
+                    "VMM canceled migration session (migration_request_id={}, data_status=0x{:x})\n",
+                    mig_request_id,
+                    data_status
+                );
+                return Poll::Ready(Err(VmcallRawError::VmmCanceled));
+            }
             return Poll::Pending;
         }
 

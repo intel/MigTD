@@ -57,7 +57,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
         while sent < buffer.len() {
             match self.transport.write(&buffer[sent..]).await {
                 Ok(len) => sent += len,
-                Err(_) => return Err(SPDM_STATUS_SEND_FAIL),
+                // ConnectionAborted maps from VmcallRawError::VmmCanceled.
+                // The SpdmDeviceIo trait cannot represent this error, so just
+                // log and return the generic SPDM_STATUS_SEND_FAIL.
+                Err(e) => {
+                    if e.kind() == rust_std_stub::io::ErrorKind::ConnectionAborted {
+                        log::warn!("VMM canceled migration session during SPDM send\n");
+                    }
+                    return Err(SPDM_STATUS_SEND_FAIL);
+                }
             }
         }
         Ok(())
@@ -79,7 +87,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
                 .transport
                 .read(&mut buffer[recvd..])
                 .await
-                .map_err(|_| 0_usize)?;
+                // ConnectionAborted maps from VmcallRawError::VmmCanceled.
+                // The SpdmDeviceIo trait cannot represent this error, so just
+                // log and return the generic receive error.
+                .map_err(|e| {
+                    if e.kind() == rust_std_stub::io::ErrorKind::ConnectionAborted {
+                        log::warn!("VMM canceled migration session during SPDM receive\n");
+                    }
+                    0_usize
+                })?;
             recvd += n;
         }
 
@@ -97,7 +113,12 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
                 .transport
                 .read(&mut buffer[recvd..])
                 .await
-                .map_err(|_| 0_usize)?;
+                .map_err(|e| {
+                    if e.kind() == rust_std_stub::io::ErrorKind::ConnectionAborted {
+                        log::warn!("VMM canceled migration session during SPDM receive\n");
+                    }
+                    0_usize
+                })?;
             recvd += n;
         }
 
