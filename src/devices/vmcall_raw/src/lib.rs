@@ -50,6 +50,8 @@ pub enum VmcallRawError {
     NotReady,
     /// Tdvmcall error
     TdVmcallErr,
+    /// VMM canceled the migration session
+    VmmCanceled,
     /// Interrupt error
     Interrupt,
 }
@@ -68,6 +70,7 @@ impl Display for VmcallRawError {
             VmcallRawError::AddressAlreadyUsed => write!(f, "AddressAlreadyUsed"),
             VmcallRawError::NotReady => write!(f, "NotReady"),
             VmcallRawError::TdVmcallErr => write!(f, "TdVmcallErr"),
+            VmcallRawError::VmmCanceled => write!(f, "VmmCanceled"),
             VmcallRawError::Interrupt => write!(f, "Interrupt"),
         }
     }
@@ -83,7 +86,11 @@ impl error::Error for VmcallRawError {}
 
 impl From<VmcallRawError> for io::Error {
     fn from(e: VmcallRawError) -> Self {
-        io::Error::new(io::ErrorKind::Other, e)
+        let kind = match e {
+            VmcallRawError::VmmCanceled => io::ErrorKind::ConnectionAborted,
+            _ => io::ErrorKind::Other,
+        };
+        io::Error::new(kind, e)
     }
 }
 
