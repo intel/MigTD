@@ -4,9 +4,7 @@
 
 use crate::mig_policy;
 #[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
-use crate::migration::rebinding::{
-    write_rebinding_session_token, write_servtd_rebind_attr, RebindingInfo,
-};
+use crate::migration::rebinding::{write_rebinding_session_token, write_servtd_rebind_attr};
 #[cfg(not(feature = "policy_v2"))]
 use crate::migration::servtd_ext::verify_servtd_attr;
 #[cfg(feature = "policy_v2")]
@@ -60,7 +58,7 @@ pub struct ResponderContextEx<'a> {
 pub enum ResponderContextExInfo<'a> {
     MigrationInformation(&'a MigtdMigrationInformation),
     #[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
-    RebindInformation(&'a RebindingInfo),
+    RebindInformation(&'a MigtdMigrationInformation),
     None,
 }
 

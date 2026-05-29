@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 use crate::{
-    migration::{rebinding::RebindingInfo, MigtdMigrationInformation},
+    migration::MigtdMigrationInformation,
     spdm::{
         spdm_req::{
             send_and_receive_pub_key, send_and_receive_sdm_rebind_attest_info,
@@ -24,7 +24,7 @@ use zeroize::Zeroize;
 
 pub async fn spdm_requester_rebind_old(
     spdm_requester: &mut RequesterContext,
-    rebind_info: &RebindingInfo,
+    rebind_info: &MigtdMigrationInformation,
     remote_policy: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     Box::pin(spdm_requester.send_receive_spdm_version()).await?;
@@ -61,7 +61,7 @@ pub async fn spdm_requester_rebind_old(
 
 pub async fn spdm_responder_rebind_new<'a>(
     spdm_responder_ex: &mut ResponderContextEx<'a>,
-    rebind_info: &'a RebindingInfo,
+    rebind_info: &'a MigtdMigrationInformation,
     remote_policy: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     spdm_responder_ex.remote_policy = remote_policy;
