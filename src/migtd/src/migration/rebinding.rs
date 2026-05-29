@@ -17,13 +17,7 @@ use crate::migration::transport::*;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
 
-use crate::{
-    config,
-    migration::pre_session_data::{
-        exchange_hello_packet, receive_pre_session_data_packet, receive_start_session_packet,
-        send_pre_session_data_packet, send_start_session_packet,
-    },
-};
+use crate::{config, migration::pre_session_data::pre_session_data_exchange};
 
 use crate::{
     driver::ticks::with_timeout,
@@ -126,126 +120,18 @@ impl RebindingInfo {
     }
 }
 
-pub(super) async fn rebinding_old_pre_session_data_exchange(
-    transport: &mut TransportType,
-) -> Result<Vec<u8>, MigrationResult> {
-    let version = exchange_hello_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
-
-    let policy = config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    send_pre_session_data_packet(policy, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-
-    Ok(remote_policy)
-}
-
-pub(super) async fn rebinding_new_pre_session_data_exchange(
-    transport: &mut TransportType,
-) -> Result<Vec<u8>, MigrationResult> {
-    let version = exchange_hello_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: exchange_hello_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    log::info!("Pre-Session-Message Version: 0x{:04x}\n", version);
-
-    let policy = config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
-    send_pre_session_data_packet(policy, transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: send_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-    let remote_policy = receive_pre_session_data_packet(transport)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "pre_session_data_exchange: receive_pre_session_data_packet error: {:?}\n",
-                e
-            );
-            e
-        })?;
-
-    send_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: send_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-    receive_start_session_packet(transport).await.map_err(|e| {
-        log::error!(
-            "pre_session_data_exchange: receive_start_session_packet error: {:?}\n",
-            e
-        );
-        e
-    })?;
-
-    let mut policy_buffer = Vec::new();
-    policy_buffer.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
-    policy_buffer.extend_from_slice(&remote_policy);
-
-    Ok(policy_buffer)
-}
-
 pub async fn start_rebinding(
     info: &RebindingInfo,
     data: &mut Vec<u8>,
 ) -> Result<(), MigrationResult> {
     let mut transport = setup_transport(info.mig_request_id).await?;
+
+    let policy = config::get_policy()
+        .ok_or(MigrationResult::InvalidParameter)
+        .map_err(|e| {
+            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
+            e
+        })?;
 
     // Exchange policy firstly because of the message size limitation of TLS protocol
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
@@ -259,19 +145,19 @@ pub async fn start_rebinding(
             .ok_or(MigrationResult::InvalidParameter)?;
         let remote_policy = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
-            rebinding_old_pre_session_data_exchange(&mut transport),
+            pre_session_data_exchange(&mut transport, policy),
         ))
         .await
         .map_err(|e| {
             log::error!(
-                "start_rebinding: rebinding_old_pre_session_data_exchange timeout error: {:?}\n",
+                "start_rebinding: pre_session_data_exchange timeout error: {:?}\n",
                 e
             );
             e
         })?
         .map_err(|e| {
             log::error!(
-                "start_rebinding: rebinding_old_pre_session_data_exchange error: {:?}\n",
+                "start_rebinding: pre_session_data_exchange error: {:?}\n",
                 e
             );
             e
@@ -289,25 +175,30 @@ pub async fn start_rebinding(
         )
         .await?;
     } else {
-        let pre_session_data = Box::pin(with_timeout(
+        let remote_policy = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
-            rebinding_new_pre_session_data_exchange(&mut transport),
+            pre_session_data_exchange(&mut transport, policy),
         ))
         .await
         .map_err(|e| {
             log::error!(
-                "start_rebinding: rebinding_new_pre_session_data_exchange timeout error: {:?}\n",
+                "start_rebinding: pre_session_data_exchange timeout error: {:?}\n",
                 e
             );
             e
         })?
         .map_err(|e| {
             log::error!(
-                "start_rebinding: rebinding_new_pre_session_data_exchange error: {:?}\n",
+                "start_rebinding: pre_session_data_exchange error: {:?}\n",
                 e
             );
             e
         })?;
+
+        // Wrap remote_policy with length prefix for downstream TLS verify callback
+        let mut pre_session_data = Vec::new();
+        pre_session_data.extend_from_slice(&(remote_policy.len() as u32).to_le_bytes());
+        pre_session_data.extend_from_slice(&remote_policy);
 
         #[cfg(not(feature = "spdm_attestation"))]
         rebinding_new_prepare(transport, info, data, pre_session_data).await?;
