@@ -2,11 +2,6 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-#[cfg(feature = "policy_v2")]
-use crate::migration::init_data::InitData;
-#[cfg(all(feature = "main", feature = "vmcall-raw", feature = "policy_v2"))]
-use crate::migration::rebinding::RebindingInfo;
-
 use super::*;
 #[cfg(feature = "vmcall-raw")]
 use bitfield_struct::bitfield;
@@ -260,7 +255,7 @@ pub struct RequestDataBuffer<'a> {
 pub enum WaitForRequestResponse {
     StartMigration(MigrationInformation),
     #[cfg(all(feature = "main", feature = "policy_v2"))]
-    StartRebinding(RebindingInfo),
+    StartRebinding(MigtdMigrationInformation),
     GetTdReport(ReportInfo),
     EnableLogArea(EnableLogAreaInfo),
     #[cfg(feature = "policy_v2")]
@@ -269,8 +264,6 @@ pub enum WaitForRequestResponse {
 
 pub struct MigrationInformation {
     pub mig_info: MigtdMigrationInformation,
-    #[cfg(feature = "policy_v2")]
-    pub init_migtd_data: Option<InitData>,
     #[cfg(all(
         not(feature = "vmcall-raw"),
         any(feature = "vmcall-vsock", feature = "virtio-vsock")
@@ -361,16 +354,12 @@ fn create_migration_information(
     policy_info_hob: Option<&[u8]>,
 ) -> Option<MigrationInformation> {
     let mig_info_data = hob_lib::get_guid_data(mig_info_hob?)?;
-    let mig_info = mig_info_data.pread::<MigtdMigrationInformation>(0).ok()?;
-
-    // Per GHCI 1.5: if has_init_data == 1, InitData blob follows MigtdMigrationInformation
     #[cfg(feature = "policy_v2")]
-    let init_migtd_data = if mig_info.has_init_data == 1 {
-        let offset = size_of::<MigtdMigrationInformation>();
-        InitData::read_from_bytes(mig_info_data.get(offset..)?)
-    } else {
-        None
-    };
+    let mig_info =
+        MigtdMigrationInformation::read_from_bytes(mig_info_data.len() as u32, mig_info_data)
+            .ok()?;
+    #[cfg(not(feature = "policy_v2"))]
+    let mig_info = mig_info_data.pread::<MigtdMigrationInformation>(0).ok()?;
 
     #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
     let mig_socket_info = hob_lib::get_guid_data(mig_socket_hob?)?
@@ -392,8 +381,6 @@ fn create_migration_information(
 
     Some(MigrationInformation {
         mig_info,
-        #[cfg(feature = "policy_v2")]
-        init_migtd_data,
         #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
         mig_socket_info,
         mig_policy,
@@ -533,7 +520,7 @@ mod test {
     #[test]
     fn test_read_mig_info_duplicate_mig_info_hob() {
         // Create mock HOB data
-        let mut hob_data = vec![0u8; 1024];
+        let mut hob_data = vec![0u8; 2048];
         let mut offset = 0;
 
         // Add Migration Information HOB
@@ -710,7 +697,7 @@ mod test {
     #[test]
     fn test_read_mig_info_invalid_hob_length() {
         // Create mock HOB data
-        let mut hob_data = vec![0u8; 256];
+        let mut hob_data = vec![0u8; 1024];
         let mut offset = 0;
 
         // Add Migration Information HOB
@@ -750,6 +737,8 @@ mod test {
             binding_handle: 0,
             mig_policy_id: 0,
             communication_id: 0,
+            #[cfg(feature = "policy_v2")]
+            init_td_info: [0u8; TD_INFO_SIZE],
         };
         hob.pwrite(mig_info_hob, *offset).unwrap();
         *offset += size_of::<GuidExtension>();

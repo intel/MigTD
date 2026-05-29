@@ -4,8 +4,6 @@
 
 #[cfg(feature = "policy_v2")]
 use crate::migration::pre_session_data::pre_session_data_exchange;
-#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-use crate::migration::rebinding::RebindingInfo;
 #[cfg(not(feature = "spdm_attestation"))]
 use crate::migration::servtd_ext::verify_servtd_attr;
 use crate::migration::transport::setup_transport;
@@ -234,7 +232,7 @@ fn process_buffer(buffer: &[u8]) -> RequestDataBufferHeader {
 
 #[cfg(feature = "vmcall-raw")]
 fn calculate_shared_page_nums(reqbufferhdrlen: usize) -> Result<usize> {
-    let init_data_header_size = 44; // size of MIGTD_DATA_STRUCT header + MIGTD_DATA_ENTRY_STRUCT header
+    // The response payload for GetMigtdData is just the raw 512-byte TDINFO_STRUCT.
     let policy_size = crate::config::get_policy()
         .ok_or(MigrationResult::InvalidParameter)?
         .len();
@@ -242,8 +240,11 @@ fn calculate_shared_page_nums(reqbufferhdrlen: usize) -> Result<usize> {
         .ok_or(MigrationResult::InvalidParameter)?
         .len();
     let report_size = 1024;
-    let total_size =
-        reqbufferhdrlen + init_data_header_size + policy_size + event_log_size + report_size;
+    let total_size = reqbufferhdrlen
+        + crate::migration::TD_INFO_SIZE
+        + policy_size
+        + event_log_size
+        + report_size;
     Ok((total_size + PAGE_SIZE - 1) / PAGE_SIZE)
 }
 
@@ -399,55 +400,14 @@ fn parse_request(
 
     match op {
         DataStatusOperation::StartMigration => {
-            #[cfg(feature = "policy_v2")]
-            {
-                match MigtdMigrationInformation::read_from_bytes(data_length, slice) {
-                    Ok(mig_info) => {
-                        use crate::migration::init_data::InitData;
-                        let init_migtd_data = if mig_info.has_init_data == 1 {
-                            let fixed_size = core::mem::size_of::<MigtdMigrationInformation>();
-                            Some(
-                                InitData::read_from_bytes(&slice[fixed_size..])
-                                    .ok_or(MigrationResult::InvalidParameter)
-                                    .map_err(|status| {
-                                        log_request_error!(
-                                            request_id,
-                                            "wait_for_request: StartMigration failed to decode init_migtd_data\n"
-                                        );
-                                        status
-                                    })?,
-                            )
-                        } else {
-                            None
-                        };
-                        try_accept_request(
-                            mig_info.mig_request_id,
-                            WaitForRequestResponse::StartMigration(MigrationInformation {
-                                mig_info,
-                                init_migtd_data,
-                            }),
-                        )
-                    }
-                    Err(status) => {
-                        log_request_error!(
-                            request_id,
-                            "wait_for_request: StartMigration failed to decode payload\n"
-                        );
-                        reject_request(pending_error_report, request_id, status)
-                    }
-                }
-            }
-            #[cfg(not(feature = "policy_v2"))]
-            {
-                decode_and_dispatch!(MigtdMigrationInformation, |mig_info| {
-                    WaitForRequestResponse::StartMigration(MigrationInformation { mig_info })
-                })
-            }
+            decode_and_dispatch!(MigtdMigrationInformation, |mig_info| {
+                WaitForRequestResponse::StartMigration(MigrationInformation { mig_info })
+            })
         }
         DataStatusOperation::StartRebinding => {
             #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
             {
-                decode_and_dispatch!(RebindingInfo, |info| {
+                decode_and_dispatch!(MigtdMigrationInformation, |info| {
                     WaitForRequestResponse::StartRebinding(info)
                 })
             }
@@ -715,16 +675,14 @@ pub async fn get_migtd_data(
     data: &mut Vec<u8>,
     request_id: u64,
 ) -> Result<()> {
-    use crate::migration::init_data::InitData;
-
-    let init_data = InitData::get_from_local(additional_data).ok_or_else(|| {
+    let report = tdx_tdcall::tdreport::tdcall_report(additional_data).map_err(|_| {
         log::error!( migration_request_id = request_id;
             "Failed to get init migtd data from local\n",
         );
         MigrationResult::InvalidParameter
     })?;
 
-    init_data.write_into_bytes(data);
+    data.extend_from_slice(report.td_info.as_bytes());
     Ok(())
 }
 
@@ -991,8 +949,6 @@ async fn migration_src_exchange_msk(
             &mut spdm_requester,
             &info.mig_info,
             #[cfg(feature = "policy_v2")]
-            info.init_migtd_data.as_ref(),
-            #[cfg(feature = "policy_v2")]
             remote_policy,
         ),
     )
@@ -1066,8 +1022,8 @@ async fn migration_dst_exchange_msk(
 pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     // Per GHCI 1.5: if VMM provided initMigtdData, verify policy binding
     #[cfg(feature = "policy_v2")]
-    if let Some(ref init_data) = info.init_migtd_data {
-        crate::mig_policy::verify_init_migtd_data_policy_binding(init_data).map_err(|e| {
+    if let Some(init_td_info) = info.mig_info.init_td_info_if_present() {
+        crate::mig_policy::verify_init_migtd_data_policy_binding(init_td_info).map_err(|e| {
             log::error!(
                 migration_request_id = info.mig_info.mig_request_id;
                 "exchange_msk: initMigtdData policy binding verification failed: {:?}\n", e
@@ -1085,16 +1041,11 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     )
     .await?;
 
-    // Exchange policy firstly because of the message size limitation of TLS protocol
+    // Exchange policy before TLS because of the message size limitation of TLS protocol.
     #[cfg(feature = "policy_v2")]
-    const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60);
     #[cfg(feature = "policy_v2")]
-    let policy = crate::config::get_policy()
-        .ok_or(MigrationResult::InvalidParameter)
-        .map_err(|e| {
-            log::error!("pre_session_data_exchange: get_policy error: {:?}\n", e);
-            e
-        })?;
+    let policy = crate::config::get_policy().ok_or(MigrationResult::InvalidParameter)?;
     #[cfg(feature = "policy_v2")]
     let remote_policy = Box::pin(with_timeout(
         PRE_SESSION_TIMEOUT,
@@ -1102,9 +1053,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     ))
     .await
     .map_err(|e| {
-        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: pre_session_data_exchange timeout error: {:?}\n",
-            e
-        );
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: pre_session_data_exchange timeout: {:?}\n", e);
         e
     })?
     .map_err(|e| {

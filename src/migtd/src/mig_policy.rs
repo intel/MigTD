@@ -687,9 +687,10 @@ mod v2 {
     /// Per GHCI 1.5: Verify initMigtdData.MROWNER matches own policy signer key hash
     /// and initMigtdData.MROWNERCONFIG <= own policy SVN.
     pub fn verify_init_migtd_data_policy_binding(
-        init_data: &crate::migration::init_data::InitData,
+        init_td_info: &[u8; crate::migration::TD_INFO_SIZE],
     ) -> Result<(), PolicyError> {
         use crate::config::get_policy_issuer_chain;
+        use crate::migration::{td_info_mrowner, td_info_mrownerconfig};
 
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
         let my_policy_svn = policy.policy_data.get_policy_svn();
@@ -698,12 +699,12 @@ mod v2 {
         let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
         let policy_key_hash = crypto::get_policy_signer_key_hash(policy_issuer_chain)
             .map_err(|_| PolicyError::InvalidCollateral)?;
-        if init_data.mrowner() != policy_key_hash {
+        if td_info_mrowner(init_td_info) != &policy_key_hash {
             return Err(PolicyError::PolicyHashMismatch);
         }
 
         // Check MROWNERCONFIG (init policy_svn) <= my policy_svn
-        let init_mrownerconfig = init_data.mrownerconfig();
+        let init_mrownerconfig = td_info_mrownerconfig(init_td_info);
         let mut init_svn_bytes = [0u8; 4];
         init_svn_bytes.copy_from_slice(&init_mrownerconfig[..4]);
         let init_policy_svn = u32::from_le_bytes(init_svn_bytes);

@@ -381,7 +381,7 @@ fn parse_commandline_args() {
         target_td_uuid[2] as u64,
         target_td_uuid[3] as u64,
     ];
-    let rebinding_src = if is_source { 1u8 } else { 0u8 };
+    let migration_source = if is_source { 1u8 } else { 0u8 };
 
     // Queue emulated requests based on selected operation
     match operation {
@@ -389,7 +389,7 @@ fn parse_commandline_args() {
             log::info!(
                 "Setting up migration flow (EnableLogArea → GetTDReport → StartMigration)\n"
             );
-            set_emulated_start_migration(mig_request_id, rebinding_src, td_uuid, binding_handle);
+            set_emulated_start_migration(mig_request_id, migration_source, td_uuid, binding_handle);
         }
         "rebind-prepare" => {
             log::info!(
@@ -397,7 +397,7 @@ fn parse_commandline_args() {
             );
             set_emulated_start_rebinding(
                 mig_request_id,
-                rebinding_src,
+                migration_source,
                 0, // MIGTD_REBIND_OP_PREPARE
                 td_uuid,
                 binding_handle,
@@ -409,7 +409,7 @@ fn parse_commandline_args() {
             );
             set_emulated_start_rebinding(
                 mig_request_id,
-                rebinding_src,
+                migration_source,
                 1, // MIGTD_REBIND_OP_FINALIZE
                 td_uuid,
                 binding_handle,
