@@ -96,7 +96,7 @@ impl RebindingInfo {
         use crate::migration::MigrationResult;
         let b = payload;
         // Check the length of input and the reserved fields
-        if b.len() < 56 || (data_length as usize) < 56 || b[11..16] != [0; 5] {
+        if b.len() < 56 || (data_length as usize) < 56 || b[10..16] != [0; 6] {
             return Err(MigrationResult::InvalidParameter);
         }
         let mig_request_id = u64::from_le_bytes(b[..8].try_into().unwrap());
