@@ -45,6 +45,21 @@ impl LibraryCrates {
                 cmd!(sh, "cargo test")
                     .args(["-p", name.as_str(), "--features", "policy_v2"])
                     .run()?;
+                // Cover the vmcall-raw transport layout (incompatible with the
+                // default virtio-vsock feature) so the rebinding module and the
+                // vmcall-raw variant of MigtdMigrationInformation are exercised.
+                // Restricted to --lib because the bin target's `main` symbol
+                // conflicts under `cfg(test) + main + !AzCVMEmu`.
+                cmd!(sh, "cargo test")
+                    .args([
+                        "--lib",
+                        "-p",
+                        name.as_str(),
+                        "--no-default-features",
+                        "--features",
+                        "main,policy_v2,vmcall-raw",
+                    ])
+                    .run()?;
             } else if name.as_str() == "policy" {
                 // Run tests for policy V1 and V2
                 cmd!(sh, "cargo test").args(["-p", name.as_str()]).run()?;
