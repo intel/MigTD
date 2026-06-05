@@ -1360,6 +1360,8 @@ mod test {
     #[cfg(feature = "vmcall-raw")]
     mod parse_request_tests {
         use super::super::{parse_request, REQUESTS};
+        #[cfg(feature = "policy_v2")]
+        use crate::migration::MIGTD_MIGRATION_INFO_HEADER_SIZE;
         use crate::migration::{
             data::{RequestDataBufferHeader, WaitForRequestResponse},
             EnableLogAreaInfo, MigrationResult, MigtdMigrationInformation, ReportInfo,
@@ -1391,7 +1393,12 @@ mod test {
         }
 
         fn build_migration_payload(request_id: u64, is_source: u8) -> Vec<u8> {
-            let mut payload = vec![0u8; size_of::<MigtdMigrationInformation>()];
+            // Short-form payload: header only, has_init_data = 0 (init_td_info absent).
+            #[cfg(feature = "policy_v2")]
+            let size = MIGTD_MIGRATION_INFO_HEADER_SIZE;
+            #[cfg(not(feature = "policy_v2"))]
+            let size = size_of::<MigtdMigrationInformation>();
+            let mut payload = vec![0u8; size];
             payload[0..8].copy_from_slice(&request_id.to_le_bytes());
             payload[8] = is_source;
             payload
