@@ -193,7 +193,7 @@ pub fn local_init_td_info() -> Result<[u8; TD_INFO_SIZE], MigrationResult> {
 /// Size of the fixed `MigtdMigrationInformation` header preceding the
 /// optional `init_td_info` tail (per GHCI 1.5 StartMigration layout).
 #[cfg(feature = "policy_v2")]
-const MIGTD_MIGRATION_INFO_HEADER_SIZE: usize =
+pub(crate) const MIGTD_MIGRATION_INFO_HEADER_SIZE: usize =
     core::mem::size_of::<MigtdMigrationInformation>() - TD_INFO_SIZE;
 
 #[repr(C)]
@@ -309,9 +309,9 @@ impl MigtdMigrationInformation {
         if parsed.has_init_data > 1 {
             return Err(MigrationResult::InvalidParameter);
         }
-        // has_init_data == 1 requires full-size payload; full-size payload with
-        // has_init_data == 0 is accepted (e.g. HOBs always serialize full struct).
-        if parsed.has_init_data == 1 && data_length != full_size {
+        // has_init_data and data_length must be consistent: the full-size
+        // payload is required iff has_init_data == 1.
+        if (parsed.has_init_data == 1) != (data_length == full_size) {
             return Err(MigrationResult::InvalidParameter);
         }
         Ok(parsed)
@@ -546,5 +546,138 @@ impl From<TdCallError> for MigrationResult {
 impl From<TimeoutError> for MigrationResult {
     fn from(_: TimeoutError) -> Self {
         MigrationResult::NetworkError
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "policy_v2")]
+mod test {
+    use super::*;
+    use alloc::vec;
+
+    /// Create a 512-byte TDINFO_STRUCT with known mrowner and mrownerconfig.
+    fn make_tdinfo(mrowner: &[u8; 48], mrownerconfig: &[u8; 48]) -> [u8; TD_INFO_SIZE] {
+        let mut tdinfo = [0u8; TD_INFO_SIZE];
+        // mrowner at offset 112..160
+        tdinfo[112..160].copy_from_slice(mrowner);
+        // mrownerconfig at offset 160..208
+        tdinfo[160..208].copy_from_slice(mrownerconfig);
+        tdinfo
+    }
+
+    /// Build a MigtdMigrationInformation byte buffer matching the active
+    /// feature layout. Under non-vmcall-raw, `mig_policy_id` and
+    /// `communication_id` (zero-initialized) are inserted after
+    /// `binding_handle`. When `init_tdinfo` is `Some`, the raw TDINFO bytes
+    /// are appended directly (no envelope, per the unified wire contract).
+    fn build_mig_info(
+        mig_request_id: u64,
+        migration_source: u8,
+        has_init_data: u8,
+        uuid: [u64; 4],
+        binding_handle: u64,
+        init_tdinfo: Option<&[u8]>,
+    ) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&mig_request_id.to_le_bytes()); // 0..8
+        buf.push(migration_source); // 8
+        buf.push(has_init_data); // 9
+        buf.extend_from_slice(&[0u8; 6]); // 10..16 reserved
+        for u in &uuid {
+            buf.extend_from_slice(&u.to_le_bytes()); // 16..48
+        }
+        buf.extend_from_slice(&binding_handle.to_le_bytes()); // 48..56
+        #[cfg(not(feature = "vmcall-raw"))]
+        {
+            buf.extend_from_slice(&0u64.to_le_bytes()); // mig_policy_id 56..64
+            buf.extend_from_slice(&0u64.to_le_bytes()); // communication_id 64..72
+        }
+        if let Some(data) = init_tdinfo {
+            buf.extend_from_slice(data);
+        }
+        buf
+    }
+
+    #[test]
+    fn test_mig_info_no_init_data() {
+        let buf = build_mig_info(42, 1, 0, [1, 2, 3, 4], 99, None);
+        let info = MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf)
+            .expect("should parse");
+        assert_eq!(info.mig_request_id, 42);
+        assert_eq!(info.migration_source, 1);
+        assert_eq!(info.has_init_data, 0);
+        assert_eq!(info.target_td_uuid, [1, 2, 3, 4]);
+        assert_eq!(info.binding_handle, 99);
+        assert!(info.init_td_info_if_present().is_none());
+        // Padded tail is zero.
+        assert_eq!(info.init_td_info, [0u8; TD_INFO_SIZE]);
+    }
+
+    #[test]
+    fn test_mig_info_with_init_data() {
+        let tdinfo = make_tdinfo(&[0xCAu8; 48], &[0xFEu8; 48]);
+        let buf = build_mig_info(7, 0, 1, [10, 20, 30, 40], 55, Some(&tdinfo));
+        let info = MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf)
+            .expect("should parse with init data");
+        assert_eq!(info.mig_request_id, 7);
+        assert_eq!(info.has_init_data, 1);
+        let init = info.init_td_info_if_present().expect("should be present");
+        assert_eq!(init, &tdinfo);
+        assert_eq!(td_info_mrowner(init), &[0xCAu8; 48]);
+        assert_eq!(td_info_mrownerconfig(init), &[0xFEu8; 48]);
+    }
+
+    #[test]
+    fn test_mig_info_rejects_short_buffer() {
+        // Anything shorter than the layout's short-form header must be rejected.
+        let too_short = MIGTD_MIGRATION_INFO_HEADER_SIZE - 1;
+        assert!(MigtdMigrationInformation::read_from_bytes(10, &[0u8; 10]).is_err());
+        assert!(MigtdMigrationInformation::read_from_bytes(
+            too_short as u32,
+            &vec![0u8; too_short]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_mig_info_rejects_nonzero_reserved() {
+        let mut buf = build_mig_info(1, 0, 0, [0; 4], 0, None);
+        buf[10] = 0xFF; // reserved byte not zero
+        assert!(MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf).is_err());
+    }
+
+    #[test]
+    fn test_mig_info_rejects_has_init_data_without_tail() {
+        // has_init_data=1 but no tail bytes following → flag/length mismatch
+        let buf = build_mig_info(1, 0, 1, [0; 4], 0, None);
+        assert!(MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf).is_err());
+    }
+
+    #[test]
+    fn test_mig_info_rejects_full_form_without_flag() {
+        // has_init_data=0 but full-size buffer (with init_td_info tail) → flag/length mismatch
+        let tdinfo = [0u8; TD_INFO_SIZE];
+        let buf = build_mig_info(1, 0, 0, [0; 4], 0, Some(&tdinfo));
+        assert!(MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf).is_err());
+    }
+
+    #[test]
+    fn test_mig_info_rejects_invalid_has_init_data() {
+        // has_init_data must be 0 or 1
+        let mut buf = build_mig_info(1, 0, 0, [0; 4], 0, None);
+        buf[9] = 2;
+        assert!(MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf).is_err());
+        buf[9] = 0xFF;
+        assert!(MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf).is_err());
+    }
+
+    #[test]
+    fn test_mig_info_rejects_unexpected_length() {
+        // Only short or full lengths are accepted; mid-sized buffers are rejected.
+        let mid = MIGTD_MIGRATION_INFO_HEADER_SIZE + 1;
+        let mid_buf = vec![0u8; mid];
+        assert!(
+            MigtdMigrationInformation::read_from_bytes(mid_buf.len() as u32, &mid_buf).is_err()
+        );
     }
 }

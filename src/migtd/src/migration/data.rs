@@ -725,9 +725,19 @@ mod test {
     }
 
     fn create_mig_info_hob(hob: &mut [u8], offset: &mut usize) {
+        // Under policy_v2, build a short-form HOB payload (header only,
+        // has_init_data = 0). The wire format also supports a full-size form
+        // carrying init_td_info when has_init_data == 1; that variant is
+        // exercised by the parser-level tests in `mod.rs`. Under non-policy_v2
+        // builds, MigtdMigrationInformation has no init_td_info field and the
+        // only valid form is the full struct.
+        #[cfg(feature = "policy_v2")]
+        let payload_size = MIGTD_MIGRATION_INFO_HEADER_SIZE;
+        #[cfg(not(feature = "policy_v2"))]
+        let payload_size = size_of::<MigtdMigrationInformation>();
+
         let mig_info_hob_guid = MIGRATION_INFORMATION_HOB_GUID.as_bytes();
-        let mig_info_hob =
-            create_guid_hob(mig_info_hob_guid, size_of::<MigtdMigrationInformation>());
+        let mig_info_hob = create_guid_hob(mig_info_hob_guid, payload_size);
         let mig_info = MigtdMigrationInformation {
             mig_request_id: 0,
             migration_source: 1,
@@ -742,8 +752,12 @@ mod test {
         };
         hob.pwrite(mig_info_hob, *offset).unwrap();
         *offset += size_of::<GuidExtension>();
-        hob.pwrite(mig_info, *offset).unwrap();
-        *offset += size_of::<MigtdMigrationInformation>();
+        // Serialize the full struct to a tmp buffer, then copy only the
+        // header bytes — the tail init_td_info is omitted in the short form.
+        let mut tmp = [0u8; size_of::<MigtdMigrationInformation>()];
+        tmp.pwrite(mig_info, 0).unwrap();
+        hob[*offset..*offset + payload_size].copy_from_slice(&tmp[..payload_size]);
+        *offset += payload_size;
     }
 
     fn create_socket_info_hob(hob: &mut [u8], offset: &mut usize) {
