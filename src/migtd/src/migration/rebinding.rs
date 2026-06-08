@@ -302,37 +302,29 @@ async fn rebinding_old_prepare(
         }
     };
 
-    // Per GHCI 1.5: init policy key hash is in tdinfo.mrowner.
-    // Use mrowner directly as the init_policy_hash equivalent.
-    let init_policy_hash = crate::migration::td_info_mrowner(init_td_info).to_vec();
-
     // Per GHCI 1.5: init_tdinfo replaces the old init_report (full TDREPORT).
     // The TDINFO_STRUCT contains all the measurement fields needed for verification.
     let init_tdinfo: &[u8] = init_td_info;
 
     // TLS client
-    let mut ratls_client = ratls::client_rebinding(
-        transport,
-        remote_policy,
-        &init_policy_hash,
-        init_tdinfo,
-        &servtd_ext,
-    )
-    .map_err(|_| {
-        #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: rebinding_old(): Failed in ratls transport. Migration ID: {:x}\n",
-                info.mig_request_id,
-            )
-            .into_bytes(),
-        );
-        log::error!(
-            "rebinding_old(): Failed in ratls transport. Migration ID: {}\n",
-            info.mig_request_id
-        );
-        MigrationResult::SecureSessionError
-    })?;
+    let mut ratls_client =
+        ratls::client_rebinding(transport, remote_policy, init_tdinfo, &servtd_ext).map_err(
+            |_| {
+                #[cfg(feature = "vmcall-raw")]
+                data.extend_from_slice(
+                    &format!(
+                        "Error: rebinding_old(): Failed in ratls transport. Migration ID: {:x}\n",
+                        info.mig_request_id,
+                    )
+                    .into_bytes(),
+                );
+                log::error!(
+                    "rebinding_old(): Failed in ratls transport. Migration ID: {}\n",
+                    info.mig_request_id
+                );
+                MigrationResult::SecureSessionError
+            },
+        )?;
 
     let rebind_token = create_rebind_token()?;
     tls_send_rebind_token(&mut ratls_client, &rebind_token).await?;

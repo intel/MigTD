@@ -63,8 +63,6 @@ pub const EXTNID_MIGTD_TDREPORT_INIT: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.7");
 pub const EXTNID_MIGTD_EVENT_LOG_INIT: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.8");
-pub const EXTNID_MIGTD_INIT_POLICY_HASH: ObjectIdentifier =
-    ObjectIdentifier::new_unwrap("1.2.840.113741.1.5.5.1.9");
 
 // As specified in https://datatracker.ietf.org/doc/html/rfc5480#appendix-A
 // id-ecPublicKey OBJECT IDENTIFIER ::= {
