@@ -112,12 +112,17 @@ The pre-production attestation policy is:
    * The fmspc list is from https://sbx.api.trustedservices.intel.com/sgx/certification/v4/fmspcs with platform `E5`.
    * The TCB level can be get via `curl -v -X GET "https://sbx.api.trustedservices.intel.com/tdx/certification/v4/tcb?fmspc={}"`.
 
-To use virtio-serial instead of virtio-vsock for the guest-host communication:
+To use virtio-vsock for the guest-host communication (legacy GHCI 1.5 v5-era transport; uses the `<Service>` envelope wrapped over virtio-vsock):
+```
+cargo image --no-default-features --features stack-guard,virtio-vsock
+```
+
+To use virtio-serial instead of vmcall-raw for the guest-host communication:
 ```
 cargo image --no-default-features --features stack-guard,virtio-serial
 ```
 
-To use vmcall-raw for the guest-host communication:
+To use vmcall-raw for the guest-host communication (this is the default; v6-shaped per-leaf `<MigTD.*>` sub-functions per GHCI 1.5 Tables 3-42/3-45/3-52/3-59/3-62):
 ```
 cargo image --no-default-features --features stack-guard,vmcall-raw
 ```

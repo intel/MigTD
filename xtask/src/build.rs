@@ -12,7 +12,7 @@ use std::{
 };
 use xshell::{cmd, Shell};
 
-const MIGTD_DEFAULT_FEATURES: &str = "stack-guard,virtio-vsock";
+const MIGTD_DEFAULT_FEATURES: &str = "stack-guard,vmcall-raw";
 const MIGTD_KVM_FEATURES: &str = MIGTD_DEFAULT_FEATURES;
 const DEFAULT_TDVF_IMAGE_NAME: &str = "migtd.bin";
 const DEFAULT_IGVM_IMAGE_NAME: &str = "migtd.igvm";
@@ -38,11 +38,11 @@ pub(crate) struct BuildArgs {
     /// Build artifacts in debug mode, without optimizations and with log messages
     #[clap(long)]
     debug: bool,
-    /// Disable the default features `stack-guard` and `virtio-vsock` of `migtd` crate
+    /// Disable the default features `stack-guard` and `vmcall-raw` of `migtd` crate
     #[clap(long)]
     no_default_features: bool,
     /// List of features of `migtd` crate to activate in addition to the default features,
-    /// separated by comma. By default, the `stack-guard` and `virtio-vsock` features are
+    /// separated by comma. By default, the `stack-guard` and `vmcall-raw` features are
     /// enabled
     #[clap(long)]
     features: Option<String>,

@@ -68,7 +68,7 @@ zeroize = { version = "1.5.0", features = ["zeroize_derive"]}
 ring = { version = "0.17.14" }
 
 [features]
-default = ["virtio-vsock"]
+default = ["vmcall-raw"]
 cet-shstk = ["td-payload/cet-shstk"]
 coverage = ["minicov"]
 main = ["attestation", "policy/log", "sha2"]
