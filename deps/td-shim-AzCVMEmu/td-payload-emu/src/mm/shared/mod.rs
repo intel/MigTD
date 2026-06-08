@@ -4,9 +4,17 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use spin::Mutex;
 
 const PAGE_SIZE: usize = 0x1000;
+
+/// Records the exact byte size allocated for each shared-page address so that
+/// `free_shared_pages` deallocates with the original `Layout` rather than one
+/// reconstructed from a caller-supplied page count (a mismatch would cause
+/// allocator UB).
+static SHARED_ALLOC_SIZES: Mutex<BTreeMap<usize, usize>> = Mutex::new(BTreeMap::new());
 
 pub struct SharedMemory {
     buf: Vec<u8>,
@@ -47,7 +55,9 @@ pub unsafe fn alloc_shared_pages(num: usize) -> Option<usize> {
     let size = PAGE_SIZE.checked_mul(num)?;
     let buf = Vec::from_iter(core::iter::repeat(0u8).take(size)).into_boxed_slice();
     let ptr = Box::into_raw(buf) as *mut u8;
-    Some(ptr as usize)
+    let addr = ptr as usize;
+    SHARED_ALLOC_SIZES.lock().insert(addr, size);
+    Some(addr)
 }
 
 /// Allocate a single shared page in emulation mode
@@ -59,9 +69,24 @@ pub unsafe fn alloc_shared_page() -> Option<usize> {
 
 /// Free shared pages allocated in emulation mode
 /// # Safety
-/// The caller needs to ensure the correctness of the addr and page num
+/// The caller needs to ensure the correctness of the addr. The dealloc size is
+/// taken from the size recorded at allocation time, so it always matches the
+/// original `Layout`; `num` is used only as a consistency check.
 pub unsafe fn free_shared_pages(addr: usize, num: usize) {
-    let size = PAGE_SIZE.checked_mul(num).expect("Invalid page num");
+    // An unknown address means a double-free or a free of an unowned pointer:
+    // fail fast rather than silently masking allocator misuse.
+    let size = SHARED_ALLOC_SIZES
+        .lock()
+        .remove(&addr)
+        .unwrap_or_else(|| panic!("free_shared_pages: unknown addr {:#x}", addr));
+    // `size` is always a multiple of PAGE_SIZE, so this division is exact and
+    // cannot overflow. A mismatch means the caller passed a wrong page count.
+    assert_eq!(
+        num,
+        size / PAGE_SIZE,
+        "free_shared_pages: page count mismatch for {:#x}",
+        addr
+    );
     let ptr = addr as *mut u8;
     let _ = Box::from_raw(core::slice::from_raw_parts_mut(ptr, size));
 }

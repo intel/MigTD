@@ -1063,6 +1063,12 @@ pub fn tdcall_servtd_rebind_approve(
     rebind_session_token: &[u8],
     target_td_uuid: &[u64],
 ) -> Result<[u64; 4], TdCallError> {
+    if target_td_uuid.len() != 4 {
+        return Err(TdCallError::TdxExitInvalidParameters);
+    }
+    if rebind_session_token.len() != 32 {
+        return Err(TdCallError::TdxExitInvalidParameters);
+    }
     warn!(
         "AzCVMEmu: tdcall_servtd_rebind_approve emulated: old_binding_hanlde=0x{:x} target_td_uuid= 0x{:x?}",
         old_binding_handle, target_td_uuid
