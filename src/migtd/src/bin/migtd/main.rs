@@ -573,12 +573,6 @@ fn handle_pre_mig() {
                             .map(|_| MigrationResult::Success)
                             .unwrap_or_else(|e| e);
 
-                            log::info!( migration_request_id = wfr_info.mig_request_id;
-                                "Setting log level to {}\n",
-                                wfr_info.log_max_level
-                            );
-                            log::set_max_level(u8_to_levelfilter(wfr_info.log_max_level));
-
                             if status == MigrationResult::Success {
                                 log::trace!(migration_request_id = wfr_info.mig_request_id; "Successfully completed Enable LogArea\n");
                             } else {

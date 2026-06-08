@@ -27,29 +27,6 @@ use r_efi::efi::Guid;
 use rust_std_stub::io;
 use scroll::{Pread, Pwrite};
 
-/// Implement `read_from_bytes(data_length, payload)` for a fixed-size
-/// `#[derive(Pread)]` struct. Validates `data_length == size_of::<Self>()`
-/// and rejects payloads with trailing bytes.
-#[cfg(feature = "vmcall-raw")]
-macro_rules! impl_read_from_bytes {
-    ($t:ty) => {
-        #[cfg(feature = "vmcall-raw")]
-        impl $t {
-            pub fn read_from_bytes(
-                data_length: u32,
-                payload: &[u8],
-            ) -> core::result::Result<Self, MigrationResult> {
-                if data_length != core::mem::size_of::<Self>() as u32 {
-                    return Err(MigrationResult::InvalidParameter);
-                }
-                payload
-                    .pread(0)
-                    .map_err(|_| MigrationResult::InvalidParameter)
-            }
-        }
-    };
-}
-
 /// Implement `read_from_bytes(data_length, payload)` for a struct whose layout
 /// starts with `mig_request_id: u64` followed by optional data bytes.
 /// Accepts either the full struct or just the `mig_request_id` (with the
@@ -379,7 +356,24 @@ pub struct EnableLogAreaInfo {
 }
 
 #[cfg(feature = "vmcall-raw")]
-impl_read_from_bytes!(EnableLogAreaInfo);
+impl EnableLogAreaInfo {
+    pub fn read_from_bytes(
+        data_length: u32,
+        payload: &[u8],
+    ) -> core::result::Result<Self, MigrationResult> {
+        if data_length != core::mem::size_of::<Self>() as u32 {
+            return Err(MigrationResult::InvalidParameter);
+        }
+        let info: Self = payload
+            .pread(0)
+            .map_err(|_| MigrationResult::InvalidParameter)?;
+        // GHCI 1.5 v6 Table 3-50: reserved bytes MUST be zero.
+        if info.reserved.iter().any(|&b| b != 0) {
+            return Err(MigrationResult::InvalidParameter);
+        }
+        Ok(info)
+    }
+}
 
 #[repr(C)]
 #[derive(Debug, Pread, Pwrite)]
