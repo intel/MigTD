@@ -307,6 +307,9 @@ pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u
         LOGGING_INFORMATION
             .logarea_initialized
             .store(true, Ordering::SeqCst);
+        // Keep the crate-global log gate in sync with the per-MigTD gate so
+        // both filters agree; only done on the validated success path.
+        log::set_max_level(u8_to_levelfilter(log_max_level));
         #[cfg(not(test))]
         log::info!( migration_request_id = request_id;
             "enable_logarea: Logging has been enabled with MaxLevel: {}\n",
@@ -316,7 +319,7 @@ pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u
         Ok(())
     } else {
         log::error!( migration_request_id = request_id;
-            "enable_logarea: Logging has been enabled with MaxLevel: {}\n",
+            "enable_logarea: rejected request with invalid MaxLogLevel: {}\n",
             log_max_level
         );
         data.extend_from_slice(
