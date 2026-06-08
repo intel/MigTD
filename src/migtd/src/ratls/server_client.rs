@@ -183,7 +183,6 @@ pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
 pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     remote_policy: Vec<u8>,
-    init_policy_hash: &[u8],
     init_tdinfo: &[u8],
     servtd_ext: &ServtdExt,
 ) -> Result<SecureChannel<T>> {
@@ -194,16 +193,11 @@ pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
         );
         e
     })?;
-    let certs = create_certificate_for_rebinding_old(
-        &signing_key,
-        init_policy_hash,
-        init_tdinfo,
-        servtd_ext,
-    )
-    .map_err(|e| {
-        log::error!("client rebinding gen_cert() failed with error {:?}\n", e);
-        e
-    })?;
+    let certs = create_certificate_for_rebinding_old(&signing_key, init_tdinfo, servtd_ext)
+        .map_err(|e| {
+            log::error!("client rebinding gen_cert() failed with error {:?}\n", e);
+            e
+        })?;
     let certs = vec![certs];
 
     let config = TlsConfig::new(certs, signing_key, verify_rebinding_new_cert, remote_policy)
@@ -413,7 +407,6 @@ fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
 #[cfg(feature = "policy_v2")]
 fn create_certificate_for_rebinding_old(
     signing_key: &EcdsaPk,
-    init_policy_hash: &[u8],
     init_tdinfo: &[u8],
     servtd_ext: &ServtdExt,
 ) -> Result<Vec<u8>> {
@@ -522,27 +515,6 @@ fn create_certificate_for_rebinding_old(
         .map_err(|e| {
             log::error!(
                 "gen_cert policy_v2 add_extension for tdreport init failed with error {:?}.\n",
-                e
-            );
-            e
-        })?
-        .add_extension(
-            Extension::new(
-                EXTNID_MIGTD_INIT_POLICY_HASH,
-                Some(false),
-                Some(&init_policy_hash),
-            )
-            .map_err(|e| {
-                log::error!(
-                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
-                    e
-                );
-                e
-            })?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert policy_v2 add_extension for init policy hash failed with error {:?}.\n",
                 e
             );
             e
@@ -977,12 +949,6 @@ mod verify {
                 log::error!("Failed to find init tdinfo extension.\n");
                 CryptoError::ParseCertificate
             })?;
-        // Per GHCI 1.5: init_policy_hash is now mrowner from the initial TDINFO_STRUCT
-        let init_policy_hash = find_extension(extensions, &EXTNID_MIGTD_INIT_POLICY_HASH)
-            .ok_or_else(|| {
-                log::error!("Failed to find init policy hash extension.\n");
-                CryptoError::ParseCertificate
-            })?;
         let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
             log::error!("Failed to find servtd ext extension.\n");
             CryptoError::ParseCertificate
@@ -1020,14 +986,6 @@ mod verify {
         let exact_policy_hash = digest_sha384(remote_policy)?;
         if expected_policy_hash != exact_policy_hash.as_slice() {
             log::error!("Invalid rebinding policy.\n");
-            return Err(CryptoError::TlsVerifyPeerCert(
-                INVALID_MIG_POLICY_ERROR.to_string(),
-            ));
-        }
-        // Per GHCI 1.5: init_policy_hash is mrowner from TDINFO — compare directly
-        // (no longer a hash of a policy blob)
-        if init_policy_hash != init_tdinfo.get(112..160).unwrap_or(&[]) {
-            log::error!("Invalid init policy hash (mrowner mismatch).\n");
             return Err(CryptoError::TlsVerifyPeerCert(
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ));
