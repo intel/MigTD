@@ -9,6 +9,7 @@ use crate::migration::rebinding::{write_rebinding_session_token, write_servtd_re
 use crate::migration::servtd_ext::verify_servtd_attr;
 #[cfg(feature = "policy_v2")]
 use crate::migration::servtd_ext::{verify_servtd_attr, write_approved_servtd_ext_hash, ServtdExt};
+use crate::migration::MigrationResult;
 use crate::{
     config::get_policy,
     event_log::get_event_log,
@@ -735,7 +736,7 @@ fn rsp_verify_peer_attestation_v2(
                     .get_session_via_id(session_id)
                     .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
                 session.teardown();
-                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+                return Err(SpdmStatus::from(MigrationResult::PolicyUnsatisfiedError));
             }
             Ok(s) => s,
         };
@@ -754,7 +755,7 @@ fn rsp_verify_peer_attestation_v2(
                     .get_session_via_id(session_id)
                     .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
                 session.teardown();
-                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+                return Err(SpdmStatus::from(MigrationResult::MutualAttestationError));
             }
         }
 
@@ -1160,7 +1161,7 @@ pub fn handle_exchange_rebind_attest_info_req(
                 .get_session_via_id(session_id)
                 .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
             session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(SpdmStatus::from(MigrationResult::PolicyUnsatisfiedError));
         }
 
         // Verify that the peer's REPORTDATA is bound to this SPDM session's TH1
@@ -1172,7 +1173,7 @@ pub fn handle_exchange_rebind_attest_info_req(
                 .get_session_via_id(session_id)
                 .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
             session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(SpdmStatus::from(MigrationResult::MutualAttestationError));
         }
     }
 

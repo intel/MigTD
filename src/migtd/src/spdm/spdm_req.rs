@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 use crate::mig_policy;
+use crate::migration::MigrationResult;
 use crate::{
     migration::{
         data::MigrationSessionKey,
@@ -710,7 +711,7 @@ fn verify_peer_attestation_v2(
                 .get_session_via_id(session_id)
                 .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
             session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(SpdmStatus::from(MigrationResult::PolicyUnsatisfiedError));
         }
 
         // 3. Verify REPORTDATA binding using supplemental data from authenticate_remote
@@ -728,7 +729,7 @@ fn verify_peer_attestation_v2(
                     .get_session_via_id(session_id)
                     .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
                 session.teardown();
-                return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+                return Err(SpdmStatus::from(MigrationResult::MutualAttestationError));
             }
         }
     }
@@ -1196,7 +1197,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
                 .get_session_via_id(session_id)
                 .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
             session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(SpdmStatus::from(MigrationResult::PolicyUnsatisfiedError));
         }
 
         // Verify that the peer's REPORTDATA is bound to this SPDM session's TH1
@@ -1208,7 +1209,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
                 .get_session_via_id(session_id)
                 .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?;
             session.teardown();
-            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+            return Err(SpdmStatus::from(MigrationResult::MutualAttestationError));
         }
     }
 
