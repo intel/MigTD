@@ -745,7 +745,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
     vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
     let vendor_id = VendorIDStruct { len: 4, vendor_id };
 
-    let exchange_information = exchange_info(mig_info, false)?;
+    let exchange_information = exchange_info(mig_info, true)?;
 
     let mut payload = vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);
@@ -907,7 +907,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         },
     };
 
-    let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)?;
+    let mig_ver = cal_mig_version(true, &exchange_information, &remote_information)?;
     set_mig_version(mig_info, mig_ver)?;
     write_msk(mig_info, &remote_information.key)?;
     log::info!("Set MSK and report status\n");
