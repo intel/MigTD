@@ -71,7 +71,6 @@ impl ResponderContextEx<'_> {
     }
 }
 
-#[cfg(feature = "policy_v2")]
 pub unsafe fn upcast_mut(inner: &mut ResponderContext) -> &mut ResponderContextEx {
     let ptr = inner as *mut ResponderContext as *mut u8;
     let outer_ptr = ptr.sub(0) as *mut ResponderContextEx;
@@ -357,6 +356,16 @@ pub fn handle_exchange_mig_attest_info_req(
     reader: &mut Reader<'_>,
     vendor_defined_rsp_payload: &mut [u8],
 ) -> SpdmResult<usize> {
+    // Migration attestation messages must be handled only when migration info is set.
+    let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
+    if !matches!(
+        &spdm_responder_ex.info,
+        ResponderContextExInfo::MigrationInformation(_)
+    ) {
+        error!("Migration info is not set in responder context.\n");
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+
     let session_id = if session_id.is_some() {
         session_id
     } else {
