@@ -27,6 +27,22 @@ pub async fn spdm_requester_rebind_old(
     rebind_info: &MigtdMigrationInformation,
     remote_policy: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
+    // `send_and_receive_pub_key` (called below) encodes the requester's
+    // ephemeral ECDSA private key into
+    // `spdm_requester.common.app_context_data_buffer` so libspdm's
+    // asymmetric signing callback can read it. That buffer is a plain
+    // `[u8; SIZE]` with no automatic cleanup, so wipe it on every return
+    // path here.
+    let result = spdm_requester_rebind_old_inner(spdm_requester, rebind_info, remote_policy).await;
+    spdm_requester.common.app_context_data_buffer.zeroize();
+    result
+}
+
+async fn spdm_requester_rebind_old_inner(
+    spdm_requester: &mut RequesterContext,
+    rebind_info: &MigtdMigrationInformation,
+    remote_policy: Vec<u8>,
+) -> Result<(), SpdmStatus> {
     Box::pin(spdm_requester.send_receive_spdm_version()).await?;
     Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
     Box::pin(spdm_requester.send_receive_spdm_algorithm()).await?;
