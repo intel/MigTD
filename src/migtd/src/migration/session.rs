@@ -962,7 +962,7 @@ async fn migration_src_exchange_msk(
     })?
     .map_err(|e| {
         log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
-        e
+        spdm::decode_spdm_session_err(e)
     })?;
     log::info!("MSK exchange completed\n");
 
@@ -1008,7 +1008,7 @@ async fn migration_dst_exchange_msk(
     })?
     .map_err(|e| {
         log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
-        e
+        spdm::decode_spdm_session_err(e)
     })?;
     log::info!("MSK exchange completed\n");
 

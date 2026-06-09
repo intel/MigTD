@@ -386,3 +386,30 @@ impl From<MigrationResult> for SpdmStatus {
         }
     }
 }
+
+/// Decode an SpdmStatus returned by an SPDM session body into a
+/// MigrationResult, preserving application-level errors carried over the wire
+/// as `SpdmErrorVendorDefined`.
+///
+/// On the destination (local responder failure) the application code is
+/// already encoded as `StatusCode::VDM` and decoded by the existing
+/// `From<SpdmStatus>` impl. On the source (requester receiving a peer ERROR
+/// response) the code arrives in `error_data` as Param2 of the SPDM ERROR
+/// message; that path is not covered by `From<SpdmStatus>` so we extract it
+/// here.
+pub(crate) fn decode_spdm_session_err(e: SpdmStatus) -> MigrationResult {
+    let local = MigrationResult::from(e);
+    if local != MigrationResult::SecureSessionError {
+        return local;
+    }
+    if let Some(ref ed) = e.error_data {
+        if ed.length >= 4
+            && ed.data[2] == spdmlib::message::SpdmErrorCode::SpdmErrorVendorDefined.get_u8()
+        {
+            if let Ok(decoded) = MigrationResult::try_from(ed.data[3]) {
+                return decoded;
+            }
+        }
+    }
+    MigrationResult::SecureSessionError
+}
