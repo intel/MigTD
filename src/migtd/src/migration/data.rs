@@ -16,7 +16,6 @@ use td_shim_interface::td_uefi_pi::{
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-pub const QUERY_COMMAND: u8 = 0;
 pub const MIG_COMMAND_SHUT_DOWN: u8 = 0;
 pub const MIG_COMMAND_WAIT: u8 = 1;
 pub const MIG_COMMAND_REPORT_STATUS: u8 = 2;
@@ -152,16 +151,6 @@ impl<'a> VmcallServiceResponse<'a> {
 
         T::read_from_bytes(&self.data[24 + offset..24 + offset + size_of::<T>()]).ok()
     }
-}
-
-#[repr(C, packed)]
-#[derive(Debug, FromBytes, IntoBytes, Immutable)]
-pub struct ServiceQueryResponse {
-    pub version: u8,
-    pub command: u8,
-    pub status: u8,
-    pub reserved: u8,
-    pub guid: [u8; 16],
 }
 
 #[repr(C, packed)]

@@ -10,7 +10,6 @@
 mod testattestation;
 mod testmmiorw;
 mod testmsrrw;
-mod testservice;
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -28,7 +27,6 @@ use testattestation::TdQa;
 use crate::testattestation::TestTdQa;
 use crate::testmmiorw::Tdmmiorw;
 use crate::testmsrrw::Tdmsrrw;
-use crate::testservice::Tdservice;
 use test_td_payload::{TestResult, TestSuite};
 
 use r_efi::efi::Guid;
@@ -48,7 +46,6 @@ const HEAP_SIZE: usize = 0x2000000;
 // The test cases' data structure corresponds to the test config json data structure
 pub struct TestCases {
     pub tcs001: Tdmmiorw,
-    pub tcs002: Tdservice,
     pub tcs003: Tdmsrrw,
     pub tcs004: TdQa,
 }
@@ -100,10 +97,6 @@ pub extern "C" fn main() {
     // Add test cases in ts.testsuite
     if tcs.tcs001.run {
         ts.testsuite.push(Box::new(tcs.tcs001));
-    }
-
-    if tcs.tcs002.run {
-        ts.testsuite.push(Box::new(tcs.tcs002));
     }
 
     if tcs.tcs003.run {

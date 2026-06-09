@@ -4,11 +4,6 @@
         "result": "None",
         "run": true 
     },
-    "tcs002": {
-        "name": "testservice",     
-        "result": "None",
-        "run": true
-    },
     "tcs003": {
         "name": "testmsrrw",     
         "result": "None",
