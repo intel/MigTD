@@ -506,40 +506,6 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
     .await
 }
 
-pub fn shutdown() -> Result<()> {
-    // Allocate shared page for command and response buffer
-    let mut cmd_mem = SharedMemory::new(1).ok_or_else(|| {
-        log::error!("shutdown: Failed to allocate command shared memory\n");
-        MigrationResult::OutOfResource
-    })?;
-    let mut rsp_mem = SharedMemory::new(1).ok_or_else(|| {
-        log::error!("shutdown: Failed to allocate response shared memory\n");
-        MigrationResult::OutOfResource
-    })?;
-
-    // Set Command
-    let mut cmd = VmcallServiceCommand::new(cmd_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
-        .ok_or_else(|| {
-            log::error!("shutdown: Invalid parameter for VmcallServiceCommand\n");
-            MigrationResult::InvalidParameter
-        })?;
-
-    let sd = ServiceMigWaitForReqShutdown {
-        version: 0,
-        command: MIG_COMMAND_SHUT_DOWN,
-        reserved: [0; 2],
-    };
-    cmd.write(sd.as_bytes()).map_err(|e| {
-        log::error!("shutdown: Failed to write shutdown command to command buffer\n");
-        e
-    })?;
-    tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0).map_err(|e| {
-        log::error!("shutdown: tdvmcall_service failed: {:?}\n", e);
-        e
-    })?;
-    Ok(())
-}
-
 #[cfg(feature = "vmcall-raw")]
 pub async fn get_tdreport(
     additional_data: &[u8; TD_REPORT_ADDITIONAL_DATA_SIZE],

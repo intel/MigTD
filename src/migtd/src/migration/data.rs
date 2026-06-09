@@ -16,7 +16,6 @@ use td_shim_interface::td_uefi_pi::{
 use zerocopy::{FromBytes, Immutable, IntoBytes};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-pub const MIG_COMMAND_SHUT_DOWN: u8 = 0;
 pub const MIG_COMMAND_WAIT: u8 = 1;
 pub const MIG_COMMAND_REPORT_STATUS: u8 = 2;
 
@@ -174,14 +173,6 @@ pub struct ServiceMigWaitForReqResponse {
     pub reserved: [u8; 7],
     pub target_td_uuid: [u64; 4],
     pub binding_handle: u64,
-}
-
-#[repr(C, packed)]
-#[derive(FromBytes, IntoBytes, Immutable)]
-pub struct ServiceMigWaitForReqShutdown {
-    pub version: u8,
-    pub command: u8,
-    pub reserved: [u8; 2],
 }
 
 #[repr(C, packed)]
