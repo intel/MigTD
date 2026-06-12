@@ -295,6 +295,7 @@ fn reject_request(
 }
 
 /// Log an error with an optional `migration_request_id` structured field.
+#[cfg(feature = "vmcall-raw")]
 macro_rules! log_request_error {
     ($request_id:expr, $($arg:tt)*) => {
         if let Some(mig_request_id) = $request_id {
@@ -1032,6 +1033,7 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
         })?;
     }
 
+    #[allow(unused_mut)]
     let mut transport = setup_transport(
         info.mig_info.mig_request_id,
         #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]

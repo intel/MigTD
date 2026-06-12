@@ -61,7 +61,8 @@ pub struct QveCollateral {
 
 #[cfg(not(feature = "test"))]
 mod attest_lib_binding {
-    use super::*;
+    #[cfg(feature = "attest-lib-ext")]
+    use super::QveCollateral;
 
     extern "C" {
         /// Get MigTD's Quote by passing tdx_report.
