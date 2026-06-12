@@ -16,21 +16,21 @@ pub(super) type TransportType = virtio_serial::VirtioSerialPort;
 pub(super) type TransportType = vsock::stream::VsockStream;
 
 pub(super) async fn setup_transport(
-    mig_request_id: u64,
+    _mig_request_id: u64,
     #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))] migtd_cid: u64,
     #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))] mig_channel_port: u32,
 ) -> Result<TransportType> {
     #[cfg(feature = "vmcall-raw")]
     {
         use vmcall_raw::stream::VmcallRaw;
-        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(mig_request_id).map_err(|e| {
-            log::error!(migration_request_id = mig_request_id;
+        let mut vmcall_raw_instance = VmcallRaw::new_with_mid(_mig_request_id).map_err(|e| {
+            log::error!(migration_request_id = _mig_request_id;
                     "exchange_msk: Failed to create vmcall_raw_instance errorcode: {:?}\n", e);
             MigrationResult::InvalidParameter
         })?;
 
         vmcall_raw_instance.connect().await.map_err(|e| {
-            log::error!(migration_request_id = mig_request_id;
+            log::error!(migration_request_id = _mig_request_id;
                     "exchange_msk: Failed to connect vmcall_raw_instance errorcode: {:?}\n", e);
             MigrationResult::InvalidParameter
         })?;
@@ -55,7 +55,7 @@ pub(super) async fn setup_transport(
         let mut vsock = VsockStream::new()?;
 
         #[cfg(feature = "vmcall-vsock")]
-        let mut vsock = VsockStream::new_with_cid(migtd_cid, mig_request_id)?;
+        let mut vsock = VsockStream::new_with_cid(migtd_cid, _mig_request_id)?;
 
         // Establish the vsock connection with host
         vsock
@@ -67,11 +67,11 @@ pub(super) async fn setup_transport(
 
 pub(super) async fn shutdown_transport(
     transport: &mut TransportType,
-    mig_request_id: u64,
+    _mig_request_id: u64,
 ) -> Result<()> {
     #[cfg(feature = "vmcall-raw")]
     transport.shutdown().await.map_err(|e| {
-        log::error!(migration_request_id = mig_request_id;
+        log::error!(migration_request_id = _mig_request_id;
             "shutdown_transport: Failed to shutdown vmcall_raw_instance errorcode: {:?}\n", e);
         MigrationResult::InvalidParameter
     })?;

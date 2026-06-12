@@ -455,8 +455,6 @@ fn handle_pre_mig() {
     loop {
         // Poll the async runtime to execute tasks
         let _ = async_runtime::poll_tasks();
-        let mut data: Vec<u8> = Vec::new();
-
         // The async task waiting for VMM response is always in the queue
         let new_request = PENDING_REQUEST.lock().take();
 
@@ -481,6 +479,7 @@ fn handle_pre_mig() {
                 }
                 #[cfg(feature = "vmcall-raw")]
                 {
+                    let mut data: Vec<u8> = Vec::new();
                     match request {
                         WaitForRequestResponse::StartMigration(wfr_info) => {
                             log::trace!(migration_request_id = wfr_info.mig_info.mig_request_id; "Processing StartMigration request\n");

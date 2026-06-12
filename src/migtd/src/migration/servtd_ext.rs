@@ -183,6 +183,7 @@ pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), Migr
     Ok(())
 }
 
+#[cfg(test)]
 mod test {
     use super::ServtdExt;
 
