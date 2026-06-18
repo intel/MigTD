@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{collections::BTreeMap, string::String, string::ToString, vec::Vec};
+use chrono::NaiveDateTime;
 use core::{
     cmp::Ordering,
     convert::{TryFrom, TryInto},
@@ -638,6 +639,18 @@ struct PolicyProperty {
     pub reference: Reference,
 }
 
+/// Returns true only for a canonical, fixed-width ISO-8601 UTC timestamp of the
+/// exact form "YYYY-MM-DDTHH:MM:SSZ" (e.g. "2025-01-01T00:00:00Z"). Lexicographic
+/// ordering of date strings is only valid under this canonical form, so callers
+/// that compare dates with `>=` must reject anything else.
+fn is_canonical_iso8601(s: &str) -> bool {
+    const FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
+
+    NaiveDateTime::parse_from_str(s, FORMAT)
+        .map(|timestamp| timestamp.format(FORMAT).to_string() == s)
+        .unwrap_or(false)
+}
+
 impl PolicyProperty {
     pub fn evaluate_integer(
         &self,
@@ -749,8 +762,14 @@ impl PolicyProperty {
                 match self.operation.as_str() {
                     "equal" => Ok(value == reference_value),
                     "greater-or-equal" => {
-                        // Simple lexicographical comparison works for ISO-8601 format (e.g. "2025-01-01T00:00:00Z")
-                        // This is because ISO-8601 is designed to be sortable as strings
+                        // The lexicographical comparison below is only correct when both
+                        // operands are canonical, fixed-width ISO-8601 timestamps (e.g.
+                        // "2025-01-01T00:00:00Z"). A non-canonical value such as "2024-9-1"
+                        // would sort incorrectly (byte '9' > '1'), so reject anything that is
+                        // not in the canonical form before comparing, failing closed.
+                        if !is_canonical_iso8601(value) || !is_canonical_iso8601(reference_value) {
+                            return Err(PolicyError::InvalidReference);
+                        }
                         Ok(value >= reference_value)
                     }
                     _ => Err(PolicyError::InvalidOperation),
@@ -961,6 +980,28 @@ mod test {
         assert!(!tcb_date_policy
             .evaluate_string("2025-06-15T11:00:00Z", Some("2025-06-15T12:00:00Z"),)
             .unwrap());
+    }
+
+    #[test]
+    fn test_policy_tcb_date_rejects_malformed_timestamps() {
+        const VALID_TIMESTAMP: &str = "2025-06-15T12:00:00Z";
+        const INVALID_TIMESTAMPS: [&str; 2] = ["2025-6-15T12:00:00Z", "2025-13-40T25:61:61Z"];
+
+        let policy = PolicyProperty {
+            operation: "greater-or-equal".to_string(),
+            reference: Reference::String(VALID_TIMESTAMP.to_string()),
+        };
+        for value in INVALID_TIMESTAMPS {
+            assert!(policy.evaluate_string(value, None).is_err());
+        }
+
+        for reference in INVALID_TIMESTAMPS {
+            let policy = PolicyProperty {
+                operation: "greater-or-equal".to_string(),
+                reference: Reference::String(reference.to_string()),
+            };
+            assert!(policy.evaluate_string(VALID_TIMESTAMP, None).is_err());
+        }
     }
 
     #[test]
