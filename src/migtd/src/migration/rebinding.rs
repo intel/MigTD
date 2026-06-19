@@ -237,7 +237,7 @@ pub async fn rebinding_old_prepare(
             .into_bytes(),
         );
         log::error!("rebinding: spdm_requester_rebind_old error: {:?}\n", e);
-        e
+        spdm::decode_spdm_session_err(e)
     })?;
     log::info!("Rebind completed\n");
 
@@ -308,7 +308,7 @@ pub async fn rebinding_new_prepare(
             .into_bytes(),
         );
         log::error!("rebinding: spdm_responder_rebind_new error: {:?}\n", e);
-        e
+        spdm::decode_spdm_session_err(e)
     })?;
     log::info!("Rebind completed\n");
 
