@@ -153,6 +153,14 @@ impl LogAreaManager {
         buffer_addr: usize,
         last_read_offset: usize,
     ) -> usize {
+        // Defensive: the buffer address is reported by the guest's log-area
+        // setup. Reject a null address before constructing a slice over it so a
+        // bad/uninitialized report cannot dereference a null pointer.
+        if buffer_addr == 0 {
+            log::warn!("VMM: vCPU {} log area has null address", vcpu_idx);
+            return last_read_offset;
+        }
+
         let buffer = unsafe { core::slice::from_raw_parts(buffer_addr as *const u8, PAGE_SIZE) };
 
         // Verify signature
