@@ -47,6 +47,15 @@ pub struct VirtQueue {
     free_head: u16,
     avail_idx: u16,
     last_used_idx: u16,
+    /// Private, host-inaccessible copy of the descriptor metadata the driver
+    /// programmed. The descriptor table lives in shared DMA that the host can
+    /// overwrite at any time. Per the TDX Virtual Firmware security requirement
+    /// ("if the data is in shared memory, copy it to private memory, then
+    /// validate and use"), the driver must never trust values read back from
+    /// the shared table. On recycle and free-list traversal it reads
+    /// addr/len/flags/next from this private shadow instead, which neutralizes
+    /// host forgery of desc.addr/len/next.
+    desc_shadow: [DescriptorShadow; MAX_QUEUE_SIZE],
 }
 
 impl VirtQueue {
@@ -82,8 +91,10 @@ impl VirtQueue {
             unsafe { &mut *((dma_addr as usize + layout.used_offset) as *mut UsedRing) };
 
         // link descriptors together
+        let mut desc_shadow = [DescriptorShadow::default(); MAX_QUEUE_SIZE];
         for i in 0..(queue_size - 1) {
             desc[i as usize].next.write(i + 1);
+            desc_shadow[i as usize].next = i + 1;
         }
 
         Ok(VirtQueue {
@@ -96,6 +107,7 @@ impl VirtQueue {
             free_head: 0,
             avail_idx: 0,
             last_used_idx: 0,
+            desc_shadow,
         })
     }
 
@@ -120,14 +132,20 @@ impl VirtQueue {
             last = self.add_descriptor(buf, DescFlags::NEXT | DescFlags::WRITE)?;
         }
 
-        // Clear the 'NEXT' flag of the last added descriptor
-        let desc = self
-            .desc
-            .get_mut(last as usize)
+        // Clear the 'NEXT' flag of the last added descriptor. Update the
+        // private shadow first, then mirror it into the shared table.
+        let last_idx = last as usize;
+        let shadow = self
+            .desc_shadow
+            .get_mut(last_idx)
             .ok_or(VirtioError::InvalidDescriptorIndex)?;
-        let mut flags = desc.flags.read();
-        flags.remove(DescFlags::NEXT);
-        desc.flags.write(flags);
+        shadow.flags.remove(DescFlags::NEXT);
+        let flags = shadow.flags;
+        self.desc
+            .get_mut(last_idx)
+            .ok_or(VirtioError::InvalidDescriptorIndex)?
+            .flags
+            .write(flags);
 
         self.num_used += (g2h.len() + h2g.len()) as u16;
 
@@ -160,16 +178,25 @@ impl VirtQueue {
     }
 
     fn add_descriptor(&mut self, buf: &VirtqueueBuf, flag: DescFlags) -> Result<u16> {
+        let index = self.free_head as usize;
         let desc = self
             .desc
-            .get_mut(self.free_head as usize)
+            .get_mut(index)
             .ok_or(VirtioError::InvalidDescriptorIndex)?;
         desc.set_buf(buf);
         desc.flags.write(flag);
 
+        // Mirror the values the driver just programmed into the private shadow.
+        // The free-list link is advanced from the shadow, never from the shared
+        // table, so a host-forged desc.next cannot corrupt free_head.
+        let shadow = &mut self.desc_shadow[index];
+        shadow.addr = buf.addr;
+        shadow.len = buf.len;
+        shadow.flags = flag;
+
         // Update the free head
         let last = self.free_head;
-        self.free_head = desc.next.read();
+        self.free_head = shadow.next;
 
         Ok(last)
     }
@@ -187,16 +214,22 @@ impl VirtQueue {
         self.free_head = head;
 
         while self.num_used > 0 {
-            let desc = self
-                .desc
-                .get_mut(head as usize)
-                .ok_or(VirtioError::InvalidDescriptorIndex)?;
+            let index = head as usize;
+            // `head` is seeded from the host-controlled used-ring id, so it must
+            // be range-checked before indexing the private shadow.
+            if index >= self.queue_size as usize {
+                return Err(VirtioError::InvalidDescriptorIndex);
+            }
 
-            let flags = desc.flags.read();
+            // Read descriptor metadata from the private shadow, NOT from the
+            // host-writable shared table, so a forged desc.addr/len/next cannot
+            // influence which buffer is recycled or freed.
+            let shadow = self.desc_shadow[index];
+            let flags = shadow.flags;
             self.num_used -= 1;
 
-            let addr = desc.addr.read();
-            let len = desc.len.read();
+            let addr = shadow.addr;
+            let len = shadow.len;
 
             if flags.contains(DescFlags::WRITE) {
                 h2g.push(VirtqueueBuf::new(addr, len));
@@ -208,9 +241,14 @@ impl VirtQueue {
                 if self.num_used == 0 {
                     return Err(VirtioError::InvalidDescriptor);
                 }
-                head = desc.next.read();
+                head = shadow.next;
             } else {
-                desc.next.write(origin_free_head);
+                self.desc_shadow[index].next = origin_free_head;
+                self.desc
+                    .get_mut(index)
+                    .ok_or(VirtioError::InvalidDescriptorIndex)?
+                    .next
+                    .write(origin_free_head);
                 break;
             }
         }
@@ -295,6 +333,30 @@ impl Descriptor {
     fn set_buf(&mut self, buf: &VirtqueueBuf) {
         self.addr.write(buf.addr);
         self.len.write(buf.len);
+    }
+}
+
+/// Private, host-inaccessible copy of the metadata the driver programs into a
+/// descriptor. The shared descriptor table can be overwritten by the host at
+/// any time, so the driver keeps this shadow and reads back addr/len/flags/next
+/// from it on recycle and free-list traversal instead of trusting the shared
+/// table.
+#[derive(Clone, Copy)]
+struct DescriptorShadow {
+    addr: u64,
+    len: u32,
+    flags: DescFlags,
+    next: u16,
+}
+
+impl Default for DescriptorShadow {
+    fn default() -> Self {
+        Self {
+            addr: 0,
+            len: 0,
+            flags: DescFlags::empty(),
+            next: 0,
+        }
     }
 }
 

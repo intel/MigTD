@@ -19,7 +19,6 @@ use core::task::Poll;
 use lazy_static::lazy_static;
 use spin::{Mutex, Once};
 use td_payload::arch::idt::InterruptStack;
-use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
 use virtio::virtqueue::{VirtQueue, VirtQueueLayout, VirtqueueBuf};
 use virtio::{consts::*, VirtioError, VirtioTransport};
 
@@ -63,6 +62,13 @@ pub struct VirtioVsock {
     event: VirtQueue,
     /// DMA record table
     dma_record: BTreeMap<u64, DmaRecord>,
+    /// Base address of the shared pages backing the rx/tx/event virtqueue rings.
+    /// A malicious host can forge `desc.addr` in the shared descriptor table to
+    /// equal this base; `free_dma_memory` must refuse it, otherwise the ring is
+    /// returned to the shared pool while the `VirtQueue` structs still hold
+    /// `&'static mut` references into it (use-after-free / aliasing). The ring is
+    /// only legitimately released on teardown in `Drop`.
+    queue_dma_pages: u64,
     rx_buf_num: usize,
 }
 
@@ -112,8 +118,9 @@ impl VirtioVsock {
             VirtQueueLayout::new(QUEUE_SIZE as u16).ok_or(VirtioError::CreateVirtioQueue)?;
         // We have three queue for vsock (rx, tx and event)
         let queue_size = queue_layout.size() << 2;
-        let queue_dma_pages = unsafe { alloc_shared_pages(queue_size / PAGE_SIZE) }
-            .ok_or(VsockTransportError::DmaAllocation)? as u64;
+        let queue_dma_pages = dma_allocator
+            .alloc_pages(queue_size / PAGE_SIZE)
+            .ok_or(VsockTransportError::DmaAllocation)?;
         dma_record.insert(queue_dma_pages, DmaRecord::new(queue_dma_pages, queue_size));
 
         // program queue rx(idx 0)
@@ -145,6 +152,7 @@ impl VirtioVsock {
             tx: queue_tx,
             event: queue_event,
             dma_record,
+            queue_dma_pages,
             rx_buf_num: 0,
         })
     }
@@ -304,6 +312,15 @@ impl VirtioVsock {
     }
 
     fn free_dma_memory(&mut self, dma_addr: u64) -> Option<u64> {
+        // Never free the virtqueue ring pages at runtime. A malicious host can
+        // forge `desc.addr` in the shared descriptor table to equal the ring
+        // base; freeing it here would leave the live `VirtQueue` references
+        // dangling (use-after-free) and hand the ring pages back out as RX data
+        // buffers. The ring is only released on teardown in `Drop`.
+        if dma_addr == self.queue_dma_pages {
+            return None;
+        }
+
         let record = self.dma_record.get(&dma_addr)?;
 
         self.dma_allocator
@@ -455,7 +472,8 @@ pub fn vsock_transport_can_recv() -> Result<bool> {
 impl Drop for VirtioVsock {
     fn drop(&mut self) {
         for record in &self.dma_record {
-            unsafe { free_shared_pages(record.1.dma_addr as usize, record.1.dma_size / PAGE_SIZE) }
+            self.dma_allocator
+                .free_pages(record.1.dma_addr, record.1.dma_size / PAGE_SIZE);
         }
     }
 }
