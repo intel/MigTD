@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use x509_parser::prelude::*;
 
 use crate::pcs_client::{
-    fetch_data_from_url, fetch_pck_crl, fetch_qe_identity, fetch_root_ca, get_platform_tcb_list,
+    fetch_pck_crl, fetch_qe_identity, fetch_root_ca, fetch_root_ca_crl, get_platform_tcb_list,
     PlatformTcbRaw,
 };
 
@@ -93,7 +93,7 @@ pub async fn get_collateral(config: &dyn crate::PcsConfig) -> Result<Collaterals
         async {
             let (qe_identity, qe_identity_issuer_chain) = fetch_qe_identity(config).await?;
             let root_ca_crl_url = get_root_ca_crl_url(qe_identity_issuer_chain.as_str())?;
-            let root_ca_crl = fetch_data_from_url(&root_ca_crl_url).await?.data;
+            let root_ca_crl = fetch_root_ca_crl(&root_ca_crl_url).await?;
             Ok::<_, anyhow::Error>((qe_identity, qe_identity_issuer_chain, root_ca_crl))
         },
         fetch_root_ca(config),

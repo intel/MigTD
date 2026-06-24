@@ -174,8 +174,8 @@ impl VsockStream {
             rx_cnt: 0,
             tx_cnt: 0,
             last_fwd_cnt: 0,
-            peer_fwd_cnt: packet.fwd_cnt(),
-            peer_buf_alloc: packet.buf_alloc(),
+            peer_fwd_cnt: request.fwd_cnt(),
+            peer_buf_alloc: request.buf_alloc(),
             transport_context: 0,
         };
 

@@ -17,7 +17,7 @@ use log::{Level, LevelFilter, Metadata, Record, SetLoggerError};
 use raw_cpuid::CpuId;
 use spin::Mutex;
 #[cfg(not(test))]
-use td_payload::mm::shared::alloc_shared_pages;
+use td_payload::mm::shared::{alloc_shared_pages, free_shared_pages};
 #[cfg(not(test))]
 use tdx_tdcall::{td_call, TdcallArgs};
 use zerocopy::{transmute_ref, FromBytes, Immutable, IntoBytes};
@@ -143,8 +143,26 @@ pub fn create_logarea() -> Result<()> {
         let mut provisional_logareavector = PROVISIONAL_LOGAREAPTR.lock();
         for index in 0..num_vcpus {
             // Allocate shared 4KB page for VMM memory logs
-            let data_buffer =
-                unsafe { alloc_shared_pages(1).ok_or(MigrationResult::OutOfResource)? };
+            let data_buffer = match unsafe { alloc_shared_pages(1) } {
+                Some(buffer) => buffer,
+                None => {
+                    // Free everything allocated in previous iterations before
+                    // bailing out, so a mid-loop allocation failure does not leak
+                    // the already-allocated shared and provisional pages.
+                    for buffer_ptr in logareavector.iter() {
+                        unsafe { free_shared_pages(*buffer_ptr, 1) };
+                    }
+                    logareavector.clear();
+                    for buffer_ptr in provisional_logareavector.iter() {
+                        unsafe {
+                            let _ =
+                                alloc::boxed::Box::from_raw(*buffer_ptr as *mut [u8; PAGE_SIZE]);
+                        }
+                    }
+                    provisional_logareavector.clear();
+                    return Err(MigrationResult::OutOfResource);
+                }
+            };
             logareavector.push(data_buffer);
 
             let data_buffer =
@@ -232,6 +250,15 @@ pub fn free_provisional_logarea() {
 }
 
 pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u8>) -> Result<()> {
+    // Security: the requested verbosity comes from the (untrusted) VMM via the
+    // EnableLogArea command. The log records are routed into the shared log area
+    // that the VMM can read. In a production (release) image, refuse to elevate
+    // the runtime level above Info so a hostile VMM cannot turn on Debug/Trace and
+    // harvest sensitive material (e.g. SPDM session-key debug dumps) from the
+    // shared area. Debug builds keep full verbosity for development.
+    #[cfg(not(debug_assertions))]
+    let log_max_level = core::cmp::min(log_max_level, 3); // 3 == Info
+
     let padding: u32 = 0;
     let num_vcpus: u32 = LOGGING_INFORMATION.num_vcpus.load(Ordering::SeqCst);
     let logarea_created: bool = LOGGING_INFORMATION.logarea_created.load(Ordering::SeqCst);
@@ -603,7 +630,18 @@ impl log::Log for VmmLoggerBackend {
             log_max_level =
                 u8_to_levelfilter(LOGGING_INFORMATION.maxloglevel.load(Ordering::SeqCst));
         } else if provisional_logs_enabled {
-            log_max_level = LevelFilter::Trace;
+            // Provisional records are captured into private buffers and copied into
+            // the VMM-readable shared area when EnableLogArea succeeds. In release
+            // images cap the provisional level at Info as well, so sensitive
+            // Debug/Trace material cannot reach the shared area through this path.
+            #[cfg(debug_assertions)]
+            {
+                log_max_level = LevelFilter::Trace;
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                log_max_level = LevelFilter::Info;
+            }
         } else {
             log_max_level = log::max_level();
         }
