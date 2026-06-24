@@ -291,8 +291,9 @@ impl TdxModulePolicy {
             "TDX_01" => 1,
             "TDX_02" => 2,
             "TDX_03" => 3,
+            "TDX_05" => 5,
             _ => {
-                panic!("Unexpected TDX Module ID");
+                panic!("Unexpected TDX Module ID {}", id);
             }
         }
     }
