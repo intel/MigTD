@@ -258,8 +258,6 @@ pub enum WaitForRequestResponse {
     StartRebinding(MigtdMigrationInformation),
     GetTdReport(ReportInfo),
     EnableLogArea(EnableLogAreaInfo),
-    #[cfg(feature = "policy_v2")]
-    GetMigtdData(MigtdDataInfo),
 }
 
 pub struct MigrationInformation {
