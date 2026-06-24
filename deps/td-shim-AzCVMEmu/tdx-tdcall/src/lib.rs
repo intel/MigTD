@@ -91,6 +91,14 @@ pub mod tdreport {
         TdxReport, TD_REPORT_ADDITIONAL_DATA_SIZE, TD_REPORT_SIZE, TdInfo,
     };
 
+    // The emulated tdcall_report() copies the az-tdx-vtpm TdReport byte-for-byte
+    // into a TD_REPORT_SIZE buffer and transmutes it to TdxReport. Both types are
+    // #[repr(C)] views of the same TDX-module TDREPORT_STRUCT and are 1024 bytes.
+    // transmute already enforces size_of::<TdxReport>() == TD_REPORT_SIZE at compile
+    // time; this guard ensures the *source* layout cannot silently drift (e.g. an
+    // az-tdx-vtpm upgrade) and zero-pad into a malformed report. Build fails instead.
+    const _: () = assert!(core::mem::size_of::<AzTdReport>() == TD_REPORT_SIZE);
+
     /// Emulated tdcall_report function for AzCVMEmu mode
     /// Now returns the exact same error type as the original for perfect compatibility
     pub fn tdcall_report(additional_data: &[u8; 64]) -> Result<TdxReport, TdCallError> {

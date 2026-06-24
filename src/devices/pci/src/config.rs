@@ -439,12 +439,18 @@ impl PciDevice {
                     0 => {
                         let size = self.get_bar_size(current_bar_offset)?;
 
+                        // Only program a BAR whose size we could probe. A malicious
+                        // host emulating PCI config space can return a malformed
+                        // sizing value (size == 0); never fall back to the raw
+                        // host-chosen BAR value, which would place the device MMIO
+                        // region at an unvalidated address outside the allocated
+                        // MMIO window. Treat such a BAR as absent (fail closed).
                         let addr = if size > 0 {
                             let addr = alloc_mmio32(size)?;
                             self.set_bar_addr(current_bar_offset, addr)?;
                             addr
                         } else {
-                            bar
+                            0
                         };
 
                         self.bars[current_bar].bar_type = PciBarType::MemorySpace32;
@@ -456,13 +462,15 @@ impl PciDevice {
 
                         let size = self.get_bar_size64(current_bar_offset)?;
 
+                        // See the 32-bit case above: fail closed instead of
+                        // trusting the raw host-chosen BAR value when sizing fails.
                         let addr = if size > 0 {
                             let addr = alloc_mmio64(size)?;
                             self.set_bar_addr(current_bar_offset, addr as u32)?;
                             self.set_bar_addr(current_bar_offset + 4, (addr >> 32) as u32)?;
                             addr
                         } else {
-                            bar as u64
+                            0
                         };
 
                         self.bars[current_bar].address = addr & PCI_MEM64_BASE_ADDRESS_MASK;
@@ -509,7 +517,7 @@ impl PciDevice {
                 self.bars[current_bar].bar_type = PciBarType::IoSpace;
                 self.bars[current_bar].address = u64::from(bar & 0xffff_fffc);
             } else {
-                // bits 2-1 are the type 0 is 32-but, 2 is 64 bit
+                // bits 2-1 are the type 0 is 32-bit, 2 is 64-bit
                 match bar >> 1 & 3 {
                     0 => {
                         let size = self.get_bar_size(current_bar_offset)?;
