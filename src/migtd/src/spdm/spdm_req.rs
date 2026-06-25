@@ -908,11 +908,12 @@ async fn send_and_receive_sdm_exchange_migration_info(
     }
 
     let remote_information = ExchangeInformation {
-        min_ver: min_import_version,
-        max_ver: max_import_version,
         key: MigrationSessionKey {
             fields: <[u64; 4]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?,
         },
+        min_ver: min_import_version,
+        max_ver: max_import_version,
+        reserved: [0u8; 4],
     };
 
     let mig_ver = cal_mig_version(true, &exchange_information, &remote_information)?;
