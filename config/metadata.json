@@ -27,34 +27,18 @@
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF0A1000",
-            "MemoryDataSize": "0x10000",
-            "Type": "TempMem",
-            "Attributes": "0x0"
-        },
-        {
-            "DataOffset": "0x0",
-            "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF0B1000",
-            "MemoryDataSize": "0x10000",
-            "Type": "TempMem",
-            "Attributes": "0x0"
-        },
-        {
-            "DataOffset": "0x0",
-            "RawDataSize": "0x0",
             "MemoryAddress": "0x0",
-            "MemoryDataSize": "0x2000000",
+            "MemoryDataSize": "0x1FDF000",
             "Type": "PermMem",
             "Attributes": "0x2"
         },
         {
             "DataOffset": "0x0",
             "RawDataSize": "0x0",
-            "MemoryAddress": "0xFF0A0000",
-            "MemoryDataSize": "0x1000",
-            "Type": "TempMem",
-            "Attributes": "0x0"
+            "MemoryAddress": "0x2000000",
+            "MemoryDataSize": "0x21000",
+            "Type": "PermMem",
+            "Attributes": "0x2"
         }
     ]
 }
