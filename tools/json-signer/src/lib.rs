@@ -49,6 +49,15 @@ pub fn json_sign(json_key: &str, data: &[u8], private_key: &[u8]) -> Result<Vec<
 }
 
 pub fn json_sign_detached(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>, Error> {
+    // Detached signing is finalized via `json_set_signature`, which embeds
+    // canonical serde bytes. Require canonical input here too, so signed bytes
+    // match embedded bytes and verification cannot fail due to reserialization.
+    let value: Value = serde_json::from_slice(data)?;
+    let canonical_data = serde_json::to_vec(&value)?;
+    if data != canonical_data {
+        return Err(Error::NotCanonical);
+    }
+
     let private_key_der =
         crypto::ecdsa::pem_to_der_from_slice(private_key).map_err(|_| Error::InvalidKey)?;
     let signature = crypto::ecdsa::ecdsa_sign(&private_key_der, data).map_err(|_| Error::Sign)?;

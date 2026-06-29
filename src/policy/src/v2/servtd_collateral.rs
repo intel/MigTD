@@ -83,9 +83,13 @@ impl TdIdentity {
     }
 
     pub fn get_tcb_level_by_svn(&self, svn: u16) -> Option<&TcbLevel> {
+        // TCB levels are breakpoints: pick the highest isvsvn <= reported svn
+        // (floor match), not an exact match. Exact match can reject valid
+        // newer svns and miss `Revoked` deny for in-between values.
         self.tcb_levels
             .iter()
-            .find(|&level| level.tcb.isvsvn == svn)
+            .filter(|level| level.tcb.isvsvn <= svn)
+            .max_by_key(|level| level.tcb.isvsvn)
     }
 }
 

@@ -85,7 +85,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
         while recvd < VMCALL_SPDM_MESSAGE_HEADER_SIZE {
             let n = self
                 .transport
-                .read(&mut buffer[recvd..])
+                .read(&mut buffer[recvd..VMCALL_SPDM_MESSAGE_HEADER_SIZE])
                 .await
                 // ConnectionAborted maps from VmcallRawError::VmmCanceled.
                 // The SpdmDeviceIo trait cannot represent this error, so just
@@ -108,10 +108,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
             return Err(0_usize);
         }
 
-        while recvd < payload_size + VMCALL_SPDM_MESSAGE_HEADER_SIZE {
+        let total = payload_size + VMCALL_SPDM_MESSAGE_HEADER_SIZE;
+        while recvd < total {
             let n = self
                 .transport
-                .read(&mut buffer[recvd..])
+                .read(&mut buffer[recvd..total])
                 .await
                 .map_err(|e| {
                     if e.kind() == rust_std_stub::io::ErrorKind::ConnectionAborted {
@@ -122,7 +123,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
             recvd += n;
         }
 
-        Ok(recvd)
+        Ok(total)
     }
 
     async fn flush_all(&mut self) -> SpdmResult {

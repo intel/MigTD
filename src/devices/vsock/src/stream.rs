@@ -109,11 +109,11 @@ impl VsockStream {
     }
 
     pub fn bind(&mut self, addr: &VsockAddr) -> Result {
-        if USED_PORT.lock().contains(&addr.port()) {
+        let mut used_port = USED_PORT.lock();
+        if !used_port.insert(addr.port()) {
             return Err(VsockError::AddressAlreadyUsed);
         }
-
-        USED_PORT.lock().insert(addr.port());
+        drop(used_port);
         self.addr.local.set_port(addr.port);
         Ok(())
     }
@@ -457,14 +457,16 @@ lazy_static! {
 }
 
 pub fn get_unused_port() -> Option<u32> {
-    let mut port = UNUSED_PORT_COUNTER.lock().checked_add(1)?;
+    let mut counter = UNUSED_PORT_COUNTER.lock();
+    let mut used_port = USED_PORT.lock();
+    let mut port = counter.checked_add(1)?;
 
-    while USED_PORT.lock().contains(&port) {
+    while used_port.contains(&port) {
         port = port.checked_add(1)?;
     }
 
-    USED_PORT.lock().insert(port);
-    *UNUSED_PORT_COUNTER.lock() = port;
+    used_port.insert(port);
+    *counter = port;
 
     Some(port)
 }

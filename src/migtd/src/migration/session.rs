@@ -614,11 +614,10 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
                     .ok_or(MigrationResult::InvalidParameter)?;
             let request_id = mig_info.mig_info.mig_request_id;
 
-            if REQUESTS.lock().contains(&request_id) {
-                Poll::Pending
-            } else {
-                REQUESTS.lock().insert(request_id);
+            if REQUESTS.lock().insert(request_id) {
                 Poll::Ready(Ok(mig_info))
+            } else {
+                Poll::Pending
             }
         } else if wfr.operation == 0 {
             Poll::Pending
