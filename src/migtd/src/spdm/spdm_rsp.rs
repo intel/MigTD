@@ -149,15 +149,19 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
     Ok((responder_context_ex, device_io_ref))
 }
 
-pub async fn spdm_responder_transfer_msk(
-    spdm_responder_ex: &mut ResponderContextEx<'_>,
-    mig_info: &MigtdMigrationInformation,
+pub async fn spdm_responder_transfer_msk<'a>(
+    spdm_responder_ex: &mut ResponderContextEx<'a>,
+    mig_info: &'a MigtdMigrationInformation,
     #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     #[cfg(not(feature = "policy_v2"))]
     let peer_data = Vec::new();
 
     spdm_responder_ex.peer_data = peer_data;
+    // Mark this responder as operating in migration mode so the migration-mode
+    // handlers (mig-attest op 0x03, mig-info op 0x05) accept the request; their
+    // MigrationInformation variant guard rejects rebind-mode confusion.
+    spdm_responder_ex.info = ResponderContextExInfo::MigrationInformation(mig_info);
 
     // Zeroize the responder key buffer on every return path.
     let result = spdm_responder_transfer_msk_inner(spdm_responder_ex, mig_info).await;
@@ -534,13 +538,6 @@ pub fn handle_exchange_mig_attest_info_req(
     #[cfg(feature = "policy_v2")]
     let servtd_ext_bytes_vec = servtd_ext_bytes.to_vec();
 
-    // Store SERVTD_EXT in ResponderContextEx for later use during MSK exchange
-    #[cfg(feature = "policy_v2")]
-    unsafe {
-        let spdm_responder_ex = upcast_mut(responder_context);
-        spdm_responder_ex.servtd_ext = ServtdExt::read_from_bytes(servtd_ext_bytes);
-    };
-
     // Init TDINFO from src (used for SERVTD_HASH verification)
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
@@ -595,6 +592,14 @@ pub fn handle_exchange_mig_attest_info_req(
             responder_context,
             session_id,
         )?;
+
+        // Persist SERVTD_EXT only after attestation verification succeeded, so
+        // unverified peer-supplied data is never stored in the responder context
+        // (its hash is later written to TDCS during MSK exchange in op 0x05).
+        unsafe {
+            let spdm_responder_ex = upcast_mut(responder_context);
+            spdm_responder_ex.servtd_ext = ServtdExt::read_from_bytes(&servtd_ext_bytes_vec);
+        };
     }
 
     let mut writer = Writer::init(vendor_defined_rsp_payload);
@@ -802,6 +807,17 @@ pub fn handle_exchange_mig_info_req(
     reader: &mut Reader<'_>,
     vendor_defined_rsp_payload: &mut [u8],
 ) -> SpdmResult<usize> {
+    // Reject if not in migration mode: a rebind session shares the
+    // transcript_before_finish precondition and must not reach write_msk.
+    let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
+    if !matches!(
+        &spdm_responder_ex.info,
+        ResponderContextExInfo::MigrationInformation(_)
+    ) {
+        error!("Migration info is not set in responder context.\n");
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+
     // The VDM message for secret migration info exchange MUST be sent after mutual attested session establishment.
     let session_id = if let Some(sid) = session_id {
         sid

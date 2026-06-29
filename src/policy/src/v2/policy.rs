@@ -305,12 +305,12 @@ impl<'a> PolicyData<'a> {
         relative_reference: &PolicyEvaluationInfo,
         skip_global: bool,
     ) -> Result<(), PolicyError> {
-        match self.forward_policy.as_ref() {
-            Some(policy) => {
-                Self::evaluate_policy_block(policy, value, relative_reference, skip_global)
-            }
-            None => Ok(()),
-        }
+        Self::evaluate_policy_block(
+            self.forward_policy.as_ref(),
+            value,
+            relative_reference,
+            skip_global,
+        )
     }
 
     pub fn evaluate_policy_backward(
@@ -319,12 +319,12 @@ impl<'a> PolicyData<'a> {
         relative_reference: &PolicyEvaluationInfo,
         skip_global: bool,
     ) -> Result<(), PolicyError> {
-        match self.backward_policy.as_ref() {
-            Some(policy) => {
-                Self::evaluate_policy_block(policy, value, relative_reference, skip_global)
-            }
-            None => Ok(()),
-        }
+        Self::evaluate_policy_block(
+            self.backward_policy.as_ref(),
+            value,
+            relative_reference,
+            skip_global,
+        )
     }
 
     pub fn evaluate_policy_common(
@@ -333,29 +333,60 @@ impl<'a> PolicyData<'a> {
         relative_reference: &PolicyEvaluationInfo,
         skip_global: bool,
     ) -> Result<(), PolicyError> {
-        match self.policy.as_ref() {
-            Some(policy) => {
-                Self::evaluate_policy_block(policy, value, relative_reference, skip_global)
-            }
-            None => Ok(()),
-        }
+        Self::evaluate_policy_block(self.policy.as_ref(), value, relative_reference, skip_global)
     }
 
     fn evaluate_policy_block(
-        block: &Vec<PolicyTypes>,
+        block: Option<&Vec<PolicyTypes>>,
         value: &PolicyEvaluationInfo,
         relative_reference: &PolicyEvaluationInfo,
         skip_global: bool,
     ) -> Result<(), PolicyError> {
-        for policy_type in block {
-            match policy_type {
-                PolicyTypes::Global(global) if !skip_global => {
-                    global.evaluate(value, relative_reference)?
+        // Apply explicit policy constraints, if present.
+        if let Some(block) = block {
+            for policy_type in block {
+                match policy_type {
+                    PolicyTypes::Global(global) if !skip_global => {
+                        global.evaluate(value, relative_reference)?
+                    }
+                    PolicyTypes::Servtd(migtd) => migtd.evaluate(value, relative_reference)?,
+                    _ => {}
                 }
-                PolicyTypes::Servtd(migtd) => migtd.evaluate(value, relative_reference)?,
-                _ => {}
             }
         }
+
+        // Always enforce mandatory deny checks, even if a policy block is absent.
+        Self::enforce_mandatory_deny(value, skip_global)?;
+
+        Ok(())
+    }
+
+    /// Enforce non-optional deny checks.
+    ///
+    /// Reject `Revoked` platform status when global checks are enabled.
+    /// Always check engine status; treat unknown (`None`) as denied.
+    fn enforce_mandatory_deny(
+        value: &PolicyEvaluationInfo,
+        skip_global: bool,
+    ) -> Result<(), PolicyError> {
+        if !skip_global {
+            if let Some(status) = value.tcb_status.as_deref() {
+                if TcbStatus::try_from(status)? == TcbStatus::Revoked {
+                    return Err(PolicyError::TcbEvaluation);
+                }
+            }
+        }
+
+        // Engine status must be known; fail closed on `None`.
+        match value.migtd_tcb_status.as_deref() {
+            Some(status) => {
+                if ServtdTcbStatus::try_from(status)? == ServtdTcbStatus::Revoked {
+                    return Err(PolicyError::SvnMismatch);
+                }
+            }
+            None => return Err(PolicyError::UnqualifiedMigTdInfo),
+        }
+
         Ok(())
     }
 
@@ -1182,5 +1213,83 @@ mod test {
         assert!(!tcb_evaluation_number_policy
             .evaluate_integer(4, Some(relative_reference))
             .unwrap());
+    }
+
+    #[test]
+    fn test_absent_block_denies_revoked_platform() {
+        // No block: still deny `Revoked` platform status.
+        let value = PolicyEvaluationInfo {
+            tcb_status: Some("Revoked".to_string()),
+            ..PolicyEvaluationInfo::default()
+        };
+        let relative = PolicyEvaluationInfo::default();
+
+        // `skip_global = false` evaluates platform status.
+        assert!(
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, false).is_err()
+        );
+    }
+
+    #[test]
+    fn test_absent_block_denies_revoked_engine() {
+        // No block: still deny `Revoked` engine status.
+        let value = PolicyEvaluationInfo {
+            migtd_tcb_status: Some("Revoked".to_string()),
+            ..PolicyEvaluationInfo::default()
+        };
+        let relative = PolicyEvaluationInfo::default();
+
+        // Engine status is checked even with `skip_global = true`.
+        assert!(
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, true).is_err()
+        );
+    }
+
+    #[test]
+    fn test_absent_block_allows_non_revoked() {
+        // No block: non-`Revoked` status is allowed.
+        let value = PolicyEvaluationInfo {
+            tcb_status: Some("UpToDate".to_string()),
+            migtd_tcb_status: Some("UpToDate".to_string()),
+            ..PolicyEvaluationInfo::default()
+        };
+        let relative = PolicyEvaluationInfo::default();
+
+        assert!(
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, false).is_ok()
+        );
+    }
+
+    #[test]
+    fn test_skip_global_ignores_platform_status() {
+        // In rebinding (`skip_global`), platform status is ignored.
+        let value = PolicyEvaluationInfo {
+            tcb_status: Some("Revoked".to_string()),
+            migtd_tcb_status: Some("UpToDate".to_string()),
+            ..PolicyEvaluationInfo::default()
+        };
+        let relative = PolicyEvaluationInfo::default();
+
+        assert!(
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, true).is_ok()
+        );
+    }
+
+    #[test]
+    fn test_unclassifiable_engine_is_denied() {
+        // Fail closed: unknown engine status (`None`) is denied in all paths.
+        let value = PolicyEvaluationInfo {
+            tcb_status: Some("UpToDate".to_string()),
+            migtd_tcb_status: None,
+            ..PolicyEvaluationInfo::default()
+        };
+        let relative = PolicyEvaluationInfo::default();
+
+        assert!(
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, false).is_err()
+        );
+        assert!(
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, true).is_err()
+        );
     }
 }
