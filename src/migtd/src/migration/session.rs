@@ -72,7 +72,6 @@ pub enum DataStatusOperation {
     StartRebinding = 2,
     GetTDReport = 3,
     EnableLogArea = 4,
-    GetMigtdData = 5,
 }
 
 #[cfg(feature = "vmcall-raw")]
@@ -84,7 +83,6 @@ impl TryFrom<u8> for DataStatusOperation {
             2 => Ok(Self::StartRebinding),
             3 => Ok(Self::GetTDReport),
             4 => Ok(Self::EnableLogArea),
-            5 => Ok(Self::GetMigtdData),
             unknown => Err(unknown),
         }
     }
@@ -232,7 +230,7 @@ fn process_buffer(buffer: &[u8]) -> RequestDataBufferHeader {
 
 #[cfg(feature = "vmcall-raw")]
 fn calculate_shared_page_nums(reqbufferhdrlen: usize) -> Result<usize> {
-    // The response payload for GetMigtdData is just the raw 512-byte TDINFO_STRUCT.
+    // The response payload for GetTDReport is just the raw 512-byte TDINFO_STRUCT.
     let policy_size = crate::config::get_policy()
         .ok_or(MigrationResult::InvalidParameter)?
         .len();
@@ -433,27 +431,6 @@ fn parse_request(
             decode_and_dispatch!(EnableLogAreaInfo, |info| {
                 WaitForRequestResponse::EnableLogArea(info)
             })
-        }
-        DataStatusOperation::GetMigtdData => {
-            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-            {
-                decode_and_dispatch!(MigtdDataInfo, |info| WaitForRequestResponse::GetMigtdData(
-                    info
-                ))
-            }
-            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
-            {
-                log_request_error!(
-                    request_id,
-                    "wait_for_request: unsupported operation {:?} received\n",
-                    op
-                );
-                reject_request(
-                    pending_error_report,
-                    request_id,
-                    MigrationResult::UnsupportedOperationError,
-                )
-            }
         }
     }
 }
