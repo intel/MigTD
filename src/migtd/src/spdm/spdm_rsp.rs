@@ -859,11 +859,12 @@ pub fn handle_exchange_mig_info_req(
     }
 
     let remote_information = ExchangeInformation {
-        min_ver: min_export_version,
-        max_ver: max_export_version,
         key: MigrationSessionKey {
             fields: <[u64; 4]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?,
         },
+        min_ver: min_export_version,
+        max_ver: max_export_version,
+        reserved: [0u8; 4],
     };
 
     let mut reader = Reader::init(responder_context.common.app_context_data_buffer.as_ref());

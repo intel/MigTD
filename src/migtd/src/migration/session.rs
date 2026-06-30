@@ -94,11 +94,19 @@ lazy_static! {
     pub static ref REQUESTS: Mutex<BTreeSet<u64>> = Mutex::new(BTreeSet::new());
 }
 
+// Exchanged with the migration peer byte-for-byte via `as_bytes()`, so the
+// layout is part of the wire format. `repr(C)` pins it, and `reserved` occupies
+// what the compiler would otherwise leave as implicit trailing padding after
+// `max_ver` — those bytes were serialized to the peer uninitialized. Field
+// order keeps `key`/`min_ver`/`max_ver` at the offsets the previous default
+// layout already used, so the wire format is unchanged.
+#[repr(C)]
 #[derive(Default)]
 pub struct ExchangeInformation {
+    pub key: MigrationSessionKey,
     pub min_ver: u16,
     pub max_ver: u16,
-    pub key: MigrationSessionKey,
+    pub reserved: [u8; 4],
 }
 
 #[cfg(not(feature = "spdm_attestation"))]
@@ -1353,6 +1361,26 @@ mod test {
         local_info.max_ver = 7;
         let result = cal_mig_version(true, &local_info, &remote_info);
         assert!(matches!(result, Ok(6)));
+    }
+
+    // `ExchangeInformation` is written to the migration peer byte-for-byte via
+    // `as_bytes()`. The four bytes after `max_ver` were implicit trailing
+    // padding that the serializer copied to the peer uninitialized; they are
+    // now a zero-initialized `reserved` field, so the wire form is fully
+    // defined with no leaked bytes.
+    #[cfg(not(feature = "spdm_attestation"))]
+    #[test]
+    fn exchange_information_serializes_without_uninitialized_padding() {
+        assert_eq!(core::mem::size_of::<ExchangeInformation>(), 40);
+        let mut info = ExchangeInformation::default();
+        info.min_ver = 0x0102;
+        info.max_ver = 0x0304;
+        info.key.fields = [0xAAu64; 4];
+        let bytes = info.as_bytes();
+        assert_eq!(bytes.len(), 40);
+        // key 0..32, min_ver 32..34, max_ver 34..36, reserved 36..40: the
+        // trailing four bytes are now always zero rather than leaked memory.
+        assert_eq!(&bytes[36..40], &[0u8; 4]);
     }
 
     // ---- parse_request-level tests: simulate host data buffers ----
