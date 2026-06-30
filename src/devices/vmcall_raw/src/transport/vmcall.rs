@@ -18,7 +18,16 @@ use td_payload::arch::idt::InterruptStack;
 use td_payload::mm::shared::SharedMemory;
 use tdx_tdcall::tdx;
 
-const MAX_VMCALL_RAW_STREAM_MTU: usize = 0x1000 * 16;
+pub(crate) const MAX_VMCALL_RAW_STREAM_MTU: usize = 0x1000 * 16;
+/// GHCI 1.5 buffer header overhead (8-byte status + 4-byte length) prepended
+/// by `vmcall_raw_transport_enqueue` to each VMCALL payload.
+pub(crate) const VMCALL_RAW_GHCI_HEADER_LEN: usize = 12;
+/// Largest payload that can ride in a single `Service.MigTD.Send` VMCALL.
+/// The VMM-side buffer for the migration data channel matches the MTU the
+/// receive side advertises; sending more than this in one VMCALL fails with
+/// TDX_VMCALL_STATUS != SUCCESS.
+pub(crate) const VMCALL_RAW_SEND_PAYLOAD_MTU: usize =
+    MAX_VMCALL_RAW_STREAM_MTU - VMCALL_RAW_GHCI_HEADER_LEN;
 const VMCALL_VECTOR: u8 = 0x52;
 
 lazy_static! {
