@@ -4,7 +4,7 @@
 
 use crate::transport::vmcall::{
     vmcall_raw_transport_can_recv, vmcall_raw_transport_dequeue, vmcall_raw_transport_enqueue,
-    vmcall_raw_transport_init, VMCALL_MIG_CONTEXT_FLAGS,
+    vmcall_raw_transport_init, VMCALL_MIG_CONTEXT_FLAGS, VMCALL_RAW_SEND_PAYLOAD_MTU,
 };
 use core::sync::atomic::AtomicBool;
 
@@ -61,7 +61,17 @@ impl VmcallRaw {
     }
 
     pub async fn send(&mut self, buf: &[u8], _flags: u32) -> Result<usize> {
-        let _ = vmcall_raw_transport_enqueue(self, buf).await?;
+        // A single Service.MigTD.Send VMCALL can only carry one MTU-sized
+        // payload (the same cap the receive side advertises). Chunk here so
+        // callers that don't loop on partial writes (TLS, SPDM transport)
+        // keep working when the pre-session policy + issuer chain blob
+        // exceeds one VMCALL.
+        let mut sent = 0;
+        while sent < buf.len() {
+            let end = core::cmp::min(buf.len(), sent + VMCALL_RAW_SEND_PAYLOAD_MTU);
+            let _ = vmcall_raw_transport_enqueue(self, &buf[sent..end]).await?;
+            sent = end;
+        }
         Ok(buf.len())
     }
 
