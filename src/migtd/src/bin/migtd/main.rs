@@ -240,7 +240,20 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
         }
     };
 
-    let event_data = policy;
+    // Store only the policy digest as the tagged event body; RTMR is still
+    // extended with the full policy bytes above via `hash_data`. Keeps the
+    // RA-TLS cert (which embeds the event log) under rustls' 64 KiB
+    // MAX_HANDSHAKE_SIZE regardless of policy growth.
+    let event_data = match event_log::calculate_digest(policy) {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("Failed to digest migration policy: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InitializationError as u64,
+                b"Failed to digest migration policy",
+            );
+        }
+    };
 
     // Measure and extend the migration policy to RTMR
     let _ = event_log::write_tagged_event_log(
@@ -248,7 +261,7 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
         MR_INDEX_POLICY,
         policy,
         TAGGED_EVENT_ID_POLICY,
-        event_data,
+        &event_data,
     )
     .map_err(|e| {
         log::error!("Failed to log migration policy: {:?}\n", e);
@@ -323,13 +336,26 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
         }
     };
 
+    // Store only the chain digest as the tagged event body; see comment in
+    // get_policy_and_measure.
+    let event_data = match event_log::calculate_digest(policy_issuer_chain) {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("Failed to digest policy issuer chain: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InitializationError as u64,
+                b"Failed to digest policy issuer chain",
+            );
+        }
+    };
+
     // Measure and extend the policy issuer chain to RTMR
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
         policy_issuer_chain,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
-        policy_issuer_chain,
+        &event_data,
     )
     .map_err(|e| {
         log::error!("Failed to log policy issuer chain: {:?}\n", e);
@@ -353,13 +379,26 @@ fn get_ca_and_measure(event_log: &mut [u8]) {
         }
     };
 
+    // Store only the CA digest as the tagged event body; see comment in
+    // get_policy_and_measure.
+    let event_data = match event_log::calculate_digest(root_ca) {
+        Ok(d) => d,
+        Err(e) => {
+            log::error!("Failed to digest SGX root CA: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InitializationError as u64,
+                b"Failed to digest SGX root CA",
+            );
+        }
+    };
+
     // Measure and extend the root certificate to RTMR
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_ROOT_CA,
         root_ca,
         TAGGED_EVENT_ID_ROOT_CA,
-        root_ca,
+        &event_data,
     )
     .map_err(|e| {
         log::error!("Failed to log SGX root CA: {:?}\n", e);
