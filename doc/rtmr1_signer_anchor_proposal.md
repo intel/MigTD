@@ -42,6 +42,18 @@ Note what the trust model does **not** require: an identical *leaf certificate* 
 identical *leaf public key*. Two MigTDs trust each other as long as they share the same
 root CA and the same leaf Subject — the leaf key may differ.
 
+The trust model also **does not pin intermediate-CA identity**: intermediate cert contents
+are not compared against the local chain's intermediates, so either side may rotate its
+intermediate CA(s) independently — as long as the shared root and the leaf Subject stay
+stable and every issuer in the chain is itself a CA (check 4). Intermediates are still
+validated *structurally* — signature integrity (check 1) and the CA attribute (check 4) —
+just not by identity.
+
+This rests on an **assumption about the leaf Subject**: the leaf cert's Subject Name
+uniquely identifies the intended usage for the product/model — distinct usages must use
+distinct Subject Names in their leaf certs. The RTMR1 anchor defined below inherits this
+assumption, since it commits to that Subject (`S`).
+
 ```
    Runtime trust model (peer validation)      RTMR1 measurement (today)
    ───────────────────────────────────        ─────────────────────────
@@ -149,6 +161,11 @@ Define `H(x) = SHA384(x)`.
 The `"MIGTD-RTMR1-ANCHOR-V1"` tag provides domain separation and a version hook for
 future formula changes.
 
+`A` deliberately commits to **only** the root CA and the leaf Subject — **not** the
+intermediate CAs — matching peer validation, which likewise does not pin intermediate
+identity. Intermediate-CA rotation under the same root + leaf Subject therefore leaves
+RTMR1 unchanged, exactly as leaf-key rotation does.
+
 # Benefits
 
 - **No rotation churn** — `A` depends on the root CA and leaf Subject, not the leaf public
@@ -156,6 +173,10 @@ future formula changes.
   the companion RTMR2 measuring policy without TCBMapping, the whole `tdinfo_hash` is then
   unchanged when nothing else changes — a key rotation needs no new endorsement /
   `svnMappings` entry.
+- **Intermediate-CA rotation is free too** — `A` excludes intermediate CAs (matching peer
+  validation, which does not pin intermediate identity), so rotating an intermediate CA
+  under the same root + leaf Subject also leaves RTMR1 unchanged — no rebuild, no new
+  endorsement.
 - **Region-independent measurement** — regional leaf certificates that share the root +
   Subject produce the **same** RTMR1, and the same `tdinfo_hash` when nothing else differs,
   so one endorsement covers all such regions instead of one per region.
@@ -179,6 +200,7 @@ The anchor is the measured projection of the two equality checks already enforce
 |-----------------------|------------------|
 | Root CA must match (DER byte comparison) | `R = H(DER(root))` |
 | Leaf Subject Name must match | `S = H(DER(leaf subject))` |
+| Intermediate-CA identity **not** pinned (independent rotation allowed) | not folded into `A` — the anchor excludes intermediates, so intermediate rotation is measurement-stable |
 | Chain internal signatures valid; non-CA issuers rejected | enforced at runtime; not folded into `A` (integrity, not identity) |
 
 Contrast with `get_policy_signer_key_hash` (`src/crypto/src/lib.rs:105`), which hashes
@@ -235,9 +257,10 @@ regions passes because the runtime check keys on root + Subject.
   `policyData`), not RTMR1; this RTMR1-only change is therefore orthogonal to either and can
   ship before, after, or without them.
 - **Security trade-off — anchor binds identity, not the leaf key.** `A` commits to the
-  root CA and the leaf Subject, **not** the leaf public key. A leaf key compromised under
-  the same root + Subject is therefore *not* distinguished by RTMR1 alone. This matches
-  the existing runtime trust model (which also keys on root + Subject) and pushes
+  root CA and the leaf Subject — **not** the leaf public key, and **not** the intermediate
+  CAs. A leaf key (or an intermediate CA) compromised under the same root + Subject is
+  therefore *not* distinguished by RTMR1 alone. This matches the existing runtime trust
+  model (which also keys on root + Subject and does not pin intermediate identity) and pushes
   leaf-level revocation to its proper layers: the issuer/root CA's control of issuance,
   chain/CRL validation at runtime, and — if a specific build must be revoked — removing
   that build's `tdinfo_hash` from `svnMappings[]`. Making the root CA the unit of trust
