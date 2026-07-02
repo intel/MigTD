@@ -163,19 +163,19 @@ Break policy content into independent measured components so RTMR2 no longer dep
 | CFV slot | Before | Proposed | Measured into |
 |----------|--------|----------|---------------|
 | `MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID` | Policy issuer cert chain | TCBMapping issuer cert chain | **RTMR1** |
-| `MIGTD_POLICY_FFS_GUID` | Signed policy with collaterals | Signed policy with collaterals, updated `svnMappings` semantics | **RTMR2** |
+| `MIGTD_POLICY_FFS_GUID` | Signed policy with collaterals | Policy with collaterals (no outer signature), updated `svnMappings` semantics | **RTMR2** |
 
 With this split:
 - RTMR2 = measurement of canonical `policyData` with `servtdCollateral.servtdTcbMapping` redacted — every other field is automatically bound by being inside the canonical object. The redaction is the only escape hatch and permits `servtdTcbMapping` to be re-signed after the IGVM is shipped, preserving circularity-freedom.
 - TCB mapping can bind `tdinfo_hash` (= `init_servtd_info_hash` = `SHA384(TDINFO)` for attr=0) to SVN without circularity. (See "Schema note" at the end.)
 - RTMR1 = measurement of TCB Mapping issuer cert chain instead of policy issuer chain.
-- Policy is still signed to keep current file format not changed, but signing is not required as TCBMapping now includes and authenticates the policy measurement.
+- The **outer policy-blob signature is removed**: RTMR2 measures the canonical `policyData` bytes directly, so the hardware-rooted measurement — not a policy-signing key — authenticates exactly what MigTD loads. This eliminates the policy-signing key and its rotation burden. `servtdTcbMapping` and `servtdIdentity` retain their own issuer signatures, verified by their issuer chains (not by RTMR2), which keeps `servtdTcbMapping` updateable after ship.
 
 **New design — full tdinfo hash in svnMappings but unmeasured, removing circular dependency:**
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Signed Policy Blob                              │
+│                    Policy Blob (no outer signature)                    │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ policyData                                                       │  │
 │  │  ├── policy, version, id, policySvn, collaterals, ...            │  │
@@ -187,7 +187,6 @@ With this split:
 │  │            └── svnMappings[]:                     │ │            │  │
 │  │                 {tdinfo_hash, isvsvn}             │ │            │  │
 │  └───────────────────────────────────────────────────┼─┼────────────┘  │
-│  signature  ─────────────────────────────────────────┼─┤               │
 └──────────────────────────────────────────────────────┼─┼───────────────┘
                                                        │ │
               RTMR2 = SHA384(canonical(policyData      │ │
@@ -213,8 +212,13 @@ With this split:
 - **Breaks the circular dependency** — `tdinfo_hash` is computable from build inputs before the TCB mapping is signed.
 - **Problem 1 solved with simpler rebind/migration** — MigTD maps `servtd_ext.init_servtd_info_hash` to an SVN locally; the VMM no longer supplies init TDINFO per request.
 - **Problem 2 solved with TCB Mapping reused for attestation** — the service matches `init/cur_servtd_info_hash` directly against `svnMappings`, needing no out-of-band endorsements.
+- **No policy-signing key** — the outer policy-blob signature is removed; RTMR2 authenticates the policy content directly, so there is no policy-signing key to manage or rotate. `servtdTcbMapping` and `servtdIdentity` keep their own issuer signatures.
 
 # Design details
+
+## Implementation note
+
+To minimize code branching, the proposed design **replaces** the current implementation outright — it is **not** feature-gated. No runtime or build-time toggle is kept between the old subset-keyed (`[MRTD, RTMR0, RTMR1]`) scheme and the new full-`tdinfo_hash` scheme; the new behavior is the only path.
 
 ## RTMR2 single redacted extend
 
@@ -229,7 +233,7 @@ inside the canonical object bytes. The redaction is the only escape hatch
 and is what makes `servtdTcbMapping` updateable after the IGVM is shipped.
 
 This single extend folds together two security properties:
-detecting drift between the bytes that were signed and the bytes loaded
+detecting drift between the authority-endorsed `policyData` bytes and the bytes loaded
 into the running MigTD (covered by canonicalizing the whole `policyData`
 sub-tree), and — whenever `servtdIdentity` is used for policy — defeating
 its playback / TCB-downgrade attacks (covered by including
@@ -268,7 +272,7 @@ its playback / TCB-downgrade attacks (covered by including
 
 ## Build flow
 
-The release artifact is produced in two stages: a build stage that compiles the MigTD binary into a *base IGVM* with a dummy CFV, and a release stage that signs the policy artifacts and enrolls the production bytes into the base IGVM's CFV via `td-shim-enroll` (a byte-level FFS slot replacement — no Rust rebuild).
+The release artifact is produced in two stages: a build stage that compiles the MigTD binary into a *base IGVM* with a dummy CFV, and a release stage that signs the issuer collateral (`servtdIdentity` and `servtdTcbMapping`) and enrolls the production bytes into the base IGVM's CFV via `td-shim-enroll` (a byte-level FFS slot replacement — no Rust rebuild).
 
 1. **Build stage — base IGVM.** Compile MigTD and embed a dummy CFV containing the same canonical `policyData` content the final policy will carry, so the single redacted-`policyData` RTMR2 extend matches the final image byte-for-byte. The production signing chain is also enrolled into the `MIGTD_POLICY_ISSUER_CHAIN` CFV slot so RTMR1 already matches the final IGVM. The embedded `servtdIdentity` is signed by an ephemeral build-time key (the build environment has no access to production signing). This yields the base IGVM and a *preview* `tdinfo_hash`.
 
@@ -276,7 +280,7 @@ The release artifact is produced in two stages: a build stage that compiles the 
 
 3. **Release stage — TCB mapping.** Create `svnMappings: [{tdinfo_hash, isvsvn}]` using the production `tdinfo_hash`, then sign the TCB mapping.
 
-4. **Release stage — final IGVM.** Assemble the final signed policy (now including the signed TCB mapping) and re-run `td-shim-enroll`. Verify its `tdinfo_hash` equals the pre-final value — a CI gate enforcing the "`tcbMapping` is not measured" invariant.
+4. **Release stage — final IGVM.** Assemble the final policy (now including the signed TCB mapping) and re-run `td-shim-enroll`. Verify its `tdinfo_hash` equals the pre-final value — a CI gate enforcing the "`tcbMapping` is not measured" invariant.
 
 5. **Endorsements.** Compute endorsed `tdinfo_hash` (= `init_servtd_info_hash` = `SHA384(TDINFO)`) from the final image. This hash captures policy content (via the single RTMR2 extend).
 
@@ -383,17 +387,9 @@ This design enables self-contained reverse lookup: the attestation service can d
 
 These items are out of scope for the circular-dependency fix above but are enabled by it.
 
-## Mig-NRX support
-
-In NRX arch, `SERVTD_EXT.{INIT,CUR}_INFO_HASH` will measure the policy only, so we just need to align the `tdinfo_hash` in svnMappings by redefining it as the hash of the policy only.
-
 ## Dropping `servtdIdentity` (pure-SVN policy)
 
 If migration policy is expressed purely as SVN comparisons, `servtdIdentity` can be dropped: the peer's SVN is derived solely from the TCB mapping (`tdinfo_hash → SVN`), independent of `servtdIdentity`. Trade-off: loses the `tcbStatus` / `tcbDate` axes and non-monotonic per-SVN revocation (mark SVN N `Revoked` while keeping N−1), and requires SVN monotonicity ("higher SVN ≥ as trustworthy"); build-specific revocation still works by removing that build's `tdinfo_hash` entry from the mapping.
-
-## Dropping the outer policy signature
-
-Once RTMR2 binds the canonical `policyData` content directly (this proposal), the outer policy-blob signature is redundant for integrity: the hardware-rooted RTMR2 measurement already authenticates the exact bytes loaded into MigTD. A future revision can drop policy signing entirely, removing the policy-signing key and its rotation burden. The issuer signatures on `servtdTcbMapping` and `servtdIdentity` still remain — those artifacts are redacted/updateable and are verified by their own issuer chains, not by RTMR2.
 
 ## RTMR1 signer anchor for key rotation
 
