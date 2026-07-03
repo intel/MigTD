@@ -1,11 +1,13 @@
-RTMR1 Signer-Anchor Measurement
+RTMR1 Signer-Anchor Measurement & servTD Signer Revocation
 ================================================
 
-> The scope of this proposal is limited to **what MigTD measures into RTMR1**. The
-> RTMR2 / TCB-mapping circular-dependency work is covered separately in
-> [tcb_mapping_design_proposal.md](./tcb_mapping_design_proposal.md); this proposal
-> is the companion change called out there under *"RTMR1 signer anchor for key
-> rotation"*.
+> This proposal has two coupled parts: (1) **what MigTD measures into RTMR1** — a
+> stable *signer anchor* rather than the raw issuer-chain bytes — and (2) the
+> **servTD signer-key revocation** control that mitigates the one security relaxation
+> the anchor introduces. The RTMR2 / TCB-mapping circular-dependency work is covered
+> separately in [tcb_mapping_design_proposal.md](./tcb_mapping_design_proposal.md);
+> the anchor is the companion change called out there under *"RTMR1 signer anchor for
+> key rotation"*.
 > For the concrete current measurement values see
 > [policy_v2_measurements.md](./policy_v2_measurements.md).
 
@@ -222,7 +224,7 @@ leaf Subject are unchanged.
 | **IGVM rebuild** | No | only the CFV leaf cert is swapped (`td-shim-enroll`); the measurement is unchanged |
 
 ¹ RTMR2 is the companion [TCB-mapping proposal](./tcb_mapping_design_proposal.md)'s domain;
-this proposal changes only RTMR1. RTMR2 redacts TCBMapping, so rotating the TCBMapping
+the anchor changes only RTMR1. RTMR2 redacts TCBMapping, so rotating the TCBMapping
 signing leaf — the trust authority RTMR1 anchors — leaves RTMR2 (and the hash) unchanged.
 
 ## Regional leaf certificates
@@ -244,27 +246,132 @@ regions passes because the runtime check keys on root + Subject.
   chain so the reproduced `tdinfo_hash` matches the running TD. This replaces the current
   "extend over raw chain bytes" path.
 
+# Security considerations — signing-key compromise
+
+The anchor lowers RTMR1's sensitivity from the exact issuer-chain bytes to **root CA + leaf
+Subject**. That relaxation is the source of the proposal's rotation/region agility — and of one
+new risk. This section states what the change introduces and what it leaves unchanged.
+
+## Limitation introduced: stolen intermediate cert chain
+
+Raw-chain RTMR1 (today) hashes the exact chain bytes, so **any** certificate change in the chain
+alters RTMR1 — and therefore `tdinfo_hash` — including a leaf freshly minted by a **stolen
+intermediate CA** under the same root and same leaf Subject. The signer anchor commits to root +
+leaf Subject only, so that same stolen-intermediate-minted leaf becomes
+**measurement-indistinguishable**: identical `A`, identical RTMR1, identical `tdinfo_hash`.
+
+```
+   stolen intermediate CA key (same root + same leaf Subject)
+             │  mints a new leaf, signs
+             ▼
+   forged servtdTcbMapping:  { tdinfo_hash(vulnerable_MigTD) → high SVN }
+             │
+             ▼   passes validate_peer_cert_chain (root + Subject + CA-attr) and CoRIM x5chain
+             ▼
+   vulnerable MigTD resolves to high SVN → clears the baseline → accepted
+
+   raw-chain RTMR1 :  new leaf ⇒ different tdinfo_hash  (measurement-visible)
+   signer anchor   :  same root+Subject ⇒ SAME tdinfo_hash  (measurement-INvisible)  ← new risk
+```
+
+The anchor trades away RTMR1's ability to distinguish a different signing certificate under the
+same root + Subject. A **stolen intermediate CA** — which can issue an arbitrary Subject-matching
+leaf — is the concrete exposure this proposal introduces, and it must be mitigated at the
+PKI/authorization layer (below).
+
+## Not introduced here: stolen leaf key (reused certificate)
+
+A stolen **leaf private key** reusing its existing certificate changes no certificate bytes, so
+it is invisible to RTMR1 with or without the anchor — a **pre-existing** risk the anchor neither
+adds nor removes (unlike the stolen-intermediate limitation above, which is new). Like that case,
+it is a signer-authorization question measurement cannot answer, mitigated by revocation (below).
+
+## Mitigations
+
+Neither attack is visible to measurement, so both are handled at the PKI/policy layer. Three
+controls apply, each covering the two attacks differently:
+
+- **Strict key protection, especially of intermediate CA keys** — the primary control, since the
+  anchor cannot distinguish a rogue same-Subject leaf minted by a stolen intermediate. Keep
+  signing keys offline in an HSM, rarely used, ideally under m-of-n quorum.
+- **Certificate revocation (CRL)** — revoke the leaked leaf or intermediate certificate and have
+  consumers reject it. It covers **both** attacks and is the only in-guest control that closes a
+  stolen intermediate (revoking the intermediate rejects its whole subtree). MigTD performs no
+  revocation check today; the *Revocation* section below sketches an in-guest design.
+- **`notBefore` floor** — a lightweight complement: a policy date requiring each signer leaf's
+  `notBefore ≥ floor`. On a detected leak the authority raises the floor to the detection date,
+  rejecting the leaked certificate while re-issued certs pass. It is simpler than a CRL, needs no
+  trusted clock (it compares two static values), and cannot be bypassed by a reused leaf cert — but
+  it does **not** stop a stolen intermediate (which mints a fresh, current-dated leaf) and is
+  coarser, rejecting every certificate older than the floor.
+
+**Recommendation.** Prevent these compromises with strict key protection; optionally add a `notBefore` floor in policy if the leaf-key-leak case is the main concern. The long-term solution is the CRL as the in-guest control. A servTD signer CRL, similar to the Intel platform CRLs, is proposed below.
+
+# Revocation — the servTD signer CRL
+
+The attestation-service side is standard PKI (CRL/OCSP over the CoRIM `x5chain`) and is out of
+scope. The in-guest side is the new work: ship a CRL for the servTD signer chain in the policy and
+enforce it fail-closed, reusing the existing platform-CRL machinery (`src/crypto/src/crl.rs`, the
+`pck_crl_num` / `root_ca_crl_num` floor pattern).
+
+| Concern | Mechanism |
+|---------|-----------|
+| **Delivery** | `servtdCollateral.servtdCrl` — an optional PEM CRL co-located with the signers it revokes. Optional for backward compatibility: a policy without it skips the check. |
+| **Authentication** | The CRL signature is verified against the issuing CA in the RTMR1-anchored signer chain before its contents are trusted; only a CA (`cA=TRUE`) may issue it, so a peer cannot forge one without the shared root key. |
+| **Enforcement** | Every certificate in the TCB-mapping and identity signer chains is checked against the CRL; a revoked serial fails closed. |
+| **Anti-rollback** | A monotonic `servtd_crl_num` policy floor rejects a CRL older than required, mirroring `pck_crl_num` / `root_ca_crl_num`. |
+
+**Enforcement points.** The local policy's CRL is checked at boot (during policy verification)
+against both signer chains — a MigTD whose own policy revokes its signer refuses to start — and,
+during migration, against the *peer's* chains. The peer check uses the **local** CRL (the peer's
+chain root is already bound to the local root by `validate_peer_cert_chain`), so a peer cannot
+launder a revocation-free CRL of its own. Production policies should therefore always ship a
+`servtdCrl`, empty if nothing is revoked.
+
+**No trusted clock.** Guest time is VMM-supplied, so the CRL `nextUpdate` window cannot be
+enforced in-guest; freshness relies on the `servtd_crl_num` floor. Time-window checks are left to
+the attestation service.
+
+**Interaction with measurement.** `servtdCrl` is inside the measured `policyData`, so updating it
+churns `tdinfo_hash` — revoking a signer becomes a policy re-release + re-endorsement. That is
+acceptable for a rare, deliberate event and matches the platform `root_ca_crl` / `pck_crl`. If
+in-place updates without re-endorsement are ever needed, `servtdCrl` could be redacted from the
+RTMR2 extend (like `servtdTcbMapping`), leaving `servtd_crl_num` as the sole anti-rollback control.
+
+## Residual risks & open questions
+
+- **Stolen key with a not-yet-revoked certificate** stays invisible until the authority detects
+  the compromise and publishes a revoking CRL — inherent to CRL-based revocation.
+- **Service-side revocation** (CRL/OCSP over the CoRIM `x5chain`, plus `nextUpdate` time-window
+  checks) is standard PKI, tracked separately.
+- **CoRIM delivery.** When the servTD collateral is a signed CoRIM (COSE `x5chain`, RFC 9360),
+  revocation should thread the CRL through the COSE flow or run CRL/OCSP on the `x5chain`.
+- **`cRLSign` KeyUsage.** Optionally require the CRL issuer to assert the `cRLSign` KeyUsage bit
+  in addition to `cA=TRUE`, as defence-in-depth against a mis-issued CA certificate.
+- **Multiple / per-issuer CRLs.** A single CRL authenticated against the signer chain's CA
+  suffices when the mapping and identity issuers share a root; distinct sub-CAs would need one
+  CRL per issuing CA or a small list.
+
 # Notes
 
-- **This proposal changes only RTMR1.** RTMR2 (the policy) is the companion
+- **The anchor changes only RTMR1.** RTMR2 (the policy) is the companion
   [TCB-mapping proposal](./tcb_mapping_design_proposal.md)'s concern. Together the two keep
   `tdinfo_hash` the same across leaf rotation and across regions whenever the code, policy
   content, and trust anchor (root + Subject) are unchanged, while still binding the exact
   policy content. (A genuine content change — e.g. re-issuing `servtdIdentity` — does
   change RTMR2 and the hash, as intended.)
-- **Orthogonal to the TCB-mapping proposal's *Future considerations*.** Both *dropping the
-  outer policy signature* and *dropping `servtdIdentity`* affect only **RTMR2** (the signed
-  `policyData`), not RTMR1; this RTMR1-only change is therefore orthogonal to either and can
-  ship before, after, or without them.
+- **Orthogonal to the TCB-mapping proposal's RTMR2 changes.** That proposal's removal of the
+  outer policy signature (now part of the proposal itself, not a future item) and its remaining
+  *Future consideration* of dropping `servtdIdentity` both affect only **RTMR2** (the signed
+  `policyData`), not RTMR1; the anchor is orthogonal to either and can ship before,
+  after, or without them.
 - **Security trade-off — anchor binds identity, not the leaf key.** `A` commits to the
   root CA and the leaf Subject — **not** the leaf public key, and **not** the intermediate
   CAs. A leaf key (or an intermediate CA) compromised under the same root + Subject is
   therefore *not* distinguished by RTMR1 alone. This matches the existing runtime trust
-  model (which also keys on root + Subject and does not pin intermediate identity) and pushes
-  leaf-level revocation to its proper layers: the issuer/root CA's control of issuance,
-  chain/CRL validation at runtime, and — if a specific build must be revoked — removing
-  that build's `tdinfo_hash` from `svnMappings[]`. Making the root CA the unit of trust
-  is the intended, explicit trade-off.
+  model and makes the root CA the unit of trust — the intended, explicit trade-off. Its
+  consequences for a forged TCB mapping, and the mitigations, are detailed in
+  *[Security considerations — signing-key compromise](#security-considerations--signing-key-compromise)* above.
 - **Root rotation still visible.** Rotating or adding a *root* CA changes `R` and thus
   RTMR1 — intended, since that is a genuine trust-anchor change that should re-endorse.
 
