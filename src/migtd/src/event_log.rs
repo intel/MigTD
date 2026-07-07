@@ -62,19 +62,20 @@ impl TaggedEvent {
 }
 
 pub fn get_event_log_mut() -> Option<&'static mut [u8]> {
-    get_ccel().map(event_log_slice)
+    get_ccel().and_then(event_log_slice)
 }
 
 pub fn get_event_log() -> Option<&'static [u8]> {
-    let raw = get_ccel().map(event_log_slice)?;
+    let raw = get_ccel().and_then(event_log_slice)?;
     // The `+1` is required: `cc_measurement::log::CcEvents::next()` only
     // yields an event when `end_of_event < bytes.len()` (strict inequality).
-    // If we sliced to exactly `size`, the buffer would end at the last
-    // event boundary and that final event would be silently dropped by the
-    // iterator, breaking `parse_events()` (e.g. losing the policy tag) and
-    // any downstream RTMR replay. The runtime layout has trailing zeros in
-    // the CCEL area, so including one extra byte is safe.
-    event_log_size(raw).map(|size| &raw[..size + 1])
+    // If we sliced to exactly `size`, the buffer would end at the last event
+    // boundary and that final event (the MigTdPolicy measurement) would be
+    // silently dropped by the iterator, breaking `parse_events()` and causing
+    // `check_policy_integrity()` to fail with `PolicyHashMismatch`. The runtime
+    // layout has trailing zeros in the CCEL area, so the extra byte is safe;
+    // clamp to the raw length as a defensive guard.
+    event_log_size(raw).map(|size| &raw[..core::cmp::min(size + 1, raw.len())])
 }
 
 fn event_log_size(event_log: &[u8]) -> Option<usize> {
@@ -90,16 +91,19 @@ fn event_log_size(event_log: &[u8]) -> Option<usize> {
     Some(size)
 }
 
-fn event_log_slice(ccel: &Ccel) -> &'static mut [u8] {
-    unsafe { core::slice::from_raw_parts_mut(ccel.lasa as *mut u8, ccel.laml as usize) }
+fn event_log_slice(ccel: &Ccel) -> Option<&'static mut [u8]> {
+    // Validate that lasa and laml are non-zero and laml is reasonable
+    if ccel.lasa == 0 || ccel.laml == 0 || ccel.laml as usize > 0x10_0000 {
+        return None;
+    }
+    Some(unsafe { core::slice::from_raw_parts_mut(ccel.lasa as *mut u8, ccel.laml as usize) })
 }
 
 fn get_ccel() -> Option<&'static Ccel> {
     if !CCEL.is_completed() {
         // Parse out ACPI tables handoff from firmware and find the event log location
         let &ccel = get_acpi_tables()
-            .and_then(|tables| tables.iter().find(|&&t| t[..4] == *b"CCEL"))
-            .expect("Failed to find CCEL");
+            .and_then(|tables| tables.iter().find(|&&t| t.get(..4) == Some(b"CCEL")))?;
 
         if ccel.len() < size_of::<Ccel>() {
             return None;
@@ -181,9 +185,8 @@ pub(crate) fn parse_events(event_log: &[u8]) -> Option<BTreeMap<EventName, CcEve
     for (event_header, event_data) in reader.cc_events {
         match event_header.event_type {
             EV_EFI_PLATFORM_FIRMWARE_BLOB2 => {
-                let desc_size = event_data[0] as usize;
-                let desc = event_data.get(1..1 + desc_size)?;
-                if desc == PLATFORM_FIRMWARE_BLOB2_PAYLOAD {
+                let desc_size = *event_data.get(0)? as usize;
+                if event_data.get(1..1 + desc_size)? == PLATFORM_FIRMWARE_BLOB2_PAYLOAD {
                     map.insert(EventName::MigTdCore, CcEvent::new(event_header, None));
                 }
             }

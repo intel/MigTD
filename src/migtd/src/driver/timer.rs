@@ -56,6 +56,15 @@ pub fn init_timer() {
 pub fn schedule_timeout(timeout: u32) -> Option<u64> {
     reset_timer();
     let cpuid = unsafe { core::arch::x86_64::__cpuid_count(0x15, 0) };
+    if cpuid.eax == 0 || cpuid.ebx == 0 || cpuid.ecx == 0 {
+        log::error!(
+            "schedule_timeout: CPUID.15H returned invalid values (eax={}, ebx={}, ecx={})\n",
+            cpuid.eax,
+            cpuid.ebx,
+            cpuid.ecx
+        );
+        return None;
+    }
     let tsc_frequency = cpuid.ecx * (cpuid.ebx / cpuid.eax);
     let deadline = (tsc_frequency / 1000) as u64 * timeout as u64;
 
