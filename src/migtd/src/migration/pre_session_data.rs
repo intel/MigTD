@@ -141,6 +141,10 @@ pub(super) async fn receive_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
             log::error!("receive_pre_session_data: Network error: {:?}\n", e);
             MigrationResult::NetworkError
         })?;
+        if n == 0 {
+            log::error!("receive_pre_session_data: EOF (peer closed connection)\n");
+            return Err(MigrationResult::NetworkError);
+        }
         recvd += n;
     }
     Ok(())

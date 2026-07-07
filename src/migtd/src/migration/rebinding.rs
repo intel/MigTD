@@ -560,6 +560,9 @@ async fn tls_session_read_exact(
             .read(&mut data[recvd..])
             .await
             .map_err(|_| MigrationResult::NetworkError)?;
+        if n == 0 {
+            return Err(MigrationResult::NetworkError);
+        }
         recvd += n;
     }
     Ok(())

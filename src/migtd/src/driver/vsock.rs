@@ -39,7 +39,8 @@ pub fn virtio_vsock_device_init() {
     pci::init_mmio();
 
     // Enumerate the virtio device
-    let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID).unwrap();
+    let (_b, dev, _f) = pci::find_device(VIRTIO_PCI_VENDOR_ID, VIRTIO_PCI_DEVICE_ID)
+        .expect("Failed to find virtio-vsock PCI device");
 
     let pci_device = pci::PciDevice::new(0, dev, 0);
 
