@@ -25,10 +25,12 @@ pub fn init_mmio() {
     // If an overlap is detected, panic with an error message indicating an invalid MMIO configuration.
     // This ensures that the MMIO space does not conflict with the RAM space.
     for region in memory_map.iter() {
-        if (region.addr < (MMIO32_START + MMIO32_SIZE) as u64
-            && region.addr + region.size > MMIO32_START as u64)
-            || (region.addr < MMIO64_START + MMIO64_SIZE
-                && region.addr + region.size > MMIO64_START)
+        let region_end = region.addr.saturating_add(region.size);
+        let mmio32_end = (MMIO32_START as u64).saturating_add(MMIO32_SIZE as u64);
+        let mmio64_end = MMIO64_START.saturating_add(MMIO64_SIZE);
+
+        if (region.addr < mmio32_end && region_end > MMIO32_START as u64)
+            || (region.addr < mmio64_end && region_end > MMIO64_START)
         {
             panic!("Invalid MMIO configuration: MMIO space overlaps with the RAM space.");
         }
@@ -112,6 +114,10 @@ pub fn alloc_mmio64(size: u64) -> Result<u64> {
 pub fn alloc_mmio64(size: u64) -> Result<u64> {
     let cur = *MMIO64.lock();
     let addr = align_up(cur, size).ok_or(PciError::InvalidParameter)? as u64;
+
+    if size > MMIO64_SIZE || addr > MMIO64_START + MMIO64_SIZE - size {
+        return Err(PciError::MmioOutofResource);
+    }
 
     *MMIO64.lock() = addr.checked_add(size).ok_or(PciError::InvalidParameter)?;
     Ok(addr)

@@ -454,10 +454,7 @@ impl PciDevice {
                     2 => {
                         self.bars[current_bar].bar_type = PciBarType::MemorySpace64;
 
-                        let mut size = self.get_bar_size(current_bar_offset)? as u64;
-                        if size == 0 {
-                            size = (self.get_bar_size(current_bar_offset + 4)? as u64) << 32;
-                        }
+                        let size = self.get_bar_size64(current_bar_offset)?;
 
                         let addr = if size > 0 {
                             let addr = alloc_mmio64(size)?;
@@ -515,34 +512,31 @@ impl PciDevice {
                 // bits 2-1 are the type 0 is 32-but, 2 is 64 bit
                 match bar >> 1 & 3 {
                     0 => {
-                        let size = self.read_u32(current_bar_offset)?;
+                        let size = self.get_bar_size(current_bar_offset)?;
 
-                        let addr = if size > 0 {
+                        if size > 0 {
                             let addr = alloc_mmio32(size)?;
                             self.set_bar_addr(current_bar_offset, addr)?;
-                            addr
+                            self.bars[current_bar].bar_type = PciBarType::MemorySpace32;
+                            self.bars[current_bar].address =
+                                u64::from(addr & PCI_MEM32_BASE_ADDRESS_MASK);
                         } else {
-                            bar
-                        };
-
-                        self.bars[current_bar].bar_type = PciBarType::MemorySpace32;
-                        self.bars[current_bar].address =
-                            u64::from(addr & PCI_MEM32_BASE_ADDRESS_MASK);
+                            self.bars[current_bar].bar_type = PciBarType::MemorySpace32;
+                            self.bars[current_bar].address = 0;
+                        }
                     }
                     2 => {
                         self.bars[current_bar].bar_type = PciBarType::MemorySpace64;
 
-                        let mut size = self.read_u64(current_bar_offset)?;
-                        let addr = if size > 0 {
+                        let size = self.get_bar_size64(current_bar_offset)?;
+                        if size > 0 {
                             let addr = alloc_mmio64(size)?;
                             self.set_bar_addr(current_bar_offset, addr as u32)?;
                             self.set_bar_addr(current_bar_offset + 4, (addr >> 32) as u32)?;
-                            addr
+                            self.bars[current_bar].address = addr & PCI_MEM64_BASE_ADDRESS_MASK;
                         } else {
-                            bar as u64
-                        };
-
-                        self.bars[current_bar].address = addr & PCI_MEM64_BASE_ADDRESS_MASK;
+                            self.bars[current_bar].address = 0;
+                        }
                         current_bar_offset += 4;
                     }
                     _ => return Err(PciError::InvalidBarType),
@@ -572,10 +566,39 @@ impl PciDevice {
         let size = self.read_u32(offset)?;
         self.write_u32(offset, restore)?;
 
-        Ok(if size == 0 {
-            size
+        let masked = size & 0xFFFF_FFF0;
+        Ok(if masked == 0 {
+            0
         } else {
-            !(size & 0xFFFF_FFF0) + 1
+            (!masked).wrapping_add(1)
+        })
+    }
+
+    /// Probe the size of a 64-bit memory BAR.
+    ///
+    /// A 64-bit BAR spans two consecutive 32-bit config registers (`offset` and
+    /// `offset + 4`). The size is determined by writing all ones to both halves,
+    /// reading them back, restoring the original values, and computing the size
+    /// from the combined 64-bit mask. The low 4 bits of the low register encode
+    /// the BAR type, not address bits, so they are masked off; the high register
+    /// is all address bits.
+    fn get_bar_size64(&self, offset: u8) -> Result<u64> {
+        let restore_low = self.read_u32(offset)?;
+        let restore_high = self.read_u32(offset + 4)?;
+
+        self.write_u32(offset, u32::MAX)?;
+        self.write_u32(offset + 4, u32::MAX)?;
+        let low = self.read_u32(offset)?;
+        let high = self.read_u32(offset + 4)?;
+
+        self.write_u32(offset, restore_low)?;
+        self.write_u32(offset + 4, restore_high)?;
+
+        let masked = ((high as u64) << 32) | u64::from(low & 0xFFFF_FFF0);
+        Ok(if masked == 0 {
+            0
+        } else {
+            (!masked).wrapping_add(1)
         })
     }
 
