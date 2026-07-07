@@ -401,12 +401,24 @@ pub fn entrylog(msg: &Vec<u8>, loglevel: Level, request_id: u64) {
                             Some(if v == u64::MAX { 1 } else { v + 1 })
                         })
                         .unwrap();
-                    let start_offset: u64 =
-                        u64::from_le_bytes(data_buffer[24..32].try_into().unwrap());
-                    let end_offset: u64 =
-                        u64::from_le_bytes(data_buffer[32..40].try_into().unwrap());
+                    // Copy offsets from shared memory via volatile read to prevent TOCTOU
+                    let start_offset: u64 = unsafe {
+                        core::ptr::read_volatile(data_buffer[24..32].as_ptr() as *const u64)
+                    };
+                    let end_offset: u64 = unsafe {
+                        core::ptr::read_volatile(data_buffer[32..40].as_ptr() as *const u64)
+                    };
                     let mut currentstartoffset: usize = start_offset as usize;
                     let mut currentendoffset: usize = end_offset as usize;
+                    // Clamp offsets to valid range to prevent VMM-controlled panic
+                    if currentstartoffset < LOGAREABUFFERHEADERSIZE
+                        || currentstartoffset >= PAGE_SIZE
+                    {
+                        currentstartoffset = LOGAREABUFFERHEADERSIZE;
+                    }
+                    if currentendoffset < LOGAREABUFFERHEADERSIZE || currentendoffset >= PAGE_SIZE {
+                        currentendoffset = LOGAREABUFFERHEADERSIZE;
+                    }
                     if currentendoffset + LOGENTRYHEADERSIZE + msg.len() > PAGE_SIZE
                         || currentendoffset < currentstartoffset
                     {

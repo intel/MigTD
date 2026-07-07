@@ -1123,7 +1123,17 @@ mod verify {
         }
         const PUBLIC_KEY_HASH_SIZE: usize = 48;
 
-        let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];
+        let report_data = verified_report
+            .get(520..520 + PUBLIC_KEY_HASH_SIZE)
+            .ok_or_else(|| {
+                log::error!(
+                    "verify_public_key: verified_report too short (len={})\n",
+                    verified_report.len()
+                );
+                CryptoError::TlsVerifyPeerCert(
+                    "verified_report too short for public key hash".to_string(),
+                )
+            })?;
         let digest = digest_sha384(public_key).map_err(|e| {
             log::error!("Failed to compute SHA384 digest: {:?}\n", e);
             e
