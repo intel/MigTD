@@ -31,6 +31,7 @@ use super::ecdsa::EcdsaPk;
 
 pub type TlsLibError = rustls::Error;
 const TLS_CUSTOM_CALLBACK_ERROR: &str = "TlsCustomCallbackError";
+pub const TLS_BUFFER_SIZE: usize = 16 * 0x1000;
 
 pub struct SecureChannel<T: AsyncRead + AsyncWrite + Unpin> {
     conn: TlsConnection<T>,
@@ -381,6 +382,7 @@ impl ClientCertVerifier for Verifier {
 }
 
 pub(crate) mod connection {
+    use super::TLS_BUFFER_SIZE;
     use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
     use async_io::{AsyncRead, AsyncWrite};
     use rust_std_stub::io;
@@ -396,7 +398,6 @@ pub(crate) mod connection {
     use zeroize::Zeroize;
 
     pub const PAGE_SIZE: usize = 0x1000;
-    pub const TLS_BUFFER_SIZE: usize = 16 * PAGE_SIZE;
     pub const APP_DATA_BUFFER_LIMIT: usize = PAGE_SIZE;
 
     #[derive(Debug)]
