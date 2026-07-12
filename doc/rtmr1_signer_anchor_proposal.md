@@ -14,7 +14,7 @@ RTMR1 Signer-Anchor Measurement & servTD Signer Revocation
 # Current design — RTMR1 measures the raw issuer cert chain
 
 Today RTMR1 is, after the firmware boot separator, a **runtime extend over the raw
-bytes of the policy/identity issuer certificate chain** (`policy_issuer_chain.pem`),
+bytes of the policy issuer certificate chain** (`policy_issuer_chain.pem`),
 loaded from the CFV slot `MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID`. The MigTD core measures
 it at boot into `mr_index = 2` → RTMR1 (`get_policy_issuer_chain_and_measure`,
 `src/migtd/src/bin/migtd/main.rs`; tag `TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN`). The
@@ -32,7 +32,8 @@ the TCB-mapping proposal uses as the `svnMappings` key and as the endorsed
 `init/cur_servtd_info_hash`.
 
 **What the chain is actually for.** The chain establishes the *trust anchor* for the
-policy/identity signer. At runtime, MigTD-to-MigTD peer validation
+policy signer (the signer whose chain RTMR1 measures; it signs `servtdTcbMapping`). At
+runtime, MigTD-to-MigTD peer validation
 (`validate_peer_cert_chain`, `src/crypto/src/lib.rs:290`) enforces only:
 
 1. the peer chain's internal signatures are valid,
@@ -142,7 +143,7 @@ the leaf Subject — and nothing else.
 | **CFV slot `MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID`** | full signing cert chain (unchanged) | full signing cert chain (**unchanged**) |
 | **What RTMR1 is sensitive to** | every byte of the chain (incl. leaf key) | root CA DER + leaf Subject DER only |
 
-The CFV still ships the **full** chain (peer validation and policy/identity signature
+The CFV still ships the **full** chain (peer validation and policy-signer signature
 verification still need it); only **what is hashed into RTMR1** changes — a small,
 stable anchor derived from the chain rather than the chain's raw bytes.
 
@@ -224,7 +225,7 @@ leaf Subject are unchanged.
 | **IGVM rebuild** | No | only the CFV leaf cert is swapped (`td-shim-enroll`); the measurement is unchanged |
 
 ¹ RTMR2 is the companion [TCB-mapping proposal](./tcb_mapping_design_proposal.md)'s domain;
-the anchor changes only RTMR1. RTMR2 redacts TCBMapping, so rotating the TCBMapping
+the anchor changes only RTMR1. RTMR2 redacts `servtdTcbMapping`, so rotating the policy
 signing leaf — the trust authority RTMR1 anchors — leaves RTMR2 (and the hash) unchanged.
 
 ## Regional leaf certificates
@@ -305,7 +306,7 @@ controls apply, each covering the two attacks differently:
   it does **not** stop a stolen intermediate (which mints a fresh, current-dated leaf) and is
   coarser, rejecting every certificate older than the floor.
 
-**Recommendation.** Prevent these compromises with strict key protection; optionally add a `notBefore` floor in policy if the leaf-key-leak case is the main concern. The long-term solution is the CRL as the in-guest control. A servTD signer CRL, similar to the Intel platform CRLs, is proposed below.
+**Recommendation.** Prevent these compromises with strict key protection. The long-term solution is the CRL as the in-guest control. A servTD signer CRL, similar to the Intel platform CRLs, is proposed below.
 
 # Revocation — the servTD signer CRL
 
@@ -318,7 +319,7 @@ enforce it fail-closed, reusing the existing platform-CRL machinery (`src/crypto
 |---------|-----------|
 | **Delivery** | `servtdCollateral.servtdCrl` — an optional PEM CRL co-located with the signers it revokes. Optional for backward compatibility: a policy without it skips the check. |
 | **Authentication** | The CRL signature is verified against the issuing CA in the RTMR1-anchored signer chain before its contents are trusted; only a CA (`cA=TRUE`) may issue it, so a peer cannot forge one without the shared root key. |
-| **Enforcement** | Every certificate in the TCB-mapping and identity signer chains is checked against the CRL; a revoked serial fails closed. |
+| **Enforcement** | Every certificate in the policy-signer and identity-signer chains is checked against the CRL; a revoked serial fails closed. |
 | **Anti-rollback** | A monotonic `servtd_crl_num` policy floor rejects a CRL older than required, mirroring `pck_crl_num` / `root_ca_crl_num`. |
 
 **Enforcement points.** The local policy's CRL is checked at boot (during policy verification)
@@ -334,7 +335,7 @@ the attestation service.
 
 **Interaction with measurement.** `servtdCrl` is inside the measured `policyData`, so updating it
 churns `tdinfo_hash` — revoking a signer becomes a policy re-release + re-endorsement. That is
-acceptable for a rare, deliberate event and matches the platform `root_ca_crl` / `pck_crl`. If
+acceptable for a rare, deliberate event and matches the platform `root_ca_crl` / `pck_crl` process. If
 in-place updates without re-endorsement are ever needed, `servtdCrl` could be redacted from the
 RTMR2 extend (like `servtdTcbMapping`), leaving `servtd_crl_num` as the sole anti-rollback control.
 
@@ -346,11 +347,6 @@ RTMR2 extend (like `servtdTcbMapping`), leaving `servtd_crl_num` as the sole ant
   checks) is standard PKI, tracked separately.
 - **CoRIM delivery.** When the servTD collateral is a signed CoRIM (COSE `x5chain`, RFC 9360),
   revocation should thread the CRL through the COSE flow or run CRL/OCSP on the `x5chain`.
-- **`cRLSign` KeyUsage.** Optionally require the CRL issuer to assert the `cRLSign` KeyUsage bit
-  in addition to `cA=TRUE`, as defence-in-depth against a mis-issued CA certificate.
-- **Multiple / per-issuer CRLs.** A single CRL authenticated against the signer chain's CA
-  suffices when the mapping and identity issuers share a root; distinct sub-CAs would need one
-  CRL per issuing CA or a small list.
 
 # Notes
 
