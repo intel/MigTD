@@ -541,7 +541,6 @@ fn handle_pre_mig() {
                             );
                             REQUESTS.lock().remove(&rebinding_info.mig_request_id);
                         }
-                        #[cfg(feature = "AzCVMEmu")]
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
                             log::trace!(migration_request_id = wfr_info.mig_request_id; "Processing GetTdReport request\n");
                             let status = get_tdreport(
