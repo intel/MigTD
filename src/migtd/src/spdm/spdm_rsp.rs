@@ -53,6 +53,7 @@ pub struct ResponderContextEx<'a> {
     pub responder_context: ResponderContext,
     pub peer_data: Vec<u8>,
     pub info: ResponderContextExInfo<'a>,
+    pub mig_info_exchanged: bool,
     #[cfg(feature = "policy_v2")]
     pub servtd_ext: Option<ServtdExt>,
 }
@@ -140,6 +141,7 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
         responder_context,
         peer_data: Vec::new(),
         info: ResponderContextExInfo::None,
+        mig_info_exchanged: false,
         #[cfg(feature = "policy_v2")]
         servtd_ext: None,
     };
@@ -807,6 +809,14 @@ pub fn handle_exchange_mig_info_req(
         return Err(SPDM_STATUS_INVALID_PARAMETER);
     };
 
+    if unsafe { upcast_mut(responder_context).mig_info_exchanged } {
+        error!("ExchangeMigrationInfoReq replay detected after MSK exchange!\n");
+        if let Some(session) = responder_context.common.get_session_via_id(session_id) {
+            session.teardown();
+        }
+        return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
+    }
+
     let session = responder_context
         .common
         .get_session_via_id(session_id)
@@ -895,6 +905,10 @@ pub fn handle_exchange_mig_info_req(
         &responder_app_context.migration_info,
         &remote_information.key,
     )?;
+
+    unsafe {
+        upcast_mut(responder_context).mig_info_exchanged = true;
+    }
 
     // Write APPROVED_SERVTD_EXT_HASH if SERVTD_EXT was received during attestation
     #[cfg(feature = "policy_v2")]
