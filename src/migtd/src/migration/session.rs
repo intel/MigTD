@@ -441,22 +441,7 @@ fn parse_request(
             }
         }
         DataStatusOperation::GetTDReport => {
-            #[cfg(feature = "AzCVMEmu")]
-            {
-                decode_and_dispatch!(ReportInfo, |info| WaitForRequestResponse::GetTdReport(info))
-            }
-            #[cfg(not(feature = "AzCVMEmu"))]
-            {
-                log_request_error!(
-                    request_id,
-                    "wait_for_request: GetTDReport is not supported in production builds\n"
-                );
-                reject_request(
-                    pending_error_report,
-                    request_id,
-                    MigrationResult::UnsupportedOperationError,
-                )
-            }
+            decode_and_dispatch!(ReportInfo, |info| WaitForRequestResponse::GetTdReport(info))
         }
         DataStatusOperation::EnableLogArea => {
             decode_and_dispatch!(EnableLogAreaInfo, |info| {
@@ -1563,22 +1548,14 @@ mod test {
             let buf = build_request_buffer(3, &payload);
             let mut pending = None;
             let result = parse_request(&buf, HDR_LEN, &mut pending);
-            #[cfg(feature = "AzCVMEmu")]
-            {
-                match result {
-                    Poll::Ready(Ok(WaitForRequestResponse::GetTdReport(info))) => {
-                        assert_eq!(info.mig_request_id, request_id);
-                        assert_eq!(info.reportdata[0], 0xCC);
-                    }
-                    _ => panic!("Expected GetTdReport, got unexpected variant"),
+            match result {
+                Poll::Ready(Ok(WaitForRequestResponse::GetTdReport(info))) => {
+                    assert_eq!(info.mig_request_id, request_id);
+                    assert_eq!(info.reportdata[0], 0xCC);
                 }
-                cleanup_request(request_id);
+                _ => panic!("Expected GetTdReport, got unexpected variant"),
             }
-            #[cfg(not(feature = "AzCVMEmu"))]
-            assert!(matches!(
-                result,
-                Poll::Ready(Err(MigrationResult::UnsupportedOperationError))
-            ));
+            cleanup_request(request_id);
         }
 
         #[test]
@@ -1588,43 +1565,25 @@ mod test {
             let buf = build_request_buffer(3, &payload);
             let mut pending = None;
             let result = parse_request(&buf, HDR_LEN, &mut pending);
-            #[cfg(feature = "AzCVMEmu")]
-            {
-                match result {
-                    Poll::Ready(Ok(WaitForRequestResponse::GetTdReport(info))) => {
-                        assert_eq!(info.mig_request_id, request_id);
-                        assert_eq!(info.reportdata, [0u8; 64]);
-                    }
-                    _ => {
-                        panic!("Expected GetTdReport with zero reportdata, got unexpected variant")
-                    }
+            match result {
+                Poll::Ready(Ok(WaitForRequestResponse::GetTdReport(info))) => {
+                    assert_eq!(info.mig_request_id, request_id);
+                    assert_eq!(info.reportdata, [0u8; 64]);
                 }
-                cleanup_request(request_id);
+                _ => panic!("Expected GetTdReport with zero reportdata, got unexpected variant"),
             }
-            #[cfg(not(feature = "AzCVMEmu"))]
-            assert!(matches!(
-                result,
-                Poll::Ready(Err(MigrationResult::UnsupportedOperationError))
-            ));
+            cleanup_request(request_id);
         }
 
         #[test]
         fn test_parse_get_td_report_wrong_size_rejected() {
-            // 16 bytes is neither 8 nor 72. Under AzCVMEmu the payload is decoded
-            // and rejected for its size; production builds reject GetTDReport
-            // outright as unsupported before decoding.
+            // 16 bytes is neither 8 nor 72 → read_from_bytes rejects
             let buf = build_request_buffer(3, &[0u8; 16]);
             let mut pending = None;
             let result = parse_request(&buf, HDR_LEN, &mut pending);
-            #[cfg(feature = "AzCVMEmu")]
             assert!(matches!(
                 result,
                 Poll::Ready(Err(MigrationResult::InvalidParameter))
-            ));
-            #[cfg(not(feature = "AzCVMEmu"))]
-            assert!(matches!(
-                result,
-                Poll::Ready(Err(MigrationResult::UnsupportedOperationError))
             ));
         }
 
