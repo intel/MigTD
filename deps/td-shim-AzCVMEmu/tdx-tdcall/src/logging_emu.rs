@@ -153,6 +153,11 @@ impl LogAreaManager {
         buffer_addr: usize,
         last_read_offset: usize,
     ) -> usize {
+        if buffer_addr == 0 {
+            log::warn!("VMM: vCPU {} has null log area address, skipping", vcpu_idx);
+            return last_read_offset;
+        }
+
         let buffer = unsafe { core::slice::from_raw_parts(buffer_addr as *const u8, PAGE_SIZE) };
 
         // Verify signature
