@@ -64,6 +64,8 @@ pub struct VirtioVsock {
     /// DMA record table
     dma_record: BTreeMap<u64, DmaRecord>,
     rx_buf_num: usize,
+    // Ring pages base; allocated via shared-page allocator, freed in `Drop`
+    queue_dma_pages: u64,
 }
 
 unsafe impl Send for VirtioVsock {}
@@ -112,6 +114,7 @@ impl VirtioVsock {
             VirtQueueLayout::new(QUEUE_SIZE as u16).ok_or(VirtioError::CreateVirtioQueue)?;
         // We have three queue for vsock (rx, tx and event)
         let queue_size = queue_layout.size() << 2;
+        // Ring must be host-visible, so use the shared-page allocator directly
         let queue_dma_pages = unsafe { alloc_shared_pages(queue_size / PAGE_SIZE) }
             .ok_or(VsockTransportError::DmaAllocation)? as u64;
         dma_record.insert(queue_dma_pages, DmaRecord::new(queue_dma_pages, queue_size));
@@ -146,6 +149,7 @@ impl VirtioVsock {
             event: queue_event,
             dma_record,
             rx_buf_num: 0,
+            queue_dma_pages,
         })
     }
 
@@ -454,8 +458,16 @@ pub fn vsock_transport_can_recv() -> Result<bool> {
 
 impl Drop for VirtioVsock {
     fn drop(&mut self) {
-        for record in &self.dma_record {
-            unsafe { free_shared_pages(record.1.dma_addr as usize, record.1.dma_size / PAGE_SIZE) }
+        // Free each record with the allocator that produced it (CWE-590)
+        for record in self.dma_record.values() {
+            if record.dma_addr == self.queue_dma_pages {
+                // Ring pages: shared-page allocator
+                unsafe { free_shared_pages(record.dma_addr as usize, record.dma_size / PAGE_SIZE) };
+            } else {
+                // Packet buffers: injected DMA allocator
+                self.dma_allocator
+                    .free_pages(record.dma_addr, record.dma_size / PAGE_SIZE);
+            }
         }
     }
 }
