@@ -13,6 +13,12 @@ use crate::{Result, VirtioError, VirtioTransport, PAGE_SIZE};
 
 const MAX_QUEUE_SIZE: usize = 32;
 
+// The `in_use` / `is_head` bitmaps are `u32`, so they can only track 32 slots.
+const _: () = assert!(
+    MAX_QUEUE_SIZE <= 32,
+    "in_use/is_head bitmaps are u32; widen them if MAX_QUEUE_SIZE grows"
+);
+
 #[derive(Debug)]
 pub struct VirtqueueBuf {
     pub addr: u64,
@@ -56,6 +62,10 @@ pub struct VirtQueue {
     /// addr/len/flags/next from this private shadow instead, which neutralizes
     /// host forgery of desc.addr/len/next.
     desc_shadow: [DescriptorShadow; MAX_QUEUE_SIZE],
+    /// Bitmap of outstanding descriptor slots.
+    in_use: u32,
+    /// Bitmap of slots that are the head of an outstanding chain.
+    is_head: u32,
 }
 
 impl VirtQueue {
@@ -108,6 +118,8 @@ impl VirtQueue {
             avail_idx: 0,
             last_used_idx: 0,
             desc_shadow,
+            in_use: 0,
+            is_head: 0,
         })
     }
 
@@ -148,6 +160,9 @@ impl VirtQueue {
             .write(flags);
 
         self.num_used += (g2h.len() + h2g.len()) as u16;
+
+        // Record the chain head; only a head may later be completed.
+        self.is_head |= 1u32 << head;
 
         let avail_slot = self.avail_idx & (self.queue_size - 1);
         self.avail
@@ -198,6 +213,9 @@ impl VirtQueue {
         let last = self.free_head;
         self.free_head = shadow.next;
 
+        // Mark the slot as outstanding.
+        self.in_use |= 1u32 << index;
+
         Ok(last)
     }
 
@@ -209,16 +227,17 @@ impl VirtQueue {
         mut head: u16,
         g2h: &mut Vec<VirtqueueBuf>,
         h2g: &mut Vec<VirtqueueBuf>,
-    ) -> Result<()> {
+    ) -> Result<u32> {
         let origin_free_head = self.free_head;
         self.free_head = head;
+        let mut recorded_len: u32 = 0;
 
         while self.num_used > 0 {
             let index = head as usize;
-            // `head` is seeded from the host-controlled used-ring id, so it must
-            // be range-checked before indexing the private shadow.
-            if index >= self.queue_size as usize {
-                return Err(VirtioError::InvalidDescriptorIndex);
+            // `head` is seeded from the host-controlled used-ring id, so only
+            // reap slots that are in range and currently outstanding.
+            if index >= self.queue_size as usize || (self.in_use & (1u32 << index)) == 0 {
+                return Err(VirtioError::InvalidDescriptor);
             }
 
             // Read descriptor metadata from the private shadow, NOT from the
@@ -226,15 +245,17 @@ impl VirtQueue {
             // influence which buffer is recycled or freed.
             let shadow = self.desc_shadow[index];
             let flags = shadow.flags;
-            self.num_used -= 1;
 
-            let addr = shadow.addr;
-            let len = shadow.len;
+            // Consume the slot so it cannot be recycled twice.
+            self.in_use &= !(1u32 << index);
+            self.is_head &= !(1u32 << index);
+            self.num_used -= 1;
+            recorded_len = recorded_len.saturating_add(shadow.len);
 
             if flags.contains(DescFlags::WRITE) {
-                h2g.push(VirtqueueBuf::new(addr, len));
+                h2g.push(VirtqueueBuf::new(shadow.addr, shadow.len));
             } else {
-                g2h.push(VirtqueueBuf::new(addr, len));
+                g2h.push(VirtqueueBuf::new(shadow.addr, shadow.len));
             }
 
             if flags.contains(DescFlags::NEXT) {
@@ -253,7 +274,7 @@ impl VirtQueue {
             }
         }
 
-        Ok(())
+        Ok(recorded_len)
     }
 
     /// Get a token from device used buffers, return (token, len).
@@ -279,10 +300,20 @@ impl VirtQueue {
         let index = last_used_slot.id.read() as u16;
         let len = last_used_slot.len.read();
 
-        self.recycle_descriptors(index, g2h, h2g)?;
+        // Untrusted device input: only accept an in-range, outstanding chain
+        // head before touching any descriptor.
+        if index as usize >= self.queue_size as usize
+            || (self.in_use & (1u32 << index)) == 0
+            || (self.is_head & (1u32 << index)) == 0
+        {
+            return Err(VirtioError::InvalidDescriptor);
+        }
+
+        let recorded_len = self.recycle_descriptors(index, g2h, h2g)?;
         self.last_used_idx = self.last_used_idx.wrapping_add(1);
 
-        Ok(len)
+        // Clamp the device-reported len to the driver-recorded buffer length.
+        Ok(len.min(recorded_len))
     }
 }
 
@@ -411,5 +442,265 @@ mod test {
         assert_eq!(size_of::<AvailRing>(), 70);
         assert_eq!(size_of::<UsedRing>(), 264);
         assert_eq!(size_of::<UsedElem>(), 8);
+    }
+
+    /// Minimal transport stub for exercising `VirtQueue` on the host. It records
+    /// nothing and simply advertises a maximum queue size; `VirtQueue::new` only
+    /// calls the address/size setters and `get_queue_max_size`.
+    struct MockTransport {
+        max_queue: u16,
+    }
+
+    impl VirtioTransport for MockTransport {
+        fn init(&mut self, _device_type: u32) -> Result<()> {
+            Ok(())
+        }
+        fn get_status(&self) -> Result<u8> {
+            Ok(0)
+        }
+        fn set_status(&self, _status: u8) -> Result<()> {
+            Ok(())
+        }
+        fn add_status(&self, _status: u8) -> Result<()> {
+            Ok(())
+        }
+        fn reset(&self) -> Result<()> {
+            Ok(())
+        }
+        fn get_features(&self) -> Result<u64> {
+            Ok(0)
+        }
+        fn set_features(&self, _features: u64) -> Result<()> {
+            Ok(())
+        }
+        fn set_queue(&self, _queue: u16) -> Result<()> {
+            Ok(())
+        }
+        fn get_queue_max_size(&self) -> Result<u16> {
+            Ok(self.max_queue)
+        }
+        fn set_queue_size(&self, _queue_size: u16) -> Result<()> {
+            Ok(())
+        }
+        fn set_descriptors_address(&self, _address: u64) -> Result<()> {
+            Ok(())
+        }
+        fn set_avail_ring(&self, _address: u64) -> Result<()> {
+            Ok(())
+        }
+        fn set_used_ring(&self, _address: u64) -> Result<()> {
+            Ok(())
+        }
+        fn set_queue_enable(&self) -> Result<()> {
+            Ok(())
+        }
+        fn set_interrupt_vector(&mut self, _vector: u8) -> Result<u16> {
+            Ok(0)
+        }
+        fn set_config_notify(&mut self, _index: u16) -> Result<()> {
+            Ok(())
+        }
+        fn set_queue_notify(&mut self, _index: u16) -> Result<()> {
+            Ok(())
+        }
+        fn notify_queue(&self, _queue: u16) -> Result<()> {
+            Ok(())
+        }
+        fn read_device_config(&self, _offset: u64) -> Result<u32> {
+            Ok(0)
+        }
+    }
+
+    /// Allocate a page-aligned, zeroed region to act as the shared DMA backing
+    /// store. Intentionally leaked: the returned `VirtQueue` holds `'static`
+    /// references into it and the memory must outlive the test.
+    fn alloc_dma(size: usize) -> u64 {
+        use std::alloc::{alloc_zeroed, Layout};
+        let layout = Layout::from_size_align(size, PAGE_SIZE).unwrap();
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert!(!ptr.is_null());
+        ptr as u64
+    }
+
+    fn make_queue(queue_size: u16) -> VirtQueue {
+        let transport = MockTransport {
+            max_queue: MAX_QUEUE_SIZE as u16,
+        };
+        let layout = VirtQueueLayout::new(queue_size).unwrap();
+        let dma = alloc_dma(layout.size());
+        VirtQueue::new(&transport, 0, dma, queue_size).unwrap()
+    }
+
+    /// Simulate the untrusted device posting a completion into used ring slot
+    /// `used_slot` (chain head `id`, reported byte count `len`) and bumping the
+    /// used index so `can_pop` observes it.
+    fn device_complete(vq: &mut VirtQueue, used_slot: usize, id: u32, len: u32) {
+        vq.used.ring[used_slot].id.write(id);
+        vq.used.ring[used_slot].len.write(len);
+        let idx = vq.used.idx.read();
+        vq.used.idx.write(idx.wrapping_add(1));
+    }
+
+    #[test]
+    fn normal_completion_returns_recorded_buffers() {
+        let mut vq = make_queue(8);
+        let head = vq.add(&[], &[VirtqueueBuf::new(0x1000, 64)]).unwrap();
+        assert_eq!(vq.in_use & (1u32 << head), 1u32 << head);
+        assert_eq!(vq.num_used, 1);
+
+        device_complete(&mut vq, 0, head as u32, 64);
+
+        let mut g2h = Vec::new();
+        let mut h2g = Vec::new();
+        let len = vq.pop_used(&mut g2h, &mut h2g).unwrap();
+
+        assert_eq!(len, 64);
+        assert!(g2h.is_empty());
+        assert_eq!(h2g.len(), 1);
+        assert_eq!(h2g[0].addr, 0x1000);
+        assert_eq!(h2g[0].len, 64);
+        assert_eq!(vq.num_used, 0);
+        assert_eq!(vq.in_use & (1u32 << head), 0);
+    }
+
+    #[test]
+    fn rejects_out_of_range_id() {
+        let mut vq = make_queue(8);
+        let _head = vq.add(&[], &[VirtqueueBuf::new(0x1000, 64)]).unwrap();
+
+        // id 40 is outside the 8-entry table.
+        device_complete(&mut vq, 0, 40, 64);
+
+        let mut g2h = Vec::new();
+        let mut h2g = Vec::new();
+        assert!(matches!(
+            vq.pop_used(&mut g2h, &mut h2g),
+            Err(VirtioError::InvalidDescriptor)
+        ));
+    }
+
+    #[test]
+    fn rejects_forged_not_in_use_id() {
+        let mut vq = make_queue(8);
+        let head = vq.add(&[], &[VirtqueueBuf::new(0x1000, 64)]).unwrap();
+
+        // In range, but never handed to the device.
+        let forged = (head + 5) % 8;
+        assert_ne!(forged, head);
+        device_complete(&mut vq, 0, forged as u32, 64);
+
+        let mut g2h = Vec::new();
+        let mut h2g = Vec::new();
+        assert!(matches!(
+            vq.pop_used(&mut g2h, &mut h2g),
+            Err(VirtioError::InvalidDescriptor)
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_completion() {
+        let mut vq = make_queue(8);
+        let head = vq.add(&[], &[VirtqueueBuf::new(0x1000, 64)]).unwrap();
+
+        device_complete(&mut vq, 0, head as u32, 64);
+        let mut g2h = Vec::new();
+        let mut h2g = Vec::new();
+        vq.pop_used(&mut g2h, &mut h2g).unwrap();
+
+        // Device replays the same head in the next used slot (double-free attempt).
+        device_complete(&mut vq, 1, head as u32, 64);
+        let mut g2h2 = Vec::new();
+        let mut h2g2 = Vec::new();
+        assert!(matches!(
+            vq.pop_used(&mut g2h2, &mut h2g2),
+            Err(VirtioError::InvalidDescriptor)
+        ));
+    }
+
+    #[test]
+    fn ignores_corrupted_shared_desc_uses_shadow() {
+        let mut vq = make_queue(8);
+        // Two-descriptor chain: readable (g2h) followed by writable (h2g).
+        let head = vq
+            .add(
+                &[VirtqueueBuf::new(0x2000, 32)],
+                &[VirtqueueBuf::new(0x3000, 48)],
+            )
+            .unwrap();
+        assert_eq!(vq.num_used, 2);
+
+        // Attacker rewrites the entire shared descriptor table: forge a `next`
+        // cycle and garbage addr/len/flags. The reap path must ignore all of it.
+        for i in 0..8usize {
+            vq.desc[i].addr.write(0xdead_beef);
+            vq.desc[i].len.write(0xffff_ffff);
+            vq.desc[i].flags.write(DescFlags::WRITE | DescFlags::NEXT);
+            vq.desc[i].next.write(head); // self/cross cycle
+        }
+
+        device_complete(&mut vq, 0, head as u32, 32);
+
+        let mut g2h = Vec::new();
+        let mut h2g = Vec::new();
+        let len = vq.pop_used(&mut g2h, &mut h2g).unwrap();
+
+        // Values come from the private shadow, not the forged shared table.
+        assert_eq!(g2h.len(), 1);
+        assert_eq!(g2h[0].addr, 0x2000);
+        assert_eq!(g2h[0].len, 32);
+        assert_eq!(h2g.len(), 1);
+        assert_eq!(h2g[0].addr, 0x3000);
+        assert_eq!(h2g[0].len, 48);
+        // Reported len clamped to recorded chain length (32 + 48).
+        assert_eq!(len, 32);
+        assert_eq!(vq.num_used, 0);
+        assert_eq!(vq.in_use, 0);
+    }
+
+    #[test]
+    fn clamps_oversized_device_len() {
+        let mut vq = make_queue(8);
+        let head = vq.add(&[], &[VirtqueueBuf::new(0x1000, 64)]).unwrap();
+
+        // Device lies about how many bytes it wrote.
+        device_complete(&mut vq, 0, head as u32, u32::MAX);
+
+        let mut g2h = Vec::new();
+        let mut h2g = Vec::new();
+        let len = vq.pop_used(&mut g2h, &mut h2g).unwrap();
+
+        // Clamped to the buffer length the driver recorded.
+        assert_eq!(len, 64);
+    }
+
+    #[test]
+    fn rejects_mid_chain_completion() {
+        let mut vq = make_queue(8);
+        // Two-descriptor chain: head (g2h) -> tail (h2g).
+        let head = vq
+            .add(
+                &[VirtqueueBuf::new(0x2000, 32)],
+                &[VirtqueueBuf::new(0x3000, 48)],
+            )
+            .unwrap();
+
+        // The tail slot is in_use but is NOT a chain head.
+        let tail = vq.desc_shadow[head as usize].next;
+        assert_ne!(tail, head);
+        assert_eq!(vq.in_use & (1u32 << tail), 1u32 << tail);
+
+        // Device completes the mid/tail descriptor instead of the head.
+        device_complete(&mut vq, 0, tail as u32, 48);
+
+        let mut g2h = Vec::new();
+        let mut h2g = Vec::new();
+        assert!(matches!(
+            vq.pop_used(&mut g2h, &mut h2g),
+            Err(VirtioError::InvalidDescriptor)
+        ));
+
+        // Nothing was reaped; the real chain is still intact.
+        assert_eq!(vq.num_used, 2);
+        assert_eq!(vq.in_use & (1u32 << head), 1u32 << head);
     }
 }
