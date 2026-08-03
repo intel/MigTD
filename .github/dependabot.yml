@@ -16,6 +16,12 @@ updates:
     schedule:
       # Check for updates to GitHub Actions every week
       interval: "weekly"
+    groups:
+      # codeql-action's init/autobuild/analyze steps must stay on the same
+      # version; group them so they are always bumped together in one PR.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   - package-ecosystem: docker
     directory: /container
