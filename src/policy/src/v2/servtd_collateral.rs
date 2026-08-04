@@ -233,6 +233,32 @@ impl TdTcbMapping {
         None
     }
 
+    /// `migtdengine check`: the peer engine must not be older than the engine
+    /// recorded at initial binding (`enginesvnsrc >= enginesvninit`).
+    ///
+    /// `enginedatesrc >= enginedateinit` is not compared separately: the engine
+    /// date is looked up from this SVN in `servtd_identity`, so it follows only
+    /// while `tcbLevels` are non-decreasing in `isvsvn` — Intel's Enclave
+    /// Identity convention, which nothing here validates.
+    pub fn check_engine_not_older(
+        &self,
+        peer: &Measurements,
+        init: &Measurements,
+    ) -> Result<(), PolicyError> {
+        let peer_svn = self
+            .get_engine_svn_by_measurements(peer)
+            .ok_or(PolicyError::SvnMismatch)?;
+        let init_svn = self
+            .get_engine_svn_by_measurements(init)
+            .ok_or(PolicyError::SvnMismatch)?;
+
+        if peer_svn < init_svn {
+            return Err(PolicyError::SvnMismatch);
+        }
+
+        Ok(())
+    }
+
     #[inline]
     fn compare_measurements(pattern: &Measurements, target: &Measurements) -> bool {
         // Convert both to uppercase for case-insensitive comparison
@@ -309,6 +335,46 @@ mod test {
         assert!(engine
             .get_engine_svn_by_measurements(&td_measurements)
             .is_none());
+    }
+
+    #[test]
+    fn test_check_engine_not_older() {
+        let engine =
+            |tag: u8| Measurements::new_from_bytes(&[tag; 48], &[tag; 48], &[tag; 48], None, None);
+        let mapping = TdTcbMapping {
+            id: String::from("TEST"),
+            version: 1,
+            issue_date: String::from("2025-01-01T00:00:00Z"),
+            next_update: String::from("2026-01-01T00:00:00Z"),
+            mr_signer: String::from("00"),
+            isv_prod_id: 1,
+            svn_mappings: [(0xa1u8, 1u16), (0xb2, 2)]
+                .iter()
+                .map(|(tag, isvsvn)| SvnMapping {
+                    td_measurements: engine(*tag),
+                    isvsvn: *isvsvn,
+                })
+                .collect(),
+        };
+
+        // Downgrade: peer engine older than the engine bound at init.
+        assert!(mapping
+            .check_engine_not_older(&engine(0xa1), &engine(0xb2))
+            .is_err());
+        assert!(mapping
+            .check_engine_not_older(&engine(0xb2), &engine(0xa1))
+            .is_ok());
+        assert!(mapping
+            .check_engine_not_older(&engine(0xa1), &engine(0xa1))
+            .is_ok());
+
+        // Either side unresolvable on the local mapping is a rejection.
+        assert!(mapping
+            .check_engine_not_older(&engine(0xcc), &engine(0xa1))
+            .is_err());
+        assert!(mapping
+            .check_engine_not_older(&engine(0xa1), &engine(0xcc))
+            .is_err());
     }
 
     #[test]
