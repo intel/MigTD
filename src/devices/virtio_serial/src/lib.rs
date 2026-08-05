@@ -205,6 +205,13 @@ pub struct VirtioSerial {
     /// DMA allocation table
     dma_allocation: BTreeMap<u64, DmaMemoryRegion>,
 
+    /// Base address of the shared pages backing all virtqueue rings. A malicious
+    /// host can forge `desc.addr` in the shared descriptor table to equal this
+    /// base; `free_dma_memory` must refuse it, otherwise the rings are returned
+    /// to the shared pool while the `VirtQueue` structs still hold
+    /// `&'static mut` references into them (use-after-free / aliasing).
+    queue_dma_pages: u64,
+
     // virtio queues
     queues: Vec<RefCell<VirtQueue>>,
     // Virtio
@@ -234,6 +241,7 @@ impl VirtioSerial {
             queues: Vec::new(),
             receive_queues_prefill: Vec::new(),
             dma_allocation: BTreeMap::new(),
+            queue_dma_pages: 0,
             max_nr_ports: 0,
             connected_ports: BTreeSet::new(),
             allocated_ports: BTreeSet::new(),
@@ -326,6 +334,7 @@ impl VirtioSerial {
         let queue_dma_pages = self
             .allocate_dma_memory(queue_size)
             .ok_or(VirtioSerialError::OutOfResource)?;
+        self.queue_dma_pages = queue_dma_pages.dma_addr;
 
         // program queue receive(idx 0)
         let mut queue_address = queue_dma_pages.dma_addr;
@@ -850,6 +859,15 @@ impl VirtioSerial {
     }
 
     fn free_dma_memory(&mut self, dma_addr: u64) -> Option<u64> {
+        // Never free the virtqueue ring pages at runtime. A malicious host can
+        // forge `desc.addr` in the shared descriptor table to equal the ring
+        // base; freeing it here would leave the live `VirtQueue` references
+        // dangling (use-after-free) and hand the ring pages back out as data
+        // buffers.
+        if dma_addr == self.queue_dma_pages {
+            return None;
+        }
+
         let record = self.dma_allocation.get(&dma_addr)?;
 
         self.dma_allocator
