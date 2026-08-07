@@ -44,8 +44,8 @@ fi
 ## Remove unwanted objects from servtd_attest archive. This deletes all objects
 ## found in libsgx_tsgxssl_crypto.a from libservtd_attest.a. It also deletes
 ## most objects found in libtlibc.a from libservtd_attest.a (a few objects are
-## spared, since tlibc introduces non-standard symbols, such as spinlocks and
-## various non-standard string functions).
+## spared, since tlibc introduces non-standard symbols, such as spinlocks,
+## heap initialization, and various non-standard string functions).
 ##
 ##==============================================================================
 
@@ -57,15 +57,15 @@ do
         echo "$0: failed to copy ${i} to ${lib}"
         exit 1;
     fi
-    ar d ${lib} $(ar t ${tlibc_lib} | grep -v spinlock.o | grep -v memset | grep -v memcpy )
+    ar d ${lib} $(ar t ${tlibc_lib} | grep -v spinlock.o | grep -v sbrk.o | grep -v memset | grep -v memcpy )
     ar d ${lib} $(ar t ${sgxssl_lib})
     echo "Created ${lib}"
 done
 
 ##==============================================================================
 ##
-## Add object with extra code to archive. The errno and heap related objects
-## were removed above so definitions are added here to compensate.
+## Add object with extra code to archive. The errno-related object was removed
+## above, so its definition is added here to compensate.
 ##
 ##==============================================================================
 
@@ -74,16 +74,11 @@ src=${dir}/libservtd_attest_extras.c
 obj=${dir}/libservtd_attest_extras.o
 
 cat > ${src} <<END
-#include <stddef.h>
-
 int* __errno()
 {
     extern int* __errno_location();
     return __errno_location();
 }
-
-void* heap_base;
-size_t heap_size;
 END
 
 gcc -c ${src} -o ${obj}
