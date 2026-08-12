@@ -259,8 +259,6 @@ pub enum WaitForRequestResponse {
     #[cfg(feature = "AzCVMEmu")]
     GetTdReport(ReportInfo),
     EnableLogArea(EnableLogAreaInfo),
-    #[cfg(feature = "policy_v2")]
-    GetMigtdData(MigtdDataInfo),
 }
 
 pub struct MigrationInformation {
