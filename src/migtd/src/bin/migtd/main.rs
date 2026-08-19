@@ -543,14 +543,10 @@ fn handle_pre_mig() {
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
                             log::trace!(migration_request_id = wfr_info.mig_request_id; "Processing GetTdReport request\n");
-                            let status = get_tdreport(
-                                &wfr_info.reportdata,
-                                &mut data,
-                                wfr_info.mig_request_id,
-                            )
-                            .await
-                            .map(|_| MigrationResult::Success)
-                            .unwrap_or_else(|e| e);
+                            let status = get_tdreport(&mut data, wfr_info.mig_request_id)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
                             if status == MigrationResult::Success {
                                 log::trace!(migration_request_id = wfr_info.mig_request_id; "Successfully completed get TDREPORT\n");
                             } else {

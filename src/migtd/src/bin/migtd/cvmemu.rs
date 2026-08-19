@@ -15,7 +15,7 @@ use migtd;
 use migtd::driver::vmcall_raw::panic_with_guest_crash_reg_report;
 use migtd::migration::event;
 use migtd::migration::logging::{create_logarea, enable_logarea, init_vmm_logger};
-use migtd::migration::session::{exchange_msk, report_status};
+use migtd::migration::session::{exchange_msk, get_tdreport_reportdata, report_status};
 use migtd::migration::MigrationResult;
 
 use tdx_tdcall_emu::tdreport_emu::tdcall_report_emulated;
@@ -559,8 +559,9 @@ fn handle_pre_mig_emu() -> i32 {
                             // Generate TD report using the reportdata
                             log::debug!(migration_request_id = report_info.mig_request_id; "Generating TD report with vTPM interface\n");
 
+                            let reportdata = get_tdreport_reportdata();
                             let (status_code_u8, report_data) =
-                                match tdcall_report_emulated(&report_info.reportdata) {
+                                match tdcall_report_emulated(&reportdata) {
                                     Ok(td_report) => {
                                         log::debug!(migration_request_id = report_info.mig_request_id; "TD report generated successfully\n");
 
