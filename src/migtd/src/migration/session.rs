@@ -41,6 +41,8 @@ use crate::spdm;
 
 #[cfg(feature = "vmcall-raw")]
 const PAGE_SIZE: usize = 0x1_000;
+#[cfg(feature = "vmcall-raw")]
+const HOST_REQUESTED_REPORTDATA: &[u8; 24] = b"HostRequestedMigTDReport";
 const TDCALL_STATUS_SUCCESS: u64 = 0;
 
 const TDCS_FIELD_MIG_DEC_KEY: u64 = 0x9810_0003_0000_0010;
@@ -60,6 +62,15 @@ struct TdxReportBuf(TdxReport);
 #[cfg(feature = "vmcall-raw")]
 #[repr(C, align(64))]
 struct AdditionalDataBuf([u8; TD_REPORT_ADDITIONAL_DATA_SIZE]);
+
+/// Keep VMM-requested reports outside the REPORTDATA namespaces used by
+/// MigTD-generated RA-TLS and SPDM authentication reports.
+#[cfg(feature = "vmcall-raw")]
+pub fn get_tdreport_reportdata() -> [u8; TD_REPORT_ADDITIONAL_DATA_SIZE] {
+    let mut reportdata = [0u8; TD_REPORT_ADDITIONAL_DATA_SIZE];
+    reportdata[..HOST_REQUESTED_REPORTDATA.len()].copy_from_slice(HOST_REQUESTED_REPORTDATA);
+    reportdata
+}
 
 #[cfg(feature = "vmcall-raw")]
 const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
@@ -648,14 +659,10 @@ pub fn shutdown() -> Result<()> {
 }
 
 #[cfg(feature = "vmcall-raw")]
-pub async fn get_tdreport(
-    additional_data: &[u8; TD_REPORT_ADDITIONAL_DATA_SIZE],
-    data: &mut Vec<u8>,
-    request_id: u64,
-) -> Result<()> {
+pub async fn get_tdreport(data: &mut Vec<u8>, request_id: u64) -> Result<()> {
     const TDVMCALL_TDREPORT: u64 = 0x00004;
     let mut report_buf = TdxReportBuf(TdxReport::default());
-    let additional_data_buf = AdditionalDataBuf(*additional_data);
+    let additional_data_buf = AdditionalDataBuf(get_tdreport_reportdata());
     let tdreportsize = size_of::<TdxReport>();
 
     let mut args = TdcallArgs {
@@ -1308,6 +1315,8 @@ mod test {
     use crate::migration::{session::cal_mig_version, MigrationResult};
 
     use super::ExchangeInformation;
+    #[cfg(feature = "vmcall-raw")]
+    use super::{get_tdreport_reportdata, HOST_REQUESTED_REPORTDATA};
 
     #[test]
     fn test_exchange_information_validate_rejects_non_zero_reserved() {
@@ -1404,6 +1413,20 @@ mod test {
     }
 
     // ---- parse_request-level tests: simulate host data buffers ----
+
+    #[cfg(feature = "vmcall-raw")]
+    #[test]
+    fn get_tdreport_uses_fixed_reportdata() {
+        let reportdata = get_tdreport_reportdata();
+
+        assert_eq!(
+            &reportdata[..HOST_REQUESTED_REPORTDATA.len()],
+            HOST_REQUESTED_REPORTDATA
+        );
+        assert!(reportdata[HOST_REQUESTED_REPORTDATA.len()..]
+            .iter()
+            .all(|byte| *byte == 0));
+    }
 
     #[cfg(feature = "vmcall-raw")]
     mod parse_request_tests {
