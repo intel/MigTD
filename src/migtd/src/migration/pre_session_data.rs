@@ -141,6 +141,10 @@ pub(super) async fn receive_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
             log::error!("receive_pre_session_data: Network error: {:?}\n", e);
             MigrationResult::NetworkError
         })?;
+        if n == 0 {
+            log::error!("receive_pre_session_data: EOF (peer closed connection)\n");
+            return Err(MigrationResult::NetworkError);
+        }
         recvd += n;
     }
     Ok(())
@@ -194,6 +198,15 @@ pub(super) async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + 
     }
 
     let pre_session_data_payload_size = header.length as usize;
+    const MAX_PRE_SESSION_PAYLOAD: usize = 64 * 1024; // 64 KiB
+    if pre_session_data_payload_size > MAX_PRE_SESSION_PAYLOAD {
+        log::error!(
+            "receive_pre_session_data_packet: payload size {} exceeds max {}\n",
+            pre_session_data_payload_size,
+            MAX_PRE_SESSION_PAYLOAD
+        );
+        return Err(MigrationResult::InvalidParameter);
+    }
     let mut pre_session_data_payload = vec![0u8; pre_session_data_payload_size];
     receive_pre_session_data(transport, &mut pre_session_data_payload)
         .await

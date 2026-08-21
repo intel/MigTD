@@ -778,6 +778,16 @@ mod verify {
         cert: &[u8],
         quote_local: &[u8],
     ) -> core::result::Result<(), CryptoError> {
+        // Reject oversized certificates to prevent heap exhaustion from DER parsing
+        const MAX_CERT_SIZE: usize = 8192;
+        if cert.len() > MAX_CERT_SIZE {
+            log::error!(
+                "Certificate too large: {} bytes (max {})\n",
+                cert.len(),
+                MAX_CERT_SIZE
+            );
+            return Err(CryptoError::ParseCertificate);
+        }
         let verified_report_local = attestation::verify_quote(quote_local).map_err(|e| {
             log::error!("Mutual attestation error {:?}.\n", e);
             CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string())
@@ -1123,7 +1133,17 @@ mod verify {
         }
         const PUBLIC_KEY_HASH_SIZE: usize = 48;
 
-        let report_data = &verified_report[520..520 + PUBLIC_KEY_HASH_SIZE];
+        let report_data = verified_report
+            .get(520..520 + PUBLIC_KEY_HASH_SIZE)
+            .ok_or_else(|| {
+                log::error!(
+                    "verify_public_key: verified_report too short (len={})\n",
+                    verified_report.len()
+                );
+                CryptoError::TlsVerifyPeerCert(
+                    "verified_report too short for public key hash".to_string(),
+                )
+            })?;
         let digest = digest_sha384(public_key).map_err(|e| {
             log::error!("Failed to compute SHA384 digest: {:?}\n", e);
             e
