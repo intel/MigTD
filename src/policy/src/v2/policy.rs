@@ -638,6 +638,35 @@ struct PolicyProperty {
     pub reference: Reference,
 }
 
+/// Returns true only for a canonical, fixed-width ISO-8601 UTC timestamp of the
+/// exact form "YYYY-MM-DDTHH:MM:SSZ" (e.g. "2025-01-01T00:00:00Z"). Lexicographic
+/// ordering of date strings is only valid under this canonical form, so callers
+/// that compare dates with `>=` must reject anything else.
+fn is_canonical_iso8601(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 20 {
+        return false;
+    }
+    let is_digit = |i: usize| b[i].is_ascii_digit();
+    (0..4).all(is_digit)
+        && b[4] == b'-'
+        && is_digit(5)
+        && is_digit(6)
+        && b[7] == b'-'
+        && is_digit(8)
+        && is_digit(9)
+        && b[10] == b'T'
+        && is_digit(11)
+        && is_digit(12)
+        && b[13] == b':'
+        && is_digit(14)
+        && is_digit(15)
+        && b[16] == b':'
+        && is_digit(17)
+        && is_digit(18)
+        && b[19] == b'Z'
+}
+
 impl PolicyProperty {
     pub fn evaluate_integer(
         &self,
@@ -749,8 +778,14 @@ impl PolicyProperty {
                 match self.operation.as_str() {
                     "equal" => Ok(value == reference_value),
                     "greater-or-equal" => {
-                        // Simple lexicographical comparison works for ISO-8601 format (e.g. "2025-01-01T00:00:00Z")
-                        // This is because ISO-8601 is designed to be sortable as strings
+                        // The lexicographical comparison below is only correct when both
+                        // operands are canonical, fixed-width ISO-8601 timestamps (e.g.
+                        // "2025-01-01T00:00:00Z"). A non-canonical value such as "2024-9-1"
+                        // would sort incorrectly (byte '9' > '1'), so reject anything that is
+                        // not in the canonical form before comparing, failing closed.
+                        if !is_canonical_iso8601(value) || !is_canonical_iso8601(reference_value) {
+                            return Err(PolicyError::InvalidReference);
+                        }
                         Ok(value >= reference_value)
                     }
                     _ => Err(PolicyError::InvalidOperation),
