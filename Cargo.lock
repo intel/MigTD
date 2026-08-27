@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "migtd"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1723,6 +1723,7 @@ name = "policy"
 version = "0.1.0"
 dependencies = [
  "cc-measurement",
+ "chrono",
  "crypto",
  "log",
  "serde",
