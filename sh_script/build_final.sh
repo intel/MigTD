@@ -91,6 +91,7 @@ function cp2bin() {
 function final_test_td_payload() {
     echo "-- Build final binary with test td payload"
     cleanup
+    mkdir -p ./target/release
 
     pushd tests
     cargo build -p test-td-payload --target x86_64-unknown-none --release --features=main,tdx --no-default-features
@@ -299,6 +300,7 @@ function sign() {
 # para 1 - linked migtd name
 # para 2 - Output binary name
 function link() {
+    mkdir -p ./target/release
     pushd deps/td-shim
     cargo run -p td-shim-tools --bin td-shim-ld --no-default-features --features=linker -- \
             target/x86_64-unknown-none/release/ResetVector.bin \
@@ -314,6 +316,7 @@ function link() {
 # para 2 - policy file name
 # para 3 - Output binary name
 function enroll() {
+    mkdir -p ./target/release
     pushd deps/td-shim
     if [[ $1 == *sb* ]]
     then
