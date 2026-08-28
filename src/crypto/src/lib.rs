@@ -119,6 +119,33 @@ pub fn get_policy_signer_key_hash(cert_chain_pem: &[u8]) -> Result<[u8; SHA384_D
     Ok(hash)
 }
 
+/// Split a PEM certificate chain into (leaf_der, root_der).
+///
+/// Convention (matches other helpers in this crate): the PEM chain is leaf-first,
+/// i.e. `chain[0]` is the leaf and `chain.last()` is the trust anchor (root).
+/// A single-cert chain returns the same bytes for leaf and root.
+pub fn split_chain_pem_to_leaf_and_root_der(cert_chain_pem: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf = chain[0].as_ref().to_vec();
+    let root = chain.last().unwrap().as_ref().to_vec();
+    Ok((leaf, root))
+}
+
+/// Re-encode the leaf certificate's `tbsCertificate.subject` field as DER bytes.
+///
+/// Since the input certificate is canonical DER, re-encoding the parsed
+/// `subject` field via `der::Encode` produces the same bytes that were
+/// present in the original certificate.
+pub fn extract_leaf_subject_der_from_chain_pem(cert_chain_pem: &[u8]) -> Result<Vec<u8>> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf_der = chain[0].as_ref();
+    let cert = x509::Certificate::from_der(leaf_der).map_err(|_| Error::ParseCertificate)?;
+    cert.tbs_certificate
+        .subject
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)
+}
+
 /// Verifies a certificate chain and then verifies a message signature
 pub fn verify_cert_chain_and_signature(
     cert_chain_pem: &[u8],

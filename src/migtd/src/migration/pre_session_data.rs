@@ -198,6 +198,21 @@ pub(super) async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + 
     }
 
     let pre_session_data_payload_size = header.length as usize;
+
+    // Bound the VMM-supplied payload length before allocating. Without this
+    // check, the untrusted u32 length could request a roughly 4 GiB heap
+    // allocation and abort MigTD. 1 MiB is well above expected policy and
+    // issuer-chain sizes.
+    const MAX_PRE_SESSION_PAYLOAD_SIZE: usize = 1 * 1024 * 1024;
+    if pre_session_data_payload_size > MAX_PRE_SESSION_PAYLOAD_SIZE {
+        log::error!(
+            "receive_pre_session_data_packet: payload length {} exceeds max {}\n",
+            pre_session_data_payload_size,
+            MAX_PRE_SESSION_PAYLOAD_SIZE
+        );
+        return Err(MigrationResult::InvalidParameter);
+    }
+
     let mut pre_session_data_payload = vec![0u8; pre_session_data_payload_size];
     receive_pre_session_data(transport, &mut pre_session_data_payload)
         .await
