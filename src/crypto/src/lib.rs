@@ -146,7 +146,8 @@ pub fn extract_leaf_subject_der_from_chain_pem(cert_chain_pem: &[u8]) -> Result<
         .map_err(|_| Error::ParseCertificate)
 }
 
-/// Verifies a certificate chain and then verifies a message signature
+/// Verifies a certificate chain, including issuer CA constraints, and then
+/// verifies a message signature.
 pub fn verify_cert_chain_and_signature(
     cert_chain_pem: &[u8],
     message: &[u8],
@@ -155,12 +156,127 @@ pub fn verify_cert_chain_and_signature(
     let cert_chain = extract_cert_chain_from_pem(cert_chain_pem)?;
 
     verify_certificate_chain(&cert_chain)?;
+    verify_issuer_ca_constraints(&cert_chain)?;
 
     // Extract public key from the leaf certificate and verify signature
     let leaf_cert = &cert_chain[0];
     verify_signature_with_cert(leaf_cert, message, signature)?;
 
     Ok(())
+}
+
+/// Verify a signer certificate chain (leaf-first PEM) against a CRL and fail
+/// **closed** if any certificate in the chain has been revoked.
+///
+/// Steps:
+/// 1. Locate the CA certificate in `chain_pem` whose `subject` matches the
+///    CRL's `issuer`, and verify the CRL's ECDSA-P384/SHA-384 signature with
+///    that CA's public key. An unauthenticated CRL (issuer not in the chain, or
+///    bad signature) is rejected — it can neither add nor drop revocations.
+/// 2. Reject if the serial number of **any** certificate in the chain appears
+///    in the CRL's `revokedCertificates`.
+///
+/// This is the in-guest revocation control for the servtd signer chain, called
+/// in addition to the RTMR1 signer-anchor binding (which measures the chain but
+/// cannot, by design, distinguish a still-valid certificate from a revoked one
+/// under the same root + subject). Freshness/anti-rollback (monotonic CRL
+/// number) is enforced by the policy layer, not here.
+pub fn verify_signer_chain_not_revoked(chain_pem: &[u8], crl_pem: &[u8]) -> Result<()> {
+    let chain_der = extract_cert_chain_from_pem(chain_pem)?;
+    let chain = chain_der
+        .iter()
+        .map(|der| x509::Certificate::from_der(der.as_ref()).map_err(|_| Error::ParseCertificate))
+        .collect::<Result<Vec<_>>>()?;
+
+    // 1. Authenticate the CRL against its issuing CA in the chain: the CA's
+    //    subject must equal the CRL issuer, and it MUST be a CA (RFC 5280).
+    //    Requiring cA=TRUE stops a non-CA leaf — whose key a peer may hold —
+    //    from issuing its own CRL.
+    let crl_issuer_der = crl::get_crl_issuer_der(crl_pem)?;
+    let mut issuer_key = None;
+    for cert in &chain {
+        let subject_der = cert
+            .tbs_certificate
+            .subject
+            .to_der()
+            .map_err(|_| Error::ParseCertificate)?;
+        if subject_der == crl_issuer_der && is_ca_certificate(cert)? {
+            issuer_key = Some(extract_public_key_from_cert(cert)?);
+            break;
+        }
+    }
+    let issuer_key = issuer_key.ok_or_else(|| {
+        Error::CertChainVerification("CRL issuer does not match any CA in the signer chain".into())
+    })?;
+    crl::verify_crl_signature(crl_pem, &issuer_key)?;
+
+    for cert in &chain {
+        if crl::is_serial_revoked(crl_pem, cert.tbs_certificate.serial_number.as_bytes())? {
+            return Err(Error::CertChainVerification(
+                "a certificate in the signer chain is revoked".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Verify a `COSE_Sign1` ECDSA-P384/SHA-384 (ES384/ESP384) signature against
+/// an embedded RFC 9360 `x5chain`.
+///
+/// * `x5chain_der` — the certificate chain (DER, **end-entity first**) taken
+///   from the COSE protected header.
+/// * `tbs` — the COSE `Sig_structure1` to-be-signed bytes.
+/// * `signature` — the raw `r || s` ECDSA-P384 value. COSE uses the
+///   fixed-width encoding (96 bytes), **not** ASN.1 DER.
+///
+/// Steps performed:
+/// 1. Verify the chain's internal integrity (each cert signed by the next).
+/// 2. Require every issuer certificate to have `BasicConstraints.ca = true`.
+/// 3. Verify the COSE signature with the leaf certificate's public key.
+///
+/// Trust is **not** established here: this only proves the chain is internally
+/// consistent and the signature is valid. The caller must bind the returned
+/// `(root_der, leaf_subject_der)` to a measured trust anchor (see
+/// `policy::compute_signer_anchor`, which folds them into the RTMR1 signer
+/// anchor) before trusting the payload.
+pub fn verify_cose_sign1_es384_x5chain(
+    x5chain_der: &[&[u8]],
+    tbs: &[u8],
+    signature: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    if x5chain_der.is_empty() {
+        return Err(Error::CertChainVerification("empty x5chain".into()));
+    }
+
+    // 1. Chain integrity (leaf -> ... -> root).
+    let chain: Vec<CertificateDer> = x5chain_der
+        .iter()
+        .map(|der| CertificateDer::from(der.to_vec()))
+        .collect();
+    verify_certificate_chain(&chain)?;
+    verify_issuer_ca_constraints(&chain)?;
+
+    // 3. COSE signature over `tbs` by the leaf key (raw r||s, fixed-width).
+    let leaf = x509::Certificate::from_der(x5chain_der[0]).map_err(|_| Error::ParseCertificate)?;
+    let leaf_pubkey = extract_public_key_from_cert(&leaf)?;
+    ecdsa::ecdsa_verify_with_algorithm(
+        &leaf_pubkey,
+        tbs,
+        signature,
+        &ecdsa::ECDSA_P384_SHA384_FIXED,
+    )
+    .map_err(|_| Error::SignatureVerification)?;
+
+    // 4. Anchor material for the caller: trust-anchor cert DER + leaf subject DER.
+    let root_der = x5chain_der[x5chain_der.len() - 1].to_vec();
+    let leaf_subject_der = leaf
+        .tbs_certificate
+        .subject
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)?;
+
+    Ok((root_der, leaf_subject_der))
 }
 
 fn extract_cert_chain_from_pem(cert_chain_pem: &[u8]) -> Result<Vec<CertificateDer>> {
@@ -201,6 +317,23 @@ fn verify_certificate_chain(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
             .map_err(|_| Error::ParseCertificate)?;
 
         verify_cert_signature(&subject_cert, &issuer_cert)?;
+    }
+
+    Ok(())
+}
+
+/// Require every certificate acting as an issuer to be an X.509 CA.
+fn verify_issuer_ca_constraints(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
+    for cert_der in cert_chain.iter().skip(1) {
+        let issuer =
+            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
+        if !is_ca_certificate(&issuer)? {
+            return Err(Error::CertChainVerification(
+                "Certificate chain contains a non-CA issuer (BasicConstraints \
+                 cA=TRUE missing)"
+                    .into(),
+            ));
+        }
     }
 
     Ok(())
@@ -338,17 +471,10 @@ pub fn validate_peer_cert_chain(local_chain_pem: &[u8], peer_chain_pem: &[u8]) -
     }
 
     // 4. Every issuer in the peer chain must be a CA.
-    for cert_der in peer_chain.iter().skip(1) {
-        let issuer =
-            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
-        if !is_ca_certificate(&issuer)? {
-            return Err(Error::PeerCertChainValidation(
-                "Peer chain contains a non-CA issuer certificate (BasicConstraints \
-                 cA=TRUE missing)"
-                    .into(),
-            ));
-        }
-    }
+    verify_issuer_ca_constraints(&peer_chain).map_err(|err| match err {
+        Error::CertChainVerification(message) => Error::PeerCertChainValidation(message),
+        other => other,
+    })?;
 
     Ok(())
 }
@@ -685,6 +811,94 @@ mdG27TBGsOS6KzfZ7avUDurwwFx++58HjoLq68p8jvKQBQJjco9bcwUFAjEA7otq
                 assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
             }
             other => panic!("Expected PeerCertChainValidation, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_json_signer_chain_rejects_non_ca_issuer() {
+        let result = verify_cert_chain_and_signature(attacker_chain(), b"", b"");
+        match result {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
+            }
+            other => panic!("Expected CertChainVerification, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cose_signer_chain_rejects_non_ca_issuer() {
+        let chain = extract_cert_chain_from_pem(attacker_chain()).unwrap();
+        let chain_refs: Vec<&[u8]> = chain.iter().map(|cert| cert.as_ref()).collect();
+        let result = verify_cose_sign1_es384_x5chain(&chain_refs, b"", b"");
+        match result {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
+            }
+            other => panic!("Expected CertChainVerification, got: {other:?}"),
+        }
+    }
+
+    // ---- signer-chain revocation (CRL) ------------------------------------
+    //
+    // Fixtures (src/crypto/test/crl/): a P-384 root CA, a leaf signer it
+    // issued, an empty CRL, and a CRL that revokes the leaf. See crl.rs tests
+    // for the parsing-level coverage; these exercise the full orchestration in
+    // `verify_signer_chain_not_revoked`.
+
+    fn crl_signer_chain_pubkey(index: usize) -> Vec<u8> {
+        let chain =
+            extract_cert_chain_from_pem(include_bytes!("../test/crl/signer_chain.pem")).unwrap();
+        let cert = x509::Certificate::from_der(chain[index].as_ref()).unwrap();
+        extract_public_key_from_cert(&cert).unwrap()
+    }
+
+    #[test]
+    fn verify_crl_signature_accepts_correct_issuer_key() {
+        let crl = include_bytes!("../test/crl/crl_revoked.pem");
+        assert!(crl::verify_crl_signature(crl, &crl_signer_chain_pubkey(1)).is_ok());
+    }
+
+    #[test]
+    fn verify_crl_signature_rejects_wrong_issuer_key() {
+        let crl = include_bytes!("../test/crl/crl_revoked.pem");
+        assert!(crl::verify_crl_signature(crl, &crl_signer_chain_pubkey(0)).is_err());
+    }
+
+    #[test]
+    fn signer_chain_not_revoked_passes_for_empty_crl() {
+        let chain = include_bytes!("../test/crl/signer_chain.pem");
+        let crl = include_bytes!("../test/crl/crl_empty.pem");
+        assert!(verify_signer_chain_not_revoked(chain, crl).is_ok());
+    }
+
+    #[test]
+    fn signer_chain_not_revoked_fails_closed_for_revoked_leaf() {
+        let chain = include_bytes!("../test/crl/signer_chain.pem");
+        let crl = include_bytes!("../test/crl/crl_revoked.pem");
+        match verify_signer_chain_not_revoked(chain, crl) {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("revoked"), "unexpected message: {msg}");
+            }
+            other => panic!("expected revoked CertChainVerification, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn signer_chain_not_revoked_rejects_non_ca_crl_issuer() {
+        // A CRL "issued" and signed by a non-CA end-entity leaf (whose private
+        // key a peer may legitimately hold) must NOT be accepted as an
+        // authenticated CRL — only a CA issues CRLs. Even though the leaf's key
+        // validly signs this CRL and the leaf is present in the chain, the
+        // cA=TRUE requirement rejects it (fail-closed), so a peer cannot present
+        // a self-crafted CRL to satisfy the freshness floor or launder a
+        // revocation.
+        let chain = include_bytes!("../test/crl/nonca_leaf_chain.pem");
+        let crl = include_bytes!("../test/crl/crl_leaf_issued.pem");
+        match verify_signer_chain_not_revoked(chain, crl) {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("CRL issuer"), "unexpected message: {msg}");
+            }
+            other => panic!("expected CRL-issuer CertChainVerification error, got {other:?}"),
         }
     }
 }

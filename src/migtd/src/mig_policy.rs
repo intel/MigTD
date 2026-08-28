@@ -439,17 +439,53 @@ mod v2 {
         .map_err(|_| PolicyError::PeerCertChainValidation)?;
 
         crypto::validate_peer_cert_chain(
-            local_policy.servtd_identity_issuer_chain.as_bytes(),
-            verified_policy.servtd_identity_issuer_chain.as_bytes(),
-        )
-        .log_err("Peer identity cert chain validation")
-        .map_err(|_| PolicyError::PeerCertChainValidation)?;
-        crypto::validate_peer_cert_chain(
             local_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
             verified_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
         )
         .log_err("Peer tcb mapping cert chain validation")
         .map_err(|_| PolicyError::PeerCertChainValidation)?;
+
+        // Validate the peer's optional TD Identity issuer chain against ours
+        // when both sides ship one. If exactly one side has it, the chains do
+        // not match and it fails closed.
+        match (
+            local_policy.servtd_identity_issuer_chain.as_deref(),
+            verified_policy.servtd_identity_issuer_chain.as_deref(),
+        ) {
+            (Some(local_identity_chain), Some(peer_identity_chain)) => {
+                crypto::validate_peer_cert_chain(
+                    local_identity_chain.as_bytes(),
+                    peer_identity_chain.as_bytes(),
+                )
+                .log_err("Peer td identity cert chain validation")
+                .map_err(|_| PolicyError::PeerCertChainValidation)?;
+            }
+            (None, None) => {}
+            _ => return Err(PolicyError::PeerCertChainValidation),
+        }
+
+        // 3b. Cross-check the peer's signer chain against OUR locally-trusted
+        //     CRL: a peer could ship a laundered (revocation-free) CRL of its
+        //     own, so the authoritative revocation list is the local one.
+        //     Fail-closed.
+        if let Some(servtd_crl) = local_policy.servtd_crl.as_deref() {
+            crypto::verify_signer_chain_not_revoked(
+                verified_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
+                servtd_crl.as_bytes(),
+            )
+            .log_err("Peer tcb mapping signer revocation check")
+            .map_err(|_| PolicyError::SignerRevoked)?;
+            if let Some(peer_identity_chain) =
+                verified_policy.servtd_identity_issuer_chain.as_deref()
+            {
+                crypto::verify_signer_chain_not_revoked(
+                    peer_identity_chain.as_bytes(),
+                    servtd_crl.as_bytes(),
+                )
+                .log_err("Peer td identity signer revocation check")
+                .map_err(|_| PolicyError::SignerRevoked)?;
+            }
+        }
 
         // 4. Check the integrity of the policy with its event log
         let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
@@ -601,6 +637,19 @@ mod v2 {
         Ok(rtmrs)
     }
 
+    /// Compute the servtd signer CRL number from the verified policy, if a
+    /// signer CRL is present (`servtdCollateral.servtdCrl`). `None` when it is
+    /// absent (backward compatibility); `Some(n)` feeds the `servtd_crl_num`
+    /// anti-rollback floor.
+    fn servtd_crl_num_from_policy(policy: &VerifiedPolicy) -> Result<Option<u32>, PolicyError> {
+        policy
+            .servtd_crl
+            .as_deref()
+            .map(|crl| get_crl_number(crl.as_bytes()))
+            .transpose()
+            .map_err(|_| PolicyError::InvalidCollateral)
+    }
+
     fn setup_evaluation_data(
         fmspc: [u8; 6],
         suppl_data: &[u8],
@@ -612,11 +661,7 @@ mod v2 {
         let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral)?;
         let report_value = Report::new(suppl_data)?;
 
-        let migtd_svn = policy
-            .servtd_tcb_mapping
-            .get_engine_svn_by_report(&report_value);
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
+        let migtd = policy.servtd_lookup_by_report(&report_value);
         let pck_crl_num = get_crl_number(collaterals.pck_crl.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
         let root_ca_crl_num = get_crl_number(collaterals.root_ca_crl.as_bytes())
@@ -628,11 +673,12 @@ mod v2 {
             tcb_status: Some(tcb_status.as_str().to_string()),
             tcb_evaluation_number: Some(tcb_evaluation_number),
             fmspc: Some(fmspc),
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+            migtd_isvsvn: migtd.as_ref().map(|m| m.isvsvn),
+            migtd_tcb_status: migtd.as_ref().and_then(|m| m.tcb_status.clone()),
+            migtd_tcb_date: migtd.as_ref().and_then(|m| m.tcb_date.clone()),
             pck_crl_num: Some(pck_crl_num),
             root_ca_crl_num: Some(root_ca_crl_num),
+            servtd_crl_num: servtd_crl_num_from_policy(policy)?,
         })
     }
 
@@ -641,11 +687,7 @@ mod v2 {
         policy: &VerifiedPolicy,
     ) -> Result<PolicyEvaluationInfo, PolicyError> {
         let tdinfo_hash = tdinfo_hash_from_td_info(&tdreport.td_info)?;
-        let migtd_svn = policy
-            .servtd_tcb_mapping
-            .get_engine_svn_by_tdinfo_hash(&tdinfo_hash);
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
+        let migtd = policy.servtd_lookup_by_tdinfo_hash(&tdinfo_hash);
 
         Ok(PolicyEvaluationInfo {
             tee_tcb_svn: Some(tdreport.tee_tcb_info.tee_tcb_svn),
@@ -653,11 +695,12 @@ mod v2 {
             tcb_status: None,
             tcb_evaluation_number: None,
             fmspc: None,
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
+            migtd_isvsvn: migtd.as_ref().map(|m| m.isvsvn),
+            migtd_tcb_status: migtd.as_ref().and_then(|m| m.tcb_status.clone()),
+            migtd_tcb_date: migtd.as_ref().and_then(|m| m.tcb_date.clone()),
             pck_crl_num: None,
             root_ca_crl_num: None,
+            servtd_crl_num: servtd_crl_num_from_policy(policy)?,
         })
     }
 

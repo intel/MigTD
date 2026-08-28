@@ -73,6 +73,9 @@ cet-shstk = ["td-payload/cet-shstk"]
 coverage = ["minicov"]
 main = ["attestation", "policy/log", "sha2"]
 policy_v2 = ["policy/policy_v2", "attestation/attest-lib-ext", "td-shim-interface-emu?/policy_v2"]
+# Opt-in CoRIM-based hash endorsement for servtd collateral. Additive on top
+# of policy_v2; without it the legacy JSON collateral path is used unchanged.
+servtd_corim = ["policy_v2", "policy/servtd_corim"]
 stack-guard = ["td-payload/stack-guard"]
 virtio-vsock = ["vsock/virtio-vsock"]
 virtio-serial = ["virtio_serial"]

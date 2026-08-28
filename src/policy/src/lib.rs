@@ -58,6 +58,16 @@ pub enum PolicyError {
     QuoteGeneration,
     GetTdxReport,
     PeerCertChainValidation,
+    /// The `servtdTcbMappingIssuerChain` does not hash to the RTMR1 signer
+    /// anchor derived from the CFV policy issuer chain. Because that chain is
+    /// redacted from the RTMR2 measurement, this binding is what keeps it
+    /// measured (via RTMR1); a mismatch means the mapping signer is not the
+    /// measured root-of-trust.
+    SignerAnchorMismatch,
+    /// A certificate in the servtd signer chain (TCB mapping or identity) is
+    /// listed in the delivered signer CRL (`collaterals.servtdCrl`), or that
+    /// CRL failed authentication. Fail-closed.
+    SignerRevoked,
 }
 
 pub struct Report<'a> {
