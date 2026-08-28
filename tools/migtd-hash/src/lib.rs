@@ -7,7 +7,7 @@ use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
 use migtd::{
     config::{
         CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
-        MIGTD_ROOT_CA_FFS_GUID,
+        MIGTD_ROOT_CA_FFS_GUID, MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID,
     },
     event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     policy,
@@ -188,18 +188,30 @@ fn rtmr1(
 ) -> Result<Vec<u8>, Error> {
     let mut rtmr1 = Rtmr::new_with_value(rtmr1);
     if is_policy_v2 {
-        let policy_issuer_chain = fv::get_file_from_fv(
+        // Prefer the 48-byte signer-anchor slot (CoRIM-only enrollment); fall
+        // back to the policy issuer chain PEM (legacy JSON enrollment). Both
+        // resolve to the same RTMR1 anchor via `resolve_signer_anchor`.
+        let anchor_source = fv::get_file_from_fv(
             cfv,
             pi::fv::FV_FILETYPE_RAW,
-            MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
+            MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID,
         )
-        .ok_or(anyhow!("Unable to get policy issuer chain from image"))?;
+        .or_else(|| {
+            fv::get_file_from_fv(
+                cfv,
+                pi::fv::FV_FILETYPE_RAW,
+                MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
+            )
+        })
+        .ok_or(anyhow!(
+            "Unable to get signer anchor / policy issuer chain from image"
+        ))?;
 
         // v2: extend with SHA384(signer_anchor) where
         //   signer_anchor = SHA384("MIGTD-RTMR1-ANCHOR-V1" || 0x00 ||
-        //                          SHA384(root_der) || 0x00 || SHA384(leaf_subject_der))
-        let anchor = policy::compute_signer_anchor_from_chain_pem(policy_issuer_chain)
-            .map_err(|e| anyhow!("Failed to compute signer anchor: {:?}", e))?;
+        //                          SHA384(root_der) || 0x00 || leaf_eku_oid_der)
+        let anchor = policy::resolve_signer_anchor(anchor_source)
+            .map_err(|e| anyhow!("Failed to resolve signer anchor: {:?}", e))?;
         rtmr1.extend_with_raw_data(&anchor)?;
     }
 

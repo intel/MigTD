@@ -36,9 +36,10 @@
 //!
 //! [`compute_signer_anchor`] returns:
 //!
-//! `A = SHA384("MIGTD-RTMR1-ANCHOR-V1" || 0x00 || R || 0x00 || S)`,
+//! `A = SHA384("MIGTD-RTMR1-ANCHOR-V1" || 0x00 || R || 0x00 || EKU_OID)`,
 //!
-//! `R = SHA384(DER(root_cert))`, `S = SHA384(DER(leaf_cert.tbsCertificate.subject))`.
+//! `R = SHA384(DER(root_cert))`, and `EKU_OID` is the DER-encoded, dedicated
+//! signer-purpose EKU from the leaf certificate.
 //! RTMR1 is extended with `A`.
 //!
 //! ## `tdinfo_hash` = `init_servtd_info_hash`
@@ -52,7 +53,7 @@
 
 use alloc::{string::String, vec::Vec};
 use crypto::{
-    extract_leaf_subject_der_from_chain_pem, hash::digest_sha384,
+    extract_leaf_eku_oid_der_from_chain_pem, hash::digest_sha384,
     split_chain_pem_to_leaf_and_root_der, SHA384_DIGEST_SIZE,
 };
 use serde_json::Value;
@@ -63,7 +64,7 @@ use crate::PolicyError;
 /// Bumped on any breaking change.
 pub const SIGNER_ANCHOR_DOMAIN_TAG: &[u8] = b"MIGTD-RTMR1-ANCHOR-V1";
 
-/// Single byte separator (`0x00`) between domain tag, R, and S.
+/// Separator between signer-anchor components.
 const SIGNER_ANCHOR_SEPARATOR: u8 = 0x00;
 
 // Canonicalization
@@ -180,59 +181,47 @@ fn parse_policy_data(policy_input: &[u8]) -> Result<Value, PolicyError> {
 pub fn extract_canonical_policy_data_bytes(policy_input: &[u8]) -> Result<Vec<u8>, PolicyError> {
     let mut policy_data = parse_policy_data(policy_input)?;
 
-    let coll = policy_data
-        .get_mut("servtdCollateral")
-        .and_then(|v| v.as_object_mut())
-        .ok_or(PolicyError::InvalidPolicy)?;
+    match policy_data.get_mut("servtdCollateral") {
+        None => {}
+        Some(value) => {
+            let coll = value.as_object_mut().ok_or(PolicyError::InvalidPolicy)?;
 
-    if coll.remove("servtdTcbMapping").is_none() {
-        return Err(PolicyError::InvalidPolicy);
+            if coll.remove("servtdTcbMapping").is_none() {
+                return Err(PolicyError::InvalidPolicy);
+            }
+
+            // Policy verification validates the chain separately.
+            coll.remove("servtdTcbMappingIssuerChain");
+
+            // Redact the optional TD Identity and its issuer chain (non-strict).
+            coll.remove("servtdIdentity");
+            coll.remove("servtdIdentityIssuerChain");
+        }
     }
-
-    // Also redact `servtdTcbMappingIssuerChain`: it is already measured into
-    // RTMR1 (the signer anchor), so measuring it again here would be redundant
-    // AND would re-couple leaf/intermediate-CA rotation of the TCB-mapping
-    // signer to `tdinfo_hash`, defeating the rotation-stability the anchor
-    // exists to provide.
-    //
-    // Non-strict (remove if present): unlike `servtdTcbMapping` — whose
-    // presence is enforced because it carries the circular `tdinfo_hash` — a
-    // policy without an issuer chain simply has nothing to double-measure. The
-    // security binding does not rest on this redaction: `RawPolicyData::verify`
-    // separately requires the chain that verifies `servtdTcbMapping` to hash to
-    // the RTMR1 signer anchor, so a swapped/absent chain fails closed there.
-    coll.remove("servtdTcbMappingIssuerChain");
-
-    // Redact the optional TD Identity and its issuer chain (non-strict). Like
-    // the TCB mapping, the optional TD Identity must stay re-issuable by the
-    // signer without re-releasing the image; its issuer chain is bound into
-    // RTMR1 (the signer anchor) instead, and `RawPolicyData::verify` binds it
-    // there fail-closed when present.
-    coll.remove("servtdIdentity");
-    coll.remove("servtdIdentityIssuerChain");
 
     canonical_value_bytes(&policy_data)
 }
 
 /// Compute the RTMR1 signer anchor.
 ///
-/// `A = SHA384(SIGNER_ANCHOR_DOMAIN_TAG || 0x00 || R || 0x00 || S)`
+/// `A = SHA384(SIGNER_ANCHOR_DOMAIN_TAG || 0x00 || R || 0x00 || EKU_OID)`
 ///
-/// where `R = SHA384(DER(root_cert))` and `S = SHA384(DER(leaf_subject))`.
-/// `0x00` is a single zero byte separator.
+/// `R` is the root certificate's SHA-384 digest, and `EKU_OID` is the leaf's
+/// DER-encoded signer-purpose EKU.
 pub fn compute_signer_anchor(
     root_der: &[u8],
-    leaf_subject_der: &[u8],
+    leaf_eku_oid_der: &[u8],
 ) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
     let r = digest_sha384(root_der).map_err(|_| PolicyError::HashCalculation)?;
-    let s = digest_sha384(leaf_subject_der).map_err(|_| PolicyError::HashCalculation)?;
 
-    let mut buf = Vec::with_capacity(SIGNER_ANCHOR_DOMAIN_TAG.len() + 1 + r.len() + 1 + s.len());
+    let mut buf = Vec::with_capacity(
+        SIGNER_ANCHOR_DOMAIN_TAG.len() + 1 + r.len() + 1 + leaf_eku_oid_der.len(),
+    );
     buf.extend_from_slice(SIGNER_ANCHOR_DOMAIN_TAG);
     buf.push(SIGNER_ANCHOR_SEPARATOR);
     buf.extend_from_slice(&r);
     buf.push(SIGNER_ANCHOR_SEPARATOR);
-    buf.extend_from_slice(&s);
+    buf.extend_from_slice(leaf_eku_oid_der);
 
     let digest = digest_sha384(&buf).map_err(|_| PolicyError::HashCalculation)?;
     let mut out = [0u8; SHA384_DIGEST_SIZE];
@@ -246,9 +235,21 @@ pub fn compute_signer_anchor_from_chain_pem(
 ) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
     let (_leaf_der, root_der) =
         split_chain_pem_to_leaf_and_root_der(chain_pem).map_err(|_| PolicyError::InvalidPolicy)?;
-    let leaf_subject = extract_leaf_subject_der_from_chain_pem(chain_pem)
+    let leaf_eku_oid = extract_leaf_eku_oid_der_from_chain_pem(chain_pem)
         .map_err(|_| PolicyError::InvalidPolicy)?;
-    compute_signer_anchor(&root_der, &leaf_subject)
+    compute_signer_anchor(&root_der, &leaf_eku_oid)
+}
+
+/// Resolve a precomputed 48-byte anchor or derive one from a leaf-first PEM
+/// certificate chain.
+pub fn resolve_signer_anchor(input: &[u8]) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    if input.len() == SHA384_DIGEST_SIZE {
+        let mut anchor = [0u8; SHA384_DIGEST_SIZE];
+        anchor.copy_from_slice(input);
+        Ok(anchor)
+    } else {
+        compute_signer_anchor_from_chain_pem(input)
+    }
 }
 
 #[cfg(test)]
@@ -258,31 +259,60 @@ mod tests {
     #[test]
     fn signer_anchor_is_stable_for_fixed_inputs() {
         let root = b"the-root-DER-placeholder";
-        let subject = b"CN=MigTD Info Issuer";
-        let a = compute_signer_anchor(root, subject).unwrap();
-        let a2 = compute_signer_anchor(root, subject).unwrap();
+        let eku_oid_der = b"\x06\x0a\x2b\x06\x01\x04\x01\x81\xfd\x59\x01\x01";
+        let a = compute_signer_anchor(root, eku_oid_der).unwrap();
+        let a2 = compute_signer_anchor(root, eku_oid_der).unwrap();
         assert_eq!(a, a2);
 
         let r = digest_sha384(root).unwrap();
-        let s = digest_sha384(subject).unwrap();
         let mut buf = Vec::new();
         buf.extend_from_slice(SIGNER_ANCHOR_DOMAIN_TAG);
         buf.push(0u8);
         buf.extend_from_slice(&r);
         buf.push(0u8);
-        buf.extend_from_slice(&s);
+        buf.extend_from_slice(eku_oid_der);
         let expected = digest_sha384(&buf).unwrap();
         assert_eq!(&a[..], expected.as_slice());
     }
 
     #[test]
-    fn signer_anchor_changes_with_root_or_subject() {
-        let a = compute_signer_anchor(b"root1", b"subj1").unwrap();
-        let b = compute_signer_anchor(b"root2", b"subj1").unwrap();
-        let c = compute_signer_anchor(b"root1", b"subj2").unwrap();
+    fn signer_anchor_changes_with_root_or_eku() {
+        let a = compute_signer_anchor(b"root1", b"\x06\x02\x2a\x03").unwrap();
+        let b = compute_signer_anchor(b"root2", b"\x06\x02\x2a\x03").unwrap();
+        let c = compute_signer_anchor(b"root1", b"\x06\x02\x2a\x04").unwrap();
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_ne!(b, c);
+    }
+
+    #[test]
+    fn signer_anchor_from_chain_ignores_leaf_subject_and_key() {
+        let a = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_a.pem"
+        ))
+        .unwrap();
+        let rotated = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_b.pem"
+        ))
+        .unwrap();
+        let other_purpose = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_other_eku.pem"
+        ))
+        .unwrap();
+
+        assert_eq!(a, rotated);
+        assert_ne!(a, other_purpose);
+    }
+
+    #[test]
+    fn signer_anchor_from_chain_requires_single_dedicated_eku() {
+        for chain in [
+            include_bytes!("../../../crypto/test/eku/signer_no_eku.pem").as_slice(),
+            include_bytes!("../../../crypto/test/eku/signer_multiple_eku.pem").as_slice(),
+            include_bytes!("../../../crypto/test/eku/signer_any_eku.pem").as_slice(),
+        ] {
+            assert!(compute_signer_anchor_from_chain_pem(chain).is_err());
+        }
     }
 
     // canonical_value_bytes
@@ -422,14 +452,9 @@ mod tests {
     }
 
     #[test]
-    fn extract_rejects_missing_servtd_collateral() {
-        // Schema-drift defense (fix for scenario 10): a policy without
-        // servtdCollateral MUST NOT silently succeed with no redaction —
-        // such a policy is malformed at this layer, and accepting it
-        // would let a future schema change (servtdCollateral made
-        // optional) silently bypass the redaction scheme.
+    fn extract_allows_missing_servtd_collateral() {
         let input = br#"{"version":"2.0","id":"X","policySvn":1,"policy":[],"collaterals":{}}"#;
-        assert!(extract_canonical_policy_data_bytes(input).is_err());
+        assert!(extract_canonical_policy_data_bytes(input).is_ok());
     }
 
     #[test]

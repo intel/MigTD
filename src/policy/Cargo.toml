@@ -21,7 +21,7 @@ td-shim-interface = { path = "../../deps/td-shim/td-shim-interface"}
 std = []
 AzCVMEmu = []
 policy_v2 = []
-# Opt-in CoRIM-encoded servtd collateral (TCB Mapping + TD Identity), keyed by
-# the same tdinfo_hash as the legacy JSON collateral. Decode + match only;
-# signature verification of the COSE envelope is the caller's responsibility.
+# Opt-in signed CoRIM TCB-mapping collateral, keyed by the same tdinfo_hash as
+# the legacy JSON collateral. The COSE signature and x5chain signer anchor are
+# verified before the payload is decoded.
 servtd_corim = ["dep:corim"]

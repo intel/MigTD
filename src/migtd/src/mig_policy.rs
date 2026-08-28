@@ -70,7 +70,6 @@ mod v2 {
     use spin::Once;
     use tdx_tdcall::tdreport::{tdcall_verify_report, TdInfo, TdxReport};
 
-    use crate::config::get_policy_issuer_chain;
     use crate::event_log::{parse_events, verify_event_log};
     use crate::mig_policy::get_rtmrs_from_suppl_data;
     use crate::migration::pre_session_data::LogErr;
@@ -117,7 +116,24 @@ mod v2 {
         let raw = RawPolicyData::deserialize_from_json(policy_json)?;
 
         // Get the root CA from collaterals and set it for quote verification
-        let verified_policy = raw.verify(cert_chain)?;
+        #[cfg_attr(not(feature = "servtd_corim"), allow(unused_mut))]
+        let mut verified_policy = raw.verify(cert_chain)?;
+
+        // Attach the optional CoRIM hash endorsement enrolled in the CFV. Its
+        // COSE signer chain is bound to the SAME RTMR1 signer anchor as the CFV
+        // policy issuer chain, so a CoRIM signed under a different root cert or
+        // leaf signer EKU fails closed. The CoRIM is NOT measured
+        // (`config::get_servtd_corim` is never read by `do_measurements`), so
+        // enrolling it does not change the ServTD/`tdinfo_hash`.
+        // `now_epoch_secs = 0`: MigTD has no wall clock, so the producer must
+        // not set CWT `nbf`/`exp` on the CoRIM.
+        #[cfg(feature = "servtd_corim")]
+        if let Some(cose) = crate::config::get_servtd_corim() {
+            let anchor = resolve_signer_anchor(cert_chain)?;
+            let corim = ServtdCorim::decode_signed(cose, 0, &anchor)?;
+            verified_policy.set_servtd_corim(corim);
+        }
+
         let root_ca_der = pem_cert_to_der(verified_policy.get_collaterals().root_ca.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
         attestation::root_ca::set_ca(root_ca_der.as_ref())
@@ -427,23 +443,31 @@ mod v2 {
         // 2. Verify the peer policy using the peer's issuer chain
         let verified_policy = unverified_policy.verify(policy_issuer_chain)?;
 
-        // 3. Validate that peer's chains share the same root CA and leaf
-        //    subject name as our local chains.
+        // 3. Validate that the peer's signer matches ours by comparing the
+        //    RTMR1 signer anchor (root CA + leaf signer EKU) instead of the
+        //    full policy issuer chain PEM. This supports the anchor-only (CoRIM)
+        //    enrollment form, which carries no PEM. `verify()` has already
+        //    bound the peer's embedded mapping chain to `signer_anchor`.
         let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-        let local_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-        crypto::validate_peer_cert_chain(
-            local_chain,
-            verified_policy.policy_issuer_chain.as_bytes(),
-        )
-        .log_err("Peer policy cert chain validation")
-        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        if local_policy.signer_anchor != verified_policy.signer_anchor {
+            return Err(PolicyError::PeerCertChainValidation);
+        }
 
-        crypto::validate_peer_cert_chain(
-            local_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
-            verified_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
-        )
-        .log_err("Peer tcb mapping cert chain validation")
-        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        // Cross-check the JSON mapping issuer chains when both sides ship one
+        // (defense-in-depth; the signer_anchor equality above already binds the
+        // signer). Absent on both sides (CoRIM-only) is fine; one-sided fails.
+        match (
+            local_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
+            verified_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
+        ) {
+            (Some(local_mc), Some(peer_mc)) => {
+                crypto::validate_peer_cert_chain(local_mc.as_bytes(), peer_mc.as_bytes())
+                    .log_err("Peer tcb mapping cert chain validation")
+                    .map_err(|_| PolicyError::PeerCertChainValidation)?;
+            }
+            (None, None) => {}
+            _ => return Err(PolicyError::PeerCertChainValidation),
+        }
 
         // Validate the peer's optional TD Identity issuer chain against ours
         // when both sides ship one. If exactly one side has it, the chains do
@@ -469,12 +493,11 @@ mod v2 {
         //     own, so the authoritative revocation list is the local one.
         //     Fail-closed.
         if let Some(servtd_crl) = local_policy.servtd_crl.as_deref() {
-            crypto::verify_signer_chain_not_revoked(
-                verified_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
-                servtd_crl.as_bytes(),
-            )
-            .log_err("Peer tcb mapping signer revocation check")
-            .map_err(|_| PolicyError::SignerRevoked)?;
+            if let Some(peer_mc) = verified_policy.servtd_tcb_mapping_issuer_chain.as_deref() {
+                crypto::verify_signer_chain_not_revoked(peer_mc.as_bytes(), servtd_crl.as_bytes())
+                    .log_err("Peer tcb mapping signer revocation check")
+                    .map_err(|_| PolicyError::SignerRevoked)?;
+            }
             if let Some(peer_identity_chain) =
                 verified_policy.servtd_identity_issuer_chain.as_deref()
             {
@@ -757,12 +780,14 @@ mod v2 {
         })
     }
 
-    /// Per GHCI 1.5: Verify that own TDINFO.MROWNER matches policy signing key hash
-    /// and TDINFO.MROWNERCONFIG matches policy SVN.
+    /// Per GHCI 1.5: Verify that own TDINFO.MROWNERCONFIG matches policy SVN.
+    ///
+    /// NOTE: the `MROWNER == SHA384(policy-signer public key)` binding has been
+    /// **deprecated** — the policy-signer trust root is now the RTMR1 signer
+    /// anchor, and the CoRIM-only enrollment carries no signer public key in
+    /// the image. Only the MROWNERCONFIG (policy SVN) binding is enforced.
     /// Must be called at MigTD startup to ensure VMM correctly provisioned the TD.
     pub fn verify_own_tdinfo() -> Result<(), PolicyError> {
-        use crate::config::get_policy_issuer_chain;
-
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
         let policy_svn = policy.policy_data.get_policy_svn();
 
@@ -779,35 +804,21 @@ mod v2 {
             return Err(PolicyError::SvnMismatch);
         }
 
-        // Verify MROWNER == SHA384(policy signing public key)
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-        let policy_key_hash = crypto::get_policy_signer_key_hash(policy_issuer_chain)
-            .map_err(|_| PolicyError::InvalidCollateral)?;
-        if td_info.mrowner != policy_key_hash {
-            return Err(PolicyError::PolicyHashMismatch);
-        }
-
         Ok(())
     }
 
-    /// Per GHCI 1.5: Verify initMigtdData.MROWNER matches own policy signer key hash
-    /// and initMigtdData.MROWNERCONFIG <= own policy SVN.
+    /// Per GHCI 1.5: Verify initMigtdData.MROWNERCONFIG <= own policy SVN.
+    ///
+    /// NOTE: the `MROWNER == own policy-signer key hash` binding has been
+    /// **deprecated** (see [`verify_own_tdinfo`]); only the MROWNERCONFIG
+    /// (policy SVN floor) binding is enforced.
     pub fn verify_init_migtd_data_policy_binding(
         init_td_info: &[u8; crate::migration::TD_INFO_SIZE],
     ) -> Result<(), PolicyError> {
-        use crate::config::get_policy_issuer_chain;
-        use crate::migration::{td_info_mrowner, td_info_mrownerconfig};
+        use crate::migration::td_info_mrownerconfig;
 
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
         let my_policy_svn = policy.policy_data.get_policy_svn();
-
-        // Check MROWNER == own policy signer key hash
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-        let policy_key_hash = crypto::get_policy_signer_key_hash(policy_issuer_chain)
-            .map_err(|_| PolicyError::InvalidCollateral)?;
-        if td_info_mrowner(init_td_info) != &policy_key_hash {
-            return Err(PolicyError::PolicyHashMismatch);
-        }
 
         // Check MROWNERCONFIG (init policy_svn) <= my policy_svn
         let init_mrownerconfig = td_info_mrownerconfig(init_td_info);

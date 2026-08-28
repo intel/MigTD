@@ -14,11 +14,13 @@ use serde_json::{self, value::RawValue};
 use crate::{
     v2::{
         bytes_to_hex_string, compute_signer_anchor_from_chain_pem,
-        measurement::extract_canonical_policy_data_bytes, policy, verify_event_hash,
+        measurement::extract_canonical_policy_data_bytes, policy, resolve_signer_anchor,
+        verify_event_hash,
     },
     CcEvent, Collaterals, EventName, PolicyError, Report, ServtdCollateral, TdIdentity,
     TdTcbMapping,
 };
+use crypto::SHA384_DIGEST_SIZE;
 
 #[cfg(feature = "servtd_corim")]
 use crate::v2::ServtdCorim;
@@ -189,8 +191,10 @@ pub struct PolicyEvaluationInfo {
 
 pub struct VerifiedPolicy<'a> {
     pub policy_data: policy::PolicyData<'a>,
-    pub servtd_tcb_mapping: TdTcbMapping,
-    pub servtd_tcb_mapping_issuer_chain: String,
+    /// JSON TCB mapping; absent for CoRIM-only policies.
+    pub servtd_tcb_mapping: Option<TdTcbMapping>,
+    /// JSON mapping signer chain retained for CRL checks.
+    pub servtd_tcb_mapping_issuer_chain: Option<String>,
     /// Optional JSON TD Identity for date and status lookup.
     pub servtd_identity: Option<TdIdentity>,
     /// JSON TD Identity signer chain retained for CRL checks.
@@ -199,8 +203,9 @@ pub struct VerifiedPolicy<'a> {
     /// `servtdCollateral.servtdCrl`. Retained so the runtime can cross-check a
     /// peer's signer chain against the local trusted CRL.
     pub servtd_crl: Option<String>,
-    /// The policy signing certificate chain (PEM) used to verify this policy.
-    pub policy_issuer_chain: String,
+    /// The RTMR1 signer anchor `A = SHA384(tag ‖ H(rootDER) ‖ leafEkuOidDER)`
+    /// used to authenticate peer collateral.
+    pub signer_anchor: [u8; SHA384_DIGEST_SIZE],
     /// Optional CoRIM-encoded servtd collateral. When attached it is the sole
     /// authority for servtd lookups (fail-closed: a CoRIM miss is a miss,
     /// with no fallback to the legacy JSON collateral). Only available with
@@ -235,6 +240,7 @@ impl VerifiedPolicy<'_> {
         }
         let isvsvn = self
             .servtd_tcb_mapping
+            .as_ref()?
             .get_engine_svn_by_tdinfo_hash(tdinfo_hash)?;
         let (tcb_date, tcb_status) = match &self.servtd_identity {
             Some(identity) => {
@@ -292,75 +298,82 @@ impl<'a> RawPolicyData<'a> {
     /// Verify the servtd collateral using the given (RTMR1-anchored) issuer
     /// chain.
     pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
-        let policy_issuer_chain = core::str::from_utf8(issuer_chain)
-            .map_err(|_| PolicyError::InvalidPolicy)?
-            .to_string();
+        let cfv_anchor = resolve_signer_anchor(issuer_chain)?;
 
         let policy_data: PolicyData<'a> =
             serde_json::from_str(self.policy_data.get()).map_err(|_| PolicyError::InvalidPolicy)?;
 
-        // Verify servtd collateral signature using its embedded chain
-        let servtd_collateral = &policy_data.servtd_collateral;
-        let servtd_tcb_mapping = servtd_collateral
-            .servtd_tcb_mapping
-            .verify_signature(servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes())?;
+        let (
+            servtd_tcb_mapping,
+            servtd_tcb_mapping_issuer_chain,
+            servtd_identity,
+            servtd_identity_issuer_chain,
+            servtd_crl,
+        ) = match &policy_data.servtd_collateral {
+            Some(servtd_collateral) => {
+                let servtd_tcb_mapping = servtd_collateral.servtd_tcb_mapping.verify_signature(
+                    servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes(),
+                )?;
 
-        // Verify the optional TD Identity signature against its embedded chain.
-        // `servtdIdentity` and `servtdIdentityIssuerChain` must be present or
-        // absent together; a half-present pair fails closed.
-        let servtd_identity = match (
-            servtd_collateral.servtd_identity.as_ref(),
-            servtd_collateral.servtd_identity_issuer_chain.as_deref(),
-        ) {
-            (Some(raw_identity), Some(identity_chain)) => {
-                Some(raw_identity.verify_signature(identity_chain.as_bytes())?)
-            }
-            (None, None) => None,
-            _ => return Err(PolicyError::InvalidServtdIdentity),
-        };
+                // Identity and its signer chain must be present together.
+                let servtd_identity = match (
+                    servtd_collateral.servtd_identity.as_ref(),
+                    servtd_collateral.servtd_identity_issuer_chain.as_deref(),
+                ) {
+                    (Some(raw_identity), Some(identity_chain)) => {
+                        Some(raw_identity.verify_signature(identity_chain.as_bytes())?)
+                    }
+                    (None, None) => None,
+                    _ => return Err(PolicyError::InvalidServtdIdentity),
+                };
 
-        let cfv_anchor = compute_signer_anchor_from_chain_pem(issuer_chain)?;
-        let mapping_anchor = compute_signer_anchor_from_chain_pem(
-            servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes(),
-        )?;
-        if cfv_anchor != mapping_anchor {
-            return Err(PolicyError::SignerAnchorMismatch);
-        }
+                let mapping_anchor = compute_signer_anchor_from_chain_pem(
+                    servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes(),
+                )?;
+                if cfv_anchor != mapping_anchor {
+                    return Err(PolicyError::SignerAnchorMismatch);
+                }
 
-        // The optional TD Identity issuer chain is redacted from RTMR2 too
-        // (measurement.rs), so bind it to the same RTMR1 signer anchor when
-        // present. A swapped/unrelated identity chain fails closed.
-        if let Some(identity_chain) = servtd_collateral.servtd_identity_issuer_chain.as_deref() {
-            let identity_anchor = compute_signer_anchor_from_chain_pem(identity_chain.as_bytes())?;
-            if cfv_anchor != identity_anchor {
-                return Err(PolicyError::SignerAnchorMismatch);
-            }
-        }
+                // The optional TD Identity issuer chain is redacted from RTMR2
+                // too, so bind it to the same RTMR1 signer anchor when present.
+                if let Some(identity_chain) =
+                    servtd_collateral.servtd_identity_issuer_chain.as_deref()
+                {
+                    let identity_anchor =
+                        compute_signer_anchor_from_chain_pem(identity_chain.as_bytes())?;
+                    if cfv_anchor != identity_anchor {
+                        return Err(PolicyError::SignerAnchorMismatch);
+                    }
+                }
 
-        // Signer-key revocation (fail-closed): the RTMR1 anchor measures the
-        // signer identity but cannot tell a still-valid cert from a revoked one
-        // under the same root + subject. Freshness is enforced separately by
-        // `CrlPolicy` (`servtd_crl_num`). See issue #916.
-        if let Some(servtd_crl) = servtd_collateral.servtd_crl.as_deref() {
-            crypto::verify_signer_chain_not_revoked(
-                servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes(),
-                servtd_crl.as_bytes(),
-            )
-            .map_err(|_| PolicyError::SignerRevoked)?;
-            if let Some(identity_chain) = servtd_collateral.servtd_identity_issuer_chain.as_deref()
-            {
-                crypto::verify_signer_chain_not_revoked(
-                    identity_chain.as_bytes(),
-                    servtd_crl.as_bytes(),
+                // Signer-key revocation (fail-closed).
+                if let Some(servtd_crl) = servtd_collateral.servtd_crl.as_deref() {
+                    crypto::verify_signer_chain_not_revoked(
+                        servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes(),
+                        servtd_crl.as_bytes(),
+                    )
+                    .map_err(|_| PolicyError::SignerRevoked)?;
+                    if let Some(identity_chain) =
+                        servtd_collateral.servtd_identity_issuer_chain.as_deref()
+                    {
+                        crypto::verify_signer_chain_not_revoked(
+                            identity_chain.as_bytes(),
+                            servtd_crl.as_bytes(),
+                        )
+                        .map_err(|_| PolicyError::SignerRevoked)?;
+                    }
+                }
+
+                (
+                    Some(servtd_tcb_mapping),
+                    Some(servtd_collateral.servtd_tcb_mapping_issuer_chain.clone()),
+                    servtd_identity,
+                    servtd_collateral.servtd_identity_issuer_chain.clone(),
+                    servtd_collateral.servtd_crl.clone(),
                 )
-                .map_err(|_| PolicyError::SignerRevoked)?;
             }
-        }
-
-        let servtd_tcb_mapping_issuer_chain =
-            servtd_collateral.servtd_tcb_mapping_issuer_chain.clone();
-        let servtd_identity_issuer_chain = servtd_collateral.servtd_identity_issuer_chain.clone();
-        let servtd_crl = servtd_collateral.servtd_crl.clone();
+            None => (None, None, None, None, None),
+        };
 
         if !policy_data.validate() {
             return Err(PolicyError::InvalidParameter);
@@ -373,7 +386,7 @@ impl<'a> RawPolicyData<'a> {
             servtd_identity,
             servtd_identity_issuer_chain,
             servtd_crl,
-            policy_issuer_chain,
+            signer_anchor: cfv_anchor,
             #[cfg(feature = "servtd_corim")]
             servtd_corim: None,
         })
@@ -390,8 +403,9 @@ pub struct PolicyData<'a> {
     forward_policy: Option<Vec<PolicyTypes>>,
     backward_policy: Option<Vec<PolicyTypes>>,
     pub collaterals: Collaterals,
-    #[serde(borrow)]
-    pub servtd_collateral: ServtdCollateral<'a>,
+    /// JSON servTD collateral, absent for CoRIM-only policies.
+    #[serde(borrow, default, skip_serializing_if = "Option::is_none")]
+    pub servtd_collateral: Option<ServtdCollateral<'a>>,
 }
 
 impl<'a> PolicyData<'a> {
@@ -1039,7 +1053,7 @@ mod test {
         assert!(verified.servtd_identity_issuer_chain.is_none());
 
         let known_hash = hex_string_to_bytes(
-            &verified.servtd_tcb_mapping.svn_mappings[0]
+            &verified.servtd_tcb_mapping.as_ref().unwrap().svn_mappings[0]
                 .td_measurements
                 .tdinfo_hash,
         )
@@ -1191,7 +1205,7 @@ mod test {
         let mut verified = policy.verify(issuer_chain).unwrap();
 
         let legacy_hash = hex_string_to_bytes(
-            &verified.servtd_tcb_mapping.svn_mappings[0]
+            &verified.servtd_tcb_mapping.as_ref().unwrap().svn_mappings[0]
                 .td_measurements
                 .tdinfo_hash,
         )

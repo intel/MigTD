@@ -3,6 +3,7 @@ set -e
 
 # Set output directory
 OUTPUT_DIR="key"
+MIGTD_SIGNER_EKU_OID="${MIGTD_SIGNER_EKU_OID:-1.3.6.1.4.1.32473.1.1}"
 mkdir -p "$OUTPUT_DIR"
 
 # 1. Create the Root CA Key and Certificate
@@ -37,8 +38,10 @@ openssl req -new -nodes -key "$OUTPUT_DIR/issuer.key" -sha384 -out "$OUTPUT_DIR/
 # Add an explicit Key Usage so the cert is encoded as X.509 v3 (openssl
 # omits the [0] version field and produces a v1 certificate when no v3
 # extensions are present, which the in-tree x509 parser rejects). The
-# leaf MUST NOT be a CA — no BasicConstraints, no keyCertSign.
-openssl x509 -req -in "$OUTPUT_DIR/issuer.csr" -CA "$OUTPUT_DIR/intermediate_ca.crt" -CAkey "$OUTPUT_DIR/intermediate_ca.key" -CAcreateserial -sha384 -days 365 -extfile <(printf 'keyUsage=critical,digitalSignature\n') -out "$OUTPUT_DIR/issuer.crt"
+# leaf MUST NOT be a CA — no BasicConstraints, no keyCertSign. The default EKU
+# uses the RFC 5612 documentation PEN; production issuers must override
+# MIGTD_SIGNER_EKU_OID with their allocated dedicated signer-purpose OID.
+openssl x509 -req -in "$OUTPUT_DIR/issuer.csr" -CA "$OUTPUT_DIR/intermediate_ca.crt" -CAkey "$OUTPUT_DIR/intermediate_ca.key" -CAcreateserial -sha384 -days 365 -extfile <(printf 'keyUsage=critical,digitalSignature\nextendedKeyUsage=%s\n' "$MIGTD_SIGNER_EKU_OID") -out "$OUTPUT_DIR/issuer.crt"
 
 # 4. Concat them into cert chain
 cat "$OUTPUT_DIR/issuer.crt" "$OUTPUT_DIR/intermediate_ca.crt" "$OUTPUT_DIR/root_ca.crt" > "$OUTPUT_DIR/migtd_issuer_chain.pem"

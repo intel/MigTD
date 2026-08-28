@@ -165,10 +165,11 @@ impl ServtdCorim {
 ///    an RFC 9360 `x5chain` to be present.
 /// 3. Verify the x5chain integrity and the COSE signature over the
 ///    `Sig_structure1` TBS (delegated to the `crypto` crate).
-/// 4. Bind the chain's `(root, leaf-subject)` to `expected_signer_anchor` —
-///    the RTMR1-measured policy signer anchor — so the CoRIM signer is the
-///    same root-of-trust the firmware measured from the CFV. A mismatch is
-///    fatal (fail-closed).
+/// 4. Bind the chain's root plus each dedicated EKU purpose the leaf asserts to
+///    `expected_signer_anchor` — the RTMR1-measured policy signer anchor — so
+///    the CoRIM signer is the same root-of-trust the firmware measured from the
+///    CFV. The anchor is recomputed for each asserted purpose and one must
+///    reproduce the measured value; otherwise it is fatal (fail-closed).
 fn verify_and_extract_payload(
     cose: &[u8],
     expected_signer_anchor: &[u8; SHA384_DIGEST_SIZE],
@@ -195,12 +196,18 @@ fn verify_and_extract_payload(
         .to_be_signed(&[])
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-    let (root_der, leaf_subject_der) =
+    let (root_der, leaf_eku_oids_der) =
         crypto::verify_cose_sign1_es384_x5chain(&certs, &tbs, &envelope.signature)
             .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-    let anchor = compute_signer_anchor(&root_der, &leaf_subject_der)?;
-    if anchor != *expected_signer_anchor {
+    let mut anchor_matches = false;
+    for leaf_eku_oid_der in &leaf_eku_oids_der {
+        if compute_signer_anchor(&root_der, leaf_eku_oid_der)? == *expected_signer_anchor {
+            anchor_matches = true;
+            break;
+        }
+    }
+    if !anchor_matches {
         return Err(PolicyError::SignatureVerificationFailed);
     }
 
@@ -464,18 +471,17 @@ mod test {
         assert!(ServtdCorim::decode_signed(tcb, 1_735_689_600, &wrong).is_err());
     }
 
-    /// Recover the signer anchor `A = compute_signer_anchor(root, leaf-subject)`
-    /// from a sample's embedded x5chain, running the full signature + chain
-    /// verification on the way (so a tampered sample would fail here).
+    /// Recover a signer anchor from a sample's verified embedded x5chain.
     fn signer_anchor_from_sample(cose: &[u8]) -> [u8; SHA384_DIGEST_SIZE] {
         let env = decode_signed_corim(cose).expect("decode COSE");
         let tbs = env.to_be_signed(&[]).expect("tbs");
         let chain = env.protected.x5chain.as_ref().expect("x5chain");
         let certs = chain.certs();
-        let (root_der, leaf_subject_der) =
+        let (root_der, leaf_eku_oids_der) =
             crypto::verify_cose_sign1_es384_x5chain(&certs, &tbs, &env.signature)
                 .expect("verify signature");
-        compute_signer_anchor(&root_der, &leaf_subject_der).expect("anchor")
+        let leaf_eku_oid_der = leaf_eku_oids_der.first().expect("leaf asserts >= 1 EKU");
+        compute_signer_anchor(&root_der, leaf_eku_oid_der).expect("anchor")
     }
 
     fn hex_decode(s: &str, out: &mut [u8]) {

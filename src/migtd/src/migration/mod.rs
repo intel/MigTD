@@ -184,7 +184,8 @@ pub struct MigtdMigrationInformation {
     // If set, current MigTD is MigTD-s else current MigTD is MigTD-d
     pub migration_source: u8,
 
-    // Per GHCI 1.5: hasInitMigtdData — true if initMigtdData follows at offset 56
+    // Per GHCI 1.5: hasInitMigtdData. Retained for wire compatibility; policy
+    // v2 accepts either form but ignores host-supplied initMigtdData.
     pub has_init_data: u8,
 
     _reserved: [u8; 6],
@@ -205,8 +206,9 @@ pub struct MigtdMigrationInformation {
     pub communication_id: u64,
 
     // Per GHCI 1.5: optional 512-byte TDINFO_STRUCT of the initial MigTD.
-    // Present when `has_init_data == 1`. Use `init_td_info_if_present()` for
-    // safe access. Sent by the VMM as the raw `TdInfo` bytes (no envelope).
+    // Retained only to accept older hosts that still append it. The parser
+    // clears this untrusted field so policy v2 behaves exactly like the
+    // header-only form and uses the authenticated SERVTD_EXT hash instead.
     //
     // NOTE: literal `512` (== TD_INFO_SIZE) is required here because
     // scroll-derive 0.10.5 only accepts integer literals as array length.
@@ -250,8 +252,12 @@ impl MigtdMigrationInformation {
 #[cfg(feature = "policy_v2")]
 impl MigtdMigrationInformation {
     /// Parse a policy_v2 wire payload of either:
-    /// - header-only (short form, `has_init_data == 0`), or
-    /// - header + 512-byte TDINFO_STRUCT (full form, `has_init_data == 1`).
+    /// - header-only (short form), or
+    /// - header + legacy 512-byte TDINFO_STRUCT (full form).
+    ///
+    /// A correctly framed legacy flag and tail are accepted and then normalized
+    /// away. The host-supplied TDINFO is no longer needed by the one-hash TCB
+    /// mapping and must not influence policy decisions.
     /// Header size is transport-dependent (56 for vmcall-raw, 72 otherwise).
     pub fn read_from_bytes(
         data_length: u32,
@@ -265,7 +271,7 @@ impl MigtdMigrationInformation {
         if (payload.len() as u32) < data_length {
             return Err(MigrationResult::InvalidParameter);
         }
-        let parsed: Self = if data_length == full_size {
+        let mut parsed: Self = if data_length == full_size {
             payload
                 .pread(0)
                 .map_err(|_| MigrationResult::InvalidParameter)?
@@ -286,11 +292,15 @@ impl MigtdMigrationInformation {
         if parsed.has_init_data > 1 {
             return Err(MigrationResult::InvalidParameter);
         }
-        // has_init_data and data_length must be consistent: the full-size
-        // payload is required iff has_init_data == 1.
+        // Preserve wire framing validation even though the legacy contents are
+        // ignored: the full payload is required iff has_init_data == 1.
         if (parsed.has_init_data == 1) != (data_length == full_size) {
             return Err(MigrationResult::InvalidParameter);
         }
+
+        // Backward compatibility: accept but ignore legacy initMigtdData.
+        parsed.has_init_data = 0;
+        parsed.init_td_info = [0u8; TD_INFO_SIZE];
         Ok(parsed)
     }
 }
@@ -608,17 +618,15 @@ mod test {
     }
 
     #[test]
-    fn test_mig_info_with_init_data() {
+    fn test_mig_info_accepts_and_ignores_init_data() {
         let tdinfo = make_tdinfo(&[0xCAu8; 48], &[0xFEu8; 48]);
         let buf = build_mig_info(7, 0, 1, [10, 20, 30, 40], 55, Some(&tdinfo));
         let info = MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf)
             .expect("should parse with init data");
         assert_eq!(info.mig_request_id, 7);
-        assert_eq!(info.has_init_data, 1);
-        let init = info.init_td_info_if_present().expect("should be present");
-        assert_eq!(init, &tdinfo);
-        assert_eq!(td_info_mrowner(init), &[0xCAu8; 48]);
-        assert_eq!(td_info_mrownerconfig(init), &[0xFEu8; 48]);
+        assert_eq!(info.has_init_data, 0);
+        assert!(info.init_td_info_if_present().is_none());
+        assert_eq!(info.init_td_info, [0u8; TD_INFO_SIZE]);
     }
 
     #[test]
@@ -642,14 +650,12 @@ mod test {
 
     #[test]
     fn test_mig_info_rejects_has_init_data_without_tail() {
-        // has_init_data=1 but no tail bytes following → flag/length mismatch
         let buf = build_mig_info(1, 0, 1, [0; 4], 0, None);
         assert!(MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf).is_err());
     }
 
     #[test]
     fn test_mig_info_rejects_full_form_without_flag() {
-        // has_init_data=0 but full-size buffer (with init_td_info tail) → flag/length mismatch
         let tdinfo = [0u8; TD_INFO_SIZE];
         let buf = build_mig_info(1, 0, 0, [0; 4], 0, Some(&tdinfo));
         assert!(MigtdMigrationInformation::read_from_bytes(buf.len() as u32, &buf).is_err());
