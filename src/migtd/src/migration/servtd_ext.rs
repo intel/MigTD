@@ -24,17 +24,6 @@ pub const TDCS_FIELD_SERVTD_ATTR: u64 = 0x1910000300000202;
 pub const TDCS_FIELD_SERVTD_ACCEPT_SERVTD_EXT_HASH: u64 = 0x1910000300000214;
 const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 
-/// Hardcoded expected SERVTD_ATTR value.
-///
-/// Per MigTD Design Guide: "SERVTD_ATTR is written by untrusted VMM. In order
-/// to ensure VMM writes a right value, the MigTD MUST verify
-/// TDG.SERVTD.RD(CURR_SERVTD_ATTR) matching a hardcoded value in the MigTD
-/// reflecting the intended SERVTD_ATTR."
-///
-/// Bits 15:0  = SERVTD_TYPE (0 = MigTD)
-/// Bits 40:32 = IGNORE flags for SERVTD_HASH computation
-pub const EXPECTED_SERVTD_ATTR: u64 = 0;
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ServtdExt {
@@ -123,15 +112,6 @@ pub fn read_servtd_ext(
     read_field(TDCS_FIELD_SERVTD_INFO_HASH, 8, &mut cur_servtd_info_hash)?;
     read_field(TDCS_FIELD_SERVTD_ATTR, 8, &mut cur_servtd_attr)?;
 
-    // Verify CURR_SERVTD_ATTR matches the hardcoded expected value.
-    let actual_attr = u64::from_le_bytes(cur_servtd_attr);
-    if actual_attr != EXPECTED_SERVTD_ATTR {
-        log::error!(
-            "SERVTD_ATTR mismatch vs hardcoded: expected {EXPECTED_SERVTD_ATTR:#x}, got {actual_attr:#x}"
-        );
-        return Err(MigrationResult::InvalidParameter);
-    }
-
     Ok(ServtdExt {
         init_servtd_info_hash,
         init_attr,
@@ -144,26 +124,6 @@ pub fn read_servtd_ext(
         reserved: [0u8; 8],
         reserved2: [0u8; 104],
     })
-}
-
-/// Verify that CURR_SERVTD_ATTR of the target TD (VMM input) matches the
-/// hardcoded expected value (MigTD internal).
-///
-/// Per GHCI 1.5: Both source and destination MigTDs must verify this before
-/// any TDG.SERVTD.WR operations (mig_dec_key, mig_version).
-pub fn verify_servtd_attr(
-    binding_handle: u64,
-    target_td_uuid: &[u64],
-) -> Result<(), MigrationResult> {
-    let result = tdcall_servtd_rd(binding_handle, TDCS_FIELD_SERVTD_ATTR, target_td_uuid)?;
-    let actual_attr = result.content;
-    if actual_attr != EXPECTED_SERVTD_ATTR {
-        log::error!(
-            "SERVTD_ATTR mismatch: VMM wrote {actual_attr:#x}, MigTD expects {EXPECTED_SERVTD_ATTR:#x}"
-        );
-        return Err(MigrationResult::InvalidParameter);
-    }
-    Ok(())
 }
 
 pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), MigrationResult> {
