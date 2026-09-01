@@ -56,7 +56,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
         let mut sent = 0;
         while sent < buffer.len() {
             match self.transport.write(&buffer[sent..]).await {
-                Ok(len) => sent += len,
+                Ok(len) => {
+                    // Fail closed when the VMM-mediated transport reports
+                    // success without progress to avoid an infinite loop.
+                    if len == 0 {
+                        log::error!("SPDM MigtdTransport::send: zero-length transport write\n");
+                        return Err(SPDM_STATUS_SEND_FAIL);
+                    }
+                    sent += len;
+                }
                 // ConnectionAborted maps from VmcallRawError::VmmCanceled.
                 // The SpdmDeviceIo trait cannot represent this error, so just
                 // log and return the generic SPDM_STATUS_SEND_FAIL.
@@ -96,6 +104,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
                     }
                     0_usize
                 })?;
+            // Fail closed when the transport reports success without progress.
+            if n == 0 {
+                log::error!("SPDM MigtdTransport::receive header: zero-length transport read\n");
+                return Err(0_usize);
+            }
             recvd += n;
         }
 
@@ -120,6 +133,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
                     }
                     0_usize
                 })?;
+            // Fail closed when the transport reports success without progress.
+            if n == 0 {
+                log::error!("SPDM MigtdTransport::receive payload: zero-length transport read\n");
+                return Err(0_usize);
+            }
             recvd += n;
         }
 
