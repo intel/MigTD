@@ -8,6 +8,10 @@ export AS=nasm
 
 type="full"
 TestBinaries="Bin"
+no_tdinfo=false
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE_LAYOUT_CONFIG="$ROOT_DIR/config/image_layout.json"
+METADATA_CONFIG="$ROOT_DIR/config/metadata.json"
 
 function cleanup() {
     cargo clean
@@ -18,6 +22,17 @@ function cleanup() {
 }
 
 function proccess_args() {
+    local filtered_args=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--no-tdinfo" ]]; then
+            no_tdinfo=true
+        else
+            filtered_args+=("$arg")
+        fi
+    done
+    set -- "${filtered_args[@]}"
+    OPTIND=1
+
     while getopts ":t:a:v:d:c" option; do
         case "${option}" in
             t) type=${OPTARG};;
@@ -54,6 +69,11 @@ function proccess_args() {
         spdm_attestation_serial) MIGTD_FEATURE+=",spdm_attestation,virtio-serial";;
         *) MIGTD_FEATURE+=",virtio-vsock";;
     esac
+
+    if [[ ${no_tdinfo} == true ]]; then
+        IMAGE_LAYOUT_CONFIG="$ROOT_DIR/config/image_layout_no_tdinfo.json"
+        METADATA_CONFIG="$ROOT_DIR/config/metadata_no_tdinfo.json"
+    fi
 }
 
 function check_file_exist() {
@@ -69,6 +89,7 @@ function check_file_exist() {
 function populate_layout() {
     pushd deps/td-shim/devtools/td-layout-config
     cargo run -- -t memory ../../../../config/shim_layout.json -o ../../td-layout/src/runtime/exec.rs
+    cargo run -- -t image "$IMAGE_LAYOUT_CONFIG" -o ../../td-layout/src/build_time.rs
     popd
 }
 
@@ -107,7 +128,7 @@ function final_test_td_payload() {
     cargo run -p td-shim-tools --features="linker" --no-default-features --bin td-shim-ld -- \
             target/x86_64-unknown-none/release/ResetVector.bin \
             target/x86_64-unknown-none/release/td-shim \
-            -m ../../config/metadata.json \
+            -m "$METADATA_CONFIG" \
             -p ../../target/x86_64-unknown-none/release/test-td-payload \
             -o target/x86_64-unknown-none/release/final-test.bin
     
@@ -305,7 +326,7 @@ function link() {
     cargo run -p td-shim-tools --bin td-shim-ld --no-default-features --features=linker -- \
             target/x86_64-unknown-none/release/ResetVector.bin \
             target/x86_64-unknown-none/release/td-shim \
-            -m ../../config/metadata.json \
+            -m "$METADATA_CONFIG" \
             -p ../../target/x86_64-unknown-none/release/$1 \
             -o ../../target/release/$2
     popd
@@ -342,9 +363,9 @@ function enroll() {
 
 ./sh_script/preparation.sh
 
-populate_layout
+proccess_args "$@"
 
-proccess_args $@
+populate_layout
 
 case "${type}" in
     migtd) final_migtd ;;

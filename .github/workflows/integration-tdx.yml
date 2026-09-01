@@ -48,7 +48,7 @@ jobs:
         run: bash sh_script/preparation.sh
 
       - name: Build Migration TD binary (policy v1 + TLS + Release)
-        run: cargo image --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -60,7 +60,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image  --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -75,7 +75,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --no-tdinfo --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
 
       - name: Run Tests - Test pre-binding
         run: |
@@ -106,7 +106,7 @@ jobs:
         run: bash sh_script/preparation.sh
 
       - name: Build Migration TD binary (policy v1 + TLS + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -115,7 +115,7 @@ jobs:
           popd
       
       - name: Build all test binaries
-        run: bash sh_script/build_final.sh -t test -c -a on -d serial
+        run: bash sh_script/build_final.sh --no-tdinfo -t test -c -a on -d serial
 
       - name: Run Tests
         run: |
@@ -127,7 +127,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v1 + TLS + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
       
       - name: Run Tests
         run: |
@@ -139,7 +139,7 @@ jobs:
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -151,7 +151,7 @@ jobs:
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
       
       - name: Run Tests
         run: |
@@ -166,7 +166,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v1 + SPDM + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 
       - name: Run Tests
         run: |
@@ -181,7 +181,7 @@ jobs:
           popd
       
       - name: Build Migration TD binary (policy v1 + SPDM + Debug)
-        run: cargo image --debug --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --debug --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 
       - name: Run Tests
         run: |
@@ -196,7 +196,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
 
       - name: Run Tests
         run: |
@@ -208,7 +208,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --debug
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --debug
 
       - name: Run Tests
         run: |
