@@ -133,10 +133,6 @@ impl<T: AsRef<[u8]>> Packet<T> {
         if op == 0 || op > 7 {
             return Err(VsockError::Malformed);
         }
-        // Validate data_len doesn't exceed the buffer beyond the header
-        if self.header_len() + self.data_len() as usize > self.buffer.as_ref().len() {
-            return Err(VsockError::Truncated);
-        }
         Ok(())
     }
 
