@@ -198,6 +198,21 @@ pub(super) async fn receive_pre_session_data_packet<T: AsyncRead + AsyncWrite + 
     }
 
     let pre_session_data_payload_size = header.length as usize;
+
+    // Bound the VMM-supplied payload length before allocating. Without this
+    // check, the untrusted u32 length could request a roughly 4 GiB heap
+    // allocation and abort MigTD. 1 MiB is well above expected policy and
+    // issuer-chain sizes.
+    const MAX_PRE_SESSION_PAYLOAD_SIZE: usize = 1 * 1024 * 1024;
+    if pre_session_data_payload_size > MAX_PRE_SESSION_PAYLOAD_SIZE {
+        log::error!(
+            "receive_pre_session_data_packet: payload length {} exceeds max {}\n",
+            pre_session_data_payload_size,
+            MAX_PRE_SESSION_PAYLOAD_SIZE
+        );
+        return Err(MigrationResult::InvalidParameter);
+    }
+
     let mut pre_session_data_payload = vec![0u8; pre_session_data_payload_size];
     receive_pre_session_data(transport, &mut pre_session_data_payload)
         .await
@@ -389,7 +404,10 @@ pub(crate) fn decode_peer_data(data: &[u8]) -> Option<(&[u8], &[u8])> {
 #[cfg(feature = "policy_v2")]
 pub(crate) fn local_peer_data() -> Option<Vec<u8>> {
     let policy = crate::config::get_policy()?;
-    let issuer_chain = crate::config::get_policy_issuer_chain()?;
+    // Send the signer-anchor source: the 48-byte anchor when enrolled
+    // (CoRIM-only), else the policy issuer chain PEM. The peer resolves either
+    // form via `policy::resolve_signer_anchor`.
+    let issuer_chain = crate::config::get_signer_anchor_source()?;
     encode_peer_data(policy, issuer_chain)
 }
 

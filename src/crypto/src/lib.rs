@@ -119,7 +119,118 @@ pub fn get_policy_signer_key_hash(cert_chain_pem: &[u8]) -> Result<[u8; SHA384_D
     Ok(hash)
 }
 
-/// Verifies a certificate chain and then verifies a message signature
+/// Split a PEM certificate chain into (leaf_der, root_der).
+///
+/// Convention (matches other helpers in this crate): the PEM chain is leaf-first,
+/// i.e. `chain[0]` is the leaf and `chain.last()` is the trust anchor (root).
+/// A single-cert chain returns the same bytes for leaf and root.
+pub fn split_chain_pem_to_leaf_and_root_der(cert_chain_pem: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf = chain[0].as_ref().to_vec();
+    let root = chain.last().unwrap().as_ref().to_vec();
+    Ok((leaf, root))
+}
+
+/// X.509 Extended Key Usage extension OID (RFC 5280 §4.2.1.12).
+const EXTENDED_KEY_USAGE_OID: x509::ObjectIdentifier =
+    x509::ObjectIdentifier::new_unwrap("2.5.29.37");
+
+/// `anyExtendedKeyUsage` is not a dedicated signer-purpose identifier and
+/// therefore cannot be used in the RTMR1 signer fingerprint.
+const ANY_EXTENDED_KEY_USAGE_OID: x509::ObjectIdentifier =
+    x509::ObjectIdentifier::new_unwrap("2.5.29.37.0");
+
+/// Extract the DER-encoded, dedicated signer-purpose EKU OID from a leaf cert.
+///
+/// The leaf must contain exactly one EKU extension asserting exactly one
+/// purpose OID that is not `anyExtendedKeyUsage`. This is used on the legacy
+/// single-EKU enrollment/exchange paths where a specific OID has to be selected
+/// deterministically (there is no target anchor to match against). Multi-EKU
+/// signer leaves are handled anchor-first via [`extract_leaf_eku_oids_der`].
+fn extract_single_leaf_eku_oid_der(cert: &x509::Certificate<'_>) -> Result<Vec<u8>> {
+    let extensions = cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .ok_or(Error::ParseCertificate)?;
+    let mut signer_eku = None;
+
+    for ext in extensions.get() {
+        if ext.extn_id != EXTENDED_KEY_USAGE_OID {
+            continue;
+        }
+        if signer_eku.is_some() {
+            return Err(Error::ParseCertificate);
+        }
+
+        let value = ext.extn_value.as_ref().ok_or(Error::ParseCertificate)?;
+        let purposes = Vec::<x509::ObjectIdentifier>::from_der(value.as_bytes())
+            .map_err(|_| Error::ParseCertificate)?;
+        if purposes.len() != 1 || purposes[0] == ANY_EXTENDED_KEY_USAGE_OID {
+            return Err(Error::ParseCertificate);
+        }
+        signer_eku = Some(purposes[0].to_der().map_err(|_| Error::ParseCertificate)?);
+    }
+
+    signer_eku.ok_or(Error::ParseCertificate)
+}
+
+/// Extract all dedicated DER-encoded EKU purpose OIDs asserted by a leaf cert.
+///
+/// The leaf must carry exactly one ExtendedKeyUsage extension; every purpose it
+/// asserts must be dedicated rather than `anyExtendedKeyUsage`, and is returned
+/// in leaf order. This is the anchor-first path: the caller does not need to
+/// know which purpose is the MigTD signer OID — it recomputes the signer anchor
+/// for each returned OID and keeps the one that reproduces the enrolled/measured
+/// anchor. A signer cert may therefore carry the MigTD purpose alongside
+/// unrelated dedicated purposes without the firmware hard-coding a specific
+/// OID.
+pub fn extract_leaf_eku_oids_der(cert: &x509::Certificate<'_>) -> Result<Vec<Vec<u8>>> {
+    let extensions = cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .ok_or(Error::ParseCertificate)?;
+    let mut oids: Option<Vec<Vec<u8>>> = None;
+
+    for ext in extensions.get() {
+        if ext.extn_id != EXTENDED_KEY_USAGE_OID {
+            continue;
+        }
+        if oids.is_some() {
+            // More than one EKU extension is malformed (RFC 5280 §4.2.1.12).
+            return Err(Error::ParseCertificate);
+        }
+
+        let value = ext.extn_value.as_ref().ok_or(Error::ParseCertificate)?;
+        let purposes = Vec::<x509::ObjectIdentifier>::from_der(value.as_bytes())
+            .map_err(|_| Error::ParseCertificate)?;
+        if purposes.is_empty() {
+            return Err(Error::ParseCertificate);
+        }
+        let mut ders = Vec::with_capacity(purposes.len());
+        for oid in purposes {
+            if oid == ANY_EXTENDED_KEY_USAGE_OID {
+                return Err(Error::ParseCertificate);
+            }
+            ders.push(oid.to_der().map_err(|_| Error::ParseCertificate)?);
+        }
+        oids = Some(ders);
+    }
+
+    oids.ok_or(Error::ParseCertificate)
+}
+
+/// Return the DER-encoded signer-purpose EKU OID from a PEM chain's leaf.
+pub fn extract_leaf_eku_oid_der_from_chain_pem(cert_chain_pem: &[u8]) -> Result<Vec<u8>> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf_der = chain[0].as_ref();
+    let cert = x509::Certificate::from_der(leaf_der).map_err(|_| Error::ParseCertificate)?;
+    extract_single_leaf_eku_oid_der(&cert)
+}
+
+/// Verifies a certificate chain, including issuer CA constraints, and then
+/// verifies a message signature.
 pub fn verify_cert_chain_and_signature(
     cert_chain_pem: &[u8],
     message: &[u8],
@@ -128,12 +239,126 @@ pub fn verify_cert_chain_and_signature(
     let cert_chain = extract_cert_chain_from_pem(cert_chain_pem)?;
 
     verify_certificate_chain(&cert_chain)?;
+    verify_issuer_ca_constraints(&cert_chain)?;
 
     // Extract public key from the leaf certificate and verify signature
     let leaf_cert = &cert_chain[0];
     verify_signature_with_cert(leaf_cert, message, signature)?;
 
     Ok(())
+}
+
+/// Verify a signer certificate chain (leaf-first PEM) against a CRL and fail
+/// **closed** if any certificate in the chain has been revoked.
+///
+/// Steps:
+/// 1. Locate the CA certificate in `chain_pem` whose `subject` matches the
+///    CRL's `issuer`, and verify the CRL's ECDSA-P384/SHA-384 signature with
+///    that CA's public key. An unauthenticated CRL (issuer not in the chain, or
+///    bad signature) is rejected — it can neither add nor drop revocations.
+/// 2. Reject if the serial number of **any** certificate in the chain appears
+///    in the CRL's `revokedCertificates`.
+///
+/// This is the in-guest revocation control for the servtd signer chain, called
+/// in addition to the RTMR1 signer-anchor binding (which measures the chain but
+/// cannot, by design, distinguish a still-valid certificate from a revoked one
+/// under the same root + signer EKU). Freshness/anti-rollback (monotonic CRL
+/// number) is enforced by the policy layer, not here.
+pub fn verify_signer_chain_not_revoked(chain_pem: &[u8], crl_pem: &[u8]) -> Result<()> {
+    let chain_der = extract_cert_chain_from_pem(chain_pem)?;
+    let chain = chain_der
+        .iter()
+        .map(|der| x509::Certificate::from_der(der.as_ref()).map_err(|_| Error::ParseCertificate))
+        .collect::<Result<Vec<_>>>()?;
+
+    // 1. Authenticate the CRL against its issuing CA in the chain: the CA's
+    //    subject must equal the CRL issuer, and it MUST be a CA (RFC 5280).
+    //    Requiring cA=TRUE stops a non-CA leaf — whose key a peer may hold —
+    //    from issuing its own CRL.
+    let crl_issuer_der = crl::get_crl_issuer_der(crl_pem)?;
+    let mut issuer_key = None;
+    for cert in &chain {
+        let subject_der = cert
+            .tbs_certificate
+            .subject
+            .to_der()
+            .map_err(|_| Error::ParseCertificate)?;
+        if subject_der == crl_issuer_der && is_ca_certificate(cert)? {
+            issuer_key = Some(extract_public_key_from_cert(cert)?);
+            break;
+        }
+    }
+    let issuer_key = issuer_key.ok_or_else(|| {
+        Error::CertChainVerification("CRL issuer does not match any CA in the signer chain".into())
+    })?;
+    crl::verify_crl_signature(crl_pem, &issuer_key)?;
+
+    for cert in &chain {
+        if crl::is_serial_revoked(crl_pem, cert.tbs_certificate.serial_number.as_bytes())? {
+            return Err(Error::CertChainVerification(
+                "a certificate in the signer chain is revoked".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Verify a `COSE_Sign1` ECDSA-P384/SHA-384 (ES384/ESP384) signature against
+/// an embedded RFC 9360 `x5chain`.
+///
+/// * `x5chain_der` — the certificate chain (DER, **end-entity first**) taken
+///   from the COSE protected header.
+/// * `tbs` — the COSE `Sig_structure1` to-be-signed bytes.
+/// * `signature` — the raw `r || s` ECDSA-P384 value. COSE uses the
+///   fixed-width encoding (96 bytes), **not** ASN.1 DER.
+///
+/// Steps performed:
+/// 1. Verify the chain's internal integrity (each cert signed by the next).
+/// 2. Require every issuer certificate to have `BasicConstraints.ca = true`.
+/// 3. Verify the COSE signature with the leaf certificate's public key.
+///
+/// Trust is **not** established here: this only proves the chain is internally
+/// consistent and the signature is valid. The caller must bind the returned
+/// `(root_der, leaf_eku_oid_der)` to a measured trust anchor (see
+/// `policy::compute_signer_anchor`, which folds them into the RTMR1 signer
+/// anchor) before trusting the payload.
+pub fn verify_cose_sign1_es384_x5chain(
+    x5chain_der: &[&[u8]],
+    tbs: &[u8],
+    signature: &[u8],
+) -> Result<(Vec<u8>, Vec<Vec<u8>>)> {
+    if x5chain_der.is_empty() {
+        return Err(Error::CertChainVerification("empty x5chain".into()));
+    }
+
+    // 1. Chain integrity (leaf -> ... -> root).
+    let chain: Vec<CertificateDer> = x5chain_der
+        .iter()
+        .map(|der| CertificateDer::from(der.to_vec()))
+        .collect();
+    verify_certificate_chain(&chain)?;
+    verify_issuer_ca_constraints(&chain)?;
+
+    // 3. COSE signature over `tbs` by the leaf key (raw r||s, fixed-width).
+    let leaf = x509::Certificate::from_der(x5chain_der[0]).map_err(|_| Error::ParseCertificate)?;
+    let leaf_pubkey = extract_public_key_from_cert(&leaf)?;
+    ecdsa::ecdsa_verify_with_algorithm(
+        &leaf_pubkey,
+        tbs,
+        signature,
+        &ecdsa::ECDSA_P384_SHA384_FIXED,
+    )
+    .map_err(|_| Error::SignatureVerification)?;
+
+    // 4. Anchor material for the caller: the trust-anchor cert DER plus every
+    //    EKU purpose OID the leaf asserts. The caller recomputes the signer
+    //    anchor for each OID and keeps whichever reproduces the enrolled
+    //    anchor, so a multi-purpose signer leaf needs no hard-coded OID here.
+    let root_der = x5chain_der[x5chain_der.len() - 1].to_vec();
+    let leaf_eku_oids_der = extract_leaf_eku_oids_der(&leaf)?;
+
+    Ok((root_der, leaf_eku_oids_der))
 }
 
 fn extract_cert_chain_from_pem(cert_chain_pem: &[u8]) -> Result<Vec<CertificateDer>> {
@@ -174,6 +399,23 @@ fn verify_certificate_chain(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
             .map_err(|_| Error::ParseCertificate)?;
 
         verify_cert_signature(&subject_cert, &issuer_cert)?;
+    }
+
+    Ok(())
+}
+
+/// Require every certificate acting as an issuer to be an X.509 CA.
+fn verify_issuer_ca_constraints(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
+    for cert_der in cert_chain.iter().skip(1) {
+        let issuer =
+            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
+        if !is_ca_certificate(&issuer)? {
+            return Err(Error::CertChainVerification(
+                "Certificate chain contains a non-CA issuer (BasicConstraints \
+                 cA=TRUE missing)"
+                    .into(),
+            ));
+        }
     }
 
     Ok(())
@@ -268,25 +510,21 @@ fn verify_signature_with_algorithm(
 /// Performs the following checks:
 /// 1. Verifies the peer chain's internal signature integrity
 /// 2. Root CA must match between local and peer chains
-/// 3. Leaf certificate Subject Name must match
-/// 4. Every issuer certificate in the peer chain MUST carry the X.509
+/// 3. Every issuer certificate in the peer chain MUST carry the X.509
 ///    `BasicConstraints` extension with `cA=TRUE` (RFC 5280 §4.2.1.9). This
 ///    prevents a peer from presenting `[fake_leaf, legit_leaf, …]` where the
 ///    legit leaf's private key was stolen and used to sign a synthetic
 ///    sub-leaf — the legit leaf is not a CA, so it is not a valid issuer.
+/// 4. The local and peer leaves must assert the same single, dedicated EKU OID.
 ///
 /// Intentionally not checked:
 /// - **Intermediate cert identity** — intermediate cert contents are not
 ///   compared against the local chain's intermediates. This lets either
 ///   side rotate its intermediate CA(s) independently, as long as the
-///   shared root and the leaf Subject Name remain stable and every issuer
+///   shared root and the leaf signer-purpose EKU remain stable and every issuer
 ///   in the peer chain is itself a CA (check 4). Intermediate certs are
 ///   still validated structurally (signature integrity in check 1 and
 ///   CA-attribute in check 4).
-///
-/// Assumption: the leaf cert's Subject Name uniquely identifies the
-/// intended usage for the product/model — distinct usages must use
-/// distinct Subject Names in their leaf certs.
 pub fn validate_peer_cert_chain(local_chain_pem: &[u8], peer_chain_pem: &[u8]) -> Result<()> {
     let local_chain = extract_cert_chain_from_pem(local_chain_pem)?;
     let peer_chain = extract_cert_chain_from_pem(peer_chain_pem)?;
@@ -297,30 +535,31 @@ pub fn validate_peer_cert_chain(local_chain_pem: &[u8], peer_chain_pem: &[u8]) -
     // 2. Root CA must match (DER byte comparison)
     check_root_ca_match(&local_chain, &peer_chain)?;
 
-    // Parse leaf certs for subject name check
+    // 3. Every issuer in the peer chain must be a CA.
+    verify_issuer_ca_constraints(&peer_chain).map_err(|err| match err {
+        Error::CertChainVerification(message) => Error::PeerCertChainValidation(message),
+        other => other,
+    })?;
+
+    // 4. Require matching leaf signer-purpose EKUs.
     let local_leaf = x509::Certificate::from_der(local_chain[0].as_ref())
         .map_err(|_| Error::ParseCertificate)?;
     let peer_leaf =
         x509::Certificate::from_der(peer_chain[0].as_ref()).map_err(|_| Error::ParseCertificate)?;
-
-    // 3. Leaf certificate Subject Name must match
-    if local_leaf.tbs_certificate.subject != peer_leaf.tbs_certificate.subject {
+    let local_eku = extract_single_leaf_eku_oid_der(&local_leaf).map_err(|_| {
+        Error::PeerCertChainValidation(
+            "Local leaf certificate has no single dedicated signer EKU".into(),
+        )
+    })?;
+    let peer_eku = extract_single_leaf_eku_oid_der(&peer_leaf).map_err(|_| {
+        Error::PeerCertChainValidation(
+            "Peer leaf certificate has no single dedicated signer EKU".into(),
+        )
+    })?;
+    if local_eku != peer_eku {
         return Err(Error::PeerCertChainValidation(
-            "Leaf certificate Subject Name mismatch between local and peer chains".into(),
+            "Leaf signer EKU mismatch between local and peer chains".into(),
         ));
-    }
-
-    // 4. Every issuer in the peer chain must be a CA.
-    for cert_der in peer_chain.iter().skip(1) {
-        let issuer =
-            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
-        if !is_ca_certificate(&issuer)? {
-            return Err(Error::PeerCertChainValidation(
-                "Peer chain contains a non-CA issuer certificate (BasicConstraints \
-                 cA=TRUE missing)"
-                    .into(),
-            ));
-        }
     }
 
     Ok(())
@@ -487,10 +726,9 @@ kXYiyuG9OEI=
     // Adversarial chain demonstrating the stolen-leaf-key attack:
     //   [fake_leaf, legit_leaf, intermediate, root]
     // The legit leaf has no BasicConstraints; the fake leaf was signed by
-    // the legit leaf's key while reusing the legit leaf's Subject Name, so
-    // the existing subject-name + root-match + signature-integrity checks
-    // all pass. Only the CA-attribute check on the legit leaf (as issuer)
-    // rejects this chain.
+    // the legit leaf's key. The chain's signature integrity and root match;
+    // the CA-attribute check on the legit leaf (as issuer) rejects it before
+    // signer-purpose EKU validation.
     fn attacker_chain() -> &'static [u8] {
         b"-----BEGIN CERTIFICATE-----
 MIICVzCCAd2gAwIBAgIUHTraNuO2R92W3rj+VUu757uTU/0wCgYIKoZIzj0EAwMw
@@ -570,13 +808,13 @@ m07Y31+o+LpsZuEnlIETx/zemHA=
 
     #[test]
     fn test_validate_peer_cert_chain_same_chain() {
-        let chain = test_chain();
+        let chain = include_bytes!("../test/eku/signer_a.pem");
         assert!(validate_peer_cert_chain(chain, chain).is_ok());
     }
 
     #[test]
     fn test_validate_peer_cert_chain_root_ca_mismatch() {
-        let chain = test_chain();
+        let chain = include_bytes!("../test/eku/signer_a.pem");
         let diff = different_root_chain();
         let result = validate_peer_cert_chain(chain, diff);
         assert!(result.is_err());
@@ -589,17 +827,97 @@ m07Y31+o+LpsZuEnlIETx/zemHA=
     }
 
     #[test]
-    fn test_validate_peer_cert_chain_subject_name_mismatch() {
-        let chain = test_chain();
-        let root = root_ca_only();
-        let result = validate_peer_cert_chain(chain, root);
+    fn test_validate_peer_cert_chain_accepts_subject_change_with_same_eku() {
+        let local = include_bytes!("../test/eku/signer_a.pem");
+        let peer = include_bytes!("../test/eku/signer_b.pem");
+        assert!(validate_peer_cert_chain(local, peer).is_ok());
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_eku_mismatch() {
+        let local = include_bytes!("../test/eku/signer_a.pem");
+        let peer = include_bytes!("../test/eku/signer_other_eku.pem");
+        let result = validate_peer_cert_chain(local, peer);
         assert!(result.is_err());
         match result {
             Err(Error::PeerCertChainValidation(msg)) => {
-                assert!(msg.contains("Subject Name mismatch"));
+                assert!(msg.contains("EKU mismatch"));
             }
             _ => panic!("Expected PeerCertChainValidation error"),
         }
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_missing_eku() {
+        let local = include_bytes!("../test/eku/signer_a.pem");
+        let peer = include_bytes!("../test/eku/signer_no_eku.pem");
+        let result = validate_peer_cert_chain(local, peer);
+        assert!(result.is_err());
+        match result {
+            Err(Error::PeerCertChainValidation(msg)) => {
+                assert!(msg.contains("no single dedicated signer EKU"));
+            }
+            _ => panic!("Expected PeerCertChainValidation error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_rejects_ambiguous_ekus() {
+        let local = include_bytes!("../test/eku/signer_a.pem");
+        let peer = include_bytes!("../test/eku/signer_multiple_eku.pem");
+        let result = validate_peer_cert_chain(local, peer);
+        match result {
+            Err(Error::PeerCertChainValidation(msg)) => {
+                assert!(msg.contains("no single dedicated signer EKU"));
+            }
+            _ => panic!("Expected PeerCertChainValidation error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_rejects_any_eku() {
+        let local = include_bytes!("../test/eku/signer_a.pem");
+        let peer = include_bytes!("../test/eku/signer_any_eku.pem");
+        let result = validate_peer_cert_chain(local, peer);
+        match result {
+            Err(Error::PeerCertChainValidation(msg)) => {
+                assert!(msg.contains("no single dedicated signer EKU"));
+            }
+            _ => panic!("Expected PeerCertChainValidation error"),
+        }
+    }
+
+    #[test]
+    fn test_validate_peer_cert_chain_rejects_designated_eku_among_many() {
+        let chain = include_bytes!("../test/eku/signer_designated_multi.pem");
+        assert!(validate_peer_cert_chain(chain, chain).is_err());
+    }
+
+    #[test]
+    fn test_extract_leaf_eku_oids_lists_all_purposes() {
+        // The list extractor returns every purpose the leaf asserts, in order,
+        // each DER-encoded — so an anchor-first caller can match without knowing
+        // which OID is the MigTD signer purpose.
+        let chain =
+            extract_cert_chain_from_pem(include_bytes!("../test/eku/signer_designated_multi.pem"))
+                .unwrap();
+        let leaf = x509::Certificate::from_der(chain[0].as_ref()).unwrap();
+        let oids = extract_leaf_eku_oids_der(&leaf).unwrap();
+        assert_eq!(oids.len(), 2);
+        let migtd_signer_oid_der = x509::ObjectIdentifier::new_unwrap("1.3.6.1.4.1.311.76.59.1.43")
+            .to_der()
+            .unwrap();
+        assert!(oids.iter().any(|d| *d == migtd_signer_oid_der));
+
+        let no_eku =
+            extract_cert_chain_from_pem(include_bytes!("../test/eku/signer_no_eku.pem")).unwrap();
+        let no_eku_leaf = x509::Certificate::from_der(no_eku[0].as_ref()).unwrap();
+        assert!(extract_leaf_eku_oids_der(&no_eku_leaf).is_err());
+
+        let any_eku =
+            extract_cert_chain_from_pem(include_bytes!("../test/eku/signer_any_eku.pem")).unwrap();
+        let any_eku_leaf = x509::Certificate::from_der(any_eku[0].as_ref()).unwrap();
+        assert!(extract_leaf_eku_oids_der(&any_eku_leaf).is_err());
     }
 
     #[test]
@@ -658,6 +976,94 @@ mdG27TBGsOS6KzfZ7avUDurwwFx++58HjoLq68p8jvKQBQJjco9bcwUFAjEA7otq
                 assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
             }
             other => panic!("Expected PeerCertChainValidation, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_json_signer_chain_rejects_non_ca_issuer() {
+        let result = verify_cert_chain_and_signature(attacker_chain(), b"", b"");
+        match result {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
+            }
+            other => panic!("Expected CertChainVerification, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cose_signer_chain_rejects_non_ca_issuer() {
+        let chain = extract_cert_chain_from_pem(attacker_chain()).unwrap();
+        let chain_refs: Vec<&[u8]> = chain.iter().map(|cert| cert.as_ref()).collect();
+        let result = verify_cose_sign1_es384_x5chain(&chain_refs, b"", b"");
+        match result {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("non-CA"), "unexpected error message: {msg}");
+            }
+            other => panic!("Expected CertChainVerification, got: {other:?}"),
+        }
+    }
+
+    // ---- signer-chain revocation (CRL) ------------------------------------
+    //
+    // Fixtures (src/crypto/test/crl/): a P-384 root CA, a leaf signer it
+    // issued, an empty CRL, and a CRL that revokes the leaf. See crl.rs tests
+    // for the parsing-level coverage; these exercise the full orchestration in
+    // `verify_signer_chain_not_revoked`.
+
+    fn crl_signer_chain_pubkey(index: usize) -> Vec<u8> {
+        let chain =
+            extract_cert_chain_from_pem(include_bytes!("../test/crl/signer_chain.pem")).unwrap();
+        let cert = x509::Certificate::from_der(chain[index].as_ref()).unwrap();
+        extract_public_key_from_cert(&cert).unwrap()
+    }
+
+    #[test]
+    fn verify_crl_signature_accepts_correct_issuer_key() {
+        let crl = include_bytes!("../test/crl/crl_revoked.pem");
+        assert!(crl::verify_crl_signature(crl, &crl_signer_chain_pubkey(1)).is_ok());
+    }
+
+    #[test]
+    fn verify_crl_signature_rejects_wrong_issuer_key() {
+        let crl = include_bytes!("../test/crl/crl_revoked.pem");
+        assert!(crl::verify_crl_signature(crl, &crl_signer_chain_pubkey(0)).is_err());
+    }
+
+    #[test]
+    fn signer_chain_not_revoked_passes_for_empty_crl() {
+        let chain = include_bytes!("../test/crl/signer_chain.pem");
+        let crl = include_bytes!("../test/crl/crl_empty.pem");
+        assert!(verify_signer_chain_not_revoked(chain, crl).is_ok());
+    }
+
+    #[test]
+    fn signer_chain_not_revoked_fails_closed_for_revoked_leaf() {
+        let chain = include_bytes!("../test/crl/signer_chain.pem");
+        let crl = include_bytes!("../test/crl/crl_revoked.pem");
+        match verify_signer_chain_not_revoked(chain, crl) {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("revoked"), "unexpected message: {msg}");
+            }
+            other => panic!("expected revoked CertChainVerification, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn signer_chain_not_revoked_rejects_non_ca_crl_issuer() {
+        // A CRL "issued" and signed by a non-CA end-entity leaf (whose private
+        // key a peer may legitimately hold) must NOT be accepted as an
+        // authenticated CRL — only a CA issues CRLs. Even though the leaf's key
+        // validly signs this CRL and the leaf is present in the chain, the
+        // cA=TRUE requirement rejects it (fail-closed), so a peer cannot present
+        // a self-crafted CRL to satisfy the freshness floor or launder a
+        // revocation.
+        let chain = include_bytes!("../test/crl/nonca_leaf_chain.pem");
+        let crl = include_bytes!("../test/crl/crl_leaf_issued.pem");
+        match verify_signer_chain_not_revoked(chain, crl) {
+            Err(Error::CertChainVerification(msg)) => {
+                assert!(msg.contains("CRL issuer"), "unexpected message: {msg}");
+            }
+            other => panic!("expected CRL-issuer CertChainVerification error, got {other:?}"),
         }
     }
 }

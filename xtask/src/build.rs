@@ -86,7 +86,8 @@ pub(crate) struct BuildArgs {
     /// Use migration policy v2
     #[clap(long)]
     policy_v2: bool,
-    /// Issuer chain of migration policy v2, required if `policy_v2` is set
+    /// Issuer chain of migration policy v2. Provide this OR `--signer-anchor`
+    /// (at least one is required when `policy_v2` is set).
     #[clap(long)]
     policy_issuer_chain: Option<PathBuf>,
     /// Security Version Number recorded in the MigTD TD_INFO structure
@@ -95,6 +96,19 @@ pub(crate) struct BuildArgs {
     /// Omit TD_INFO for compatibility with VMMs that do not support TDVF Type 7
     #[clap(long)]
     no_tdinfo: bool,
+    /// Path of the 48-byte RTMR1 signer anchor to enroll (CoRIM-only form),
+    /// as an alternative to `--policy-issuer-chain`. The full PEM chain is not
+    /// carried in the image; the anchor is measured into RTMR1 identically.
+    /// Requires `policy_v2`.
+    #[clap(long)]
+    signer_anchor: Option<PathBuf>,
+    /// Path of the signed ServTD TCB-mapping CoRIM (`COSE_Sign1`, `.cose`).
+    /// When provided, it is enrolled into the CFV and the `servtd_corim`
+    /// feature is activated so the runtime resolves `hash -> SVN` through the
+    /// CoRIM. Requires `policy_v2`. The CoRIM is not measured, so enrolling it
+    /// does not change the image `tdinfo_hash`.
+    #[clap(long)]
+    servtd_corim: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -213,11 +227,13 @@ impl BuildArgs {
                     "policy_v2 is enabled but no policy file is provided"
                 ));
             }
-            if self.policy_issuer_chain.is_none() {
+            if self.policy_issuer_chain.is_none() && self.signer_anchor.is_none() {
                 return Err(anyhow::anyhow!(
-                    "policy_v2 is enabled but no policy_issuer_chain file is provided"
+                    "policy_v2 is enabled but neither --policy-issuer-chain nor --signer-anchor was provided"
                 ));
             }
+        } else if self.servtd_corim.is_some() {
+            return Err(anyhow::anyhow!("--servtd-corim requires --policy-v2"));
         }
         Ok(())
     }
@@ -369,15 +385,37 @@ impl BuildArgs {
         ]);
 
         let cmd = if self.policy_v2 {
-            cmd.args(&[
-                "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
-                self.policy_issuer_chain()?.to_str().unwrap(),
-            ])
+            // Enroll the RTMR1 signer anchor: prefer the 48-byte anchor slot
+            // (CoRIM-only form) when `--signer-anchor` is given, else the
+            // legacy policy issuer chain PEM.
+            if let Some(anchor) = &self.signer_anchor {
+                let anchor = fs::canonicalize(anchor)?;
+                cmd.args(&[
+                    "2B9D5A84-6F3C-4E71-8A2D-0C7E1F4B6A93",
+                    anchor.to_str().unwrap(),
+                ])
+            } else {
+                cmd.args(&[
+                    "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
+                    self.policy_issuer_chain()?.to_str().unwrap(),
+                ])
+            }
         } else {
             cmd.args(&[
                 "CA437832-4C51-4322-B13D-A21BD0C8FFF6",
                 self.root_ca()?.to_str().unwrap(),
             ])
+        };
+
+        // Enroll the optional signed CoRIM under its FFS GUID.
+        let corim_path = self.servtd_corim()?;
+        let cmd = if let Some(corim) = &corim_path {
+            cmd.args(&[
+                "7E5B9C11-2D4A-4F6E-9B3C-1A2B3C4D5E6F",
+                corim.to_str().unwrap(),
+            ])
+        } else {
+            cmd
         };
 
         cmd.args(&["-o", bin.to_str().unwrap()]).run()?;
@@ -418,6 +456,10 @@ impl BuildArgs {
 
         if self.policy_v2 {
             features.push_str(",policy_v2");
+        }
+
+        if self.servtd_corim.is_some() {
+            features.push_str(",servtd_corim");
         }
 
         if let Some(selected) = &self.features {
@@ -554,6 +596,14 @@ impl BuildArgs {
             .as_ref()
             .ok_or(anyhow::anyhow!("No policy_issuer_chain file is provided"))?;
         fs::canonicalize(path).map_err(|e| e.into())
+    }
+
+    /// Canonicalized path of the signed ServTD TCB-mapping CoRIM, if provided.
+    fn servtd_corim(&self) -> Result<Option<PathBuf>> {
+        match self.servtd_corim.as_ref() {
+            Some(path) => Ok(Some(fs::canonicalize(path)?)),
+            None => Ok(None),
+        }
     }
 
     fn root_ca(&self) -> Result<PathBuf> {

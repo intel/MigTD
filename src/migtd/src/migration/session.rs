@@ -1043,18 +1043,6 @@ async fn migration_dst_exchange_msk(
 
 #[cfg(feature = "main")]
 pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
-    // Per GHCI 1.5: if VMM provided initMigtdData, verify policy binding
-    #[cfg(feature = "policy_v2")]
-    if let Some(init_td_info) = info.mig_info.init_td_info_if_present() {
-        crate::mig_policy::verify_init_migtd_data_policy_binding(init_td_info).map_err(|e| {
-            log::error!(
-                migration_request_id = info.mig_info.mig_request_id;
-                "exchange_msk: initMigtdData policy binding verification failed: {:?}\n", e
-            );
-            MigrationResult::PolicyUnsatisfiedError
-        })?;
-    }
-
     #[allow(unused_mut)]
     let mut transport = setup_transport(
         info.mig_info.mig_request_id,
@@ -1431,11 +1419,13 @@ mod test {
     #[cfg(feature = "vmcall-raw")]
     mod parse_request_tests {
         use super::super::{parse_request, REQUESTS};
+        #[cfg(not(feature = "policy_v2"))]
+        use crate::migration::MigtdMigrationInformation;
         #[cfg(feature = "policy_v2")]
         use crate::migration::MIGTD_MIGRATION_INFO_HEADER_SIZE;
         use crate::migration::{
             data::{RequestDataBufferHeader, WaitForRequestResponse},
-            EnableLogAreaInfo, MigrationResult, MigtdMigrationInformation, ReportInfo,
+            EnableLogAreaInfo, MigrationResult, ReportInfo,
         };
         use core::mem::size_of;
         use core::task::Poll;
@@ -1472,6 +1462,16 @@ mod test {
             let mut payload = vec![0u8; size];
             payload[0..8].copy_from_slice(&request_id.to_le_bytes());
             payload[8] = is_source;
+            payload
+        }
+
+        #[cfg(feature = "policy_v2")]
+        fn build_migration_payload_with_legacy_init(request_id: u64, is_source: u8) -> Vec<u8> {
+            let mut payload = vec![0u8; size_of::<crate::migration::MigtdMigrationInformation>()];
+            payload[0..8].copy_from_slice(&request_id.to_le_bytes());
+            payload[8] = is_source;
+            payload[9] = 1;
+            payload[MIGTD_MIGRATION_INFO_HEADER_SIZE..].fill(0xA5);
             payload
         }
 
@@ -1527,6 +1527,26 @@ mod test {
                 Poll::Ready(Ok(WaitForRequestResponse::StartMigration(info))) => {
                     assert_eq!(info.mig_info.mig_request_id, request_id);
                     assert_eq!(info.mig_info.migration_source, 1);
+                }
+                _ => panic!("Expected StartMigration, got unexpected variant"),
+            }
+            assert!(pending.is_none());
+            cleanup_request(request_id);
+        }
+
+        #[cfg(feature = "policy_v2")]
+        #[test]
+        fn test_parse_start_migration_accepts_and_ignores_legacy_init_tdinfo() {
+            let request_id: u64 = 0xAA00_0000_0000_0002;
+            let payload = build_migration_payload_with_legacy_init(request_id, 1);
+            let buf = build_request_buffer(1, &payload);
+            let mut pending = None;
+            let result = parse_request(&buf, HDR_LEN, &mut pending);
+            match result {
+                Poll::Ready(Ok(WaitForRequestResponse::StartMigration(info))) => {
+                    assert_eq!(info.mig_info.mig_request_id, request_id);
+                    assert_eq!(info.mig_info.has_init_data, 0);
+                    assert!(info.mig_info.init_td_info_if_present().is_none());
                 }
                 _ => panic!("Expected StartMigration, got unexpected variant"),
             }
