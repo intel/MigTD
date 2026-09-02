@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use crate::config;
-use anyhow::{Context, Ok, Result};
+use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use lazy_static::lazy_static;
 use std::{
@@ -245,6 +245,7 @@ impl BuildArgs {
         self.build_shim_layout()?;
 
         let sh = Shell::new()?;
+        sh.set_var("RUSTFLAGS", Self::remap_rustflags()?);
         sh.change_dir(SHIM_FOLDER.as_path());
         if self.profile() == "release" {
             cmd!(sh, "cargo build -p td-shim --target x86_64-unknown-none --features=main,tdx,log/max_level_off --no-default-features --release")
@@ -308,6 +309,7 @@ impl BuildArgs {
         let sh = Shell::new()?;
         sh.set_var("CC_x86_64_unknown_none", "clang");
         sh.set_var("AR_x86_64_unknown_none", "llvm-ar");
+        sh.set_var("RUSTFLAGS", Self::remap_rustflags()?);
         sh.set_var(
             "SPDM_CONFIG",
             PROJECT_ROOT
@@ -399,6 +401,40 @@ impl BuildArgs {
         } else {
             "release"
         }
+    }
+
+    fn remap_rustflags() -> Result<String> {
+        let project = PROJECT_ROOT
+            .to_str()
+            .context("project root is not valid UTF-8")?;
+        let cargo_home = match env::var("CARGO_HOME") {
+            Ok(path) => path,
+            Err(env::VarError::NotPresent) => env::var("HOME")
+                .map(|home| format!("{home}/.cargo"))
+                .context("CARGO_HOME and HOME are unavailable")?,
+            Err(error) => return Err(error).context("CARGO_HOME is not valid UTF-8"),
+        };
+        let rustup_home = match env::var("RUSTUP_HOME") {
+            Ok(path) => path,
+            Err(env::VarError::NotPresent) => env::var("HOME")
+                .map(|home| format!("{home}/.rustup"))
+                .context("RUSTUP_HOME and HOME are unavailable")?,
+            Err(error) => return Err(error).context("RUSTUP_HOME is not valid UTF-8"),
+        };
+        let mut flags = match env::var("RUSTFLAGS") {
+            Ok(flags) => flags,
+            Err(env::VarError::NotPresent) => String::new(),
+            Err(error) => return Err(error).context("RUSTFLAGS is not valid UTF-8"),
+        };
+        if !flags.is_empty() {
+            flags.push(' ');
+        }
+        flags.push_str(&format!(
+            "--remap-path-prefix={cargo_home}=/cargo \
+             --remap-path-prefix={rustup_home}=/rustup \
+             --remap-path-prefix={project}=/migtd"
+        ));
+        Ok(flags)
     }
 
     fn features(&self) -> String {
