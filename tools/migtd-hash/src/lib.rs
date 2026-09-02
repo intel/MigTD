@@ -4,6 +4,7 @@
 
 use anyhow::{anyhow, Error, Result};
 use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
+use igvm::{IgvmDirectiveHeader, IgvmFile};
 use migtd::{
     config::{
         CONFIG_VOLUME_SIZE, MIGTD_POLICY_FFS_GUID, MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
@@ -16,6 +17,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
     mem::size_of,
 };
+use td_layout::build_time::TD_SHIM_CONFIG_BASE;
 use td_shim_interface::td_uefi_pi::{fv, pi};
 use td_shim_tools::tee_info_hash::{Manifest, TdInfoStruct};
 
@@ -66,9 +68,9 @@ pub fn build_td_info(
     let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
     image.seek(SeekFrom::Start(0))?;
     if igvmformat {
-        cfv = td_info.read_igvmcfvdata(&mut image);
+        cfv = read_igvm_cfv_data(&mut image)?;
     } else {
-        image.read(&mut cfv)?;
+        image.read_exact(&mut cfv)?;
     }
 
     let rtmr1 = rtmr1(&cfv, &td_info.rtmr1, is_policy_v2)?;
@@ -109,6 +111,46 @@ pub fn build_td_info(
     }
 
     Ok(td_info)
+}
+
+fn read_igvm_cfv_data(image: &mut File) -> Result<Vec<u8>> {
+    let mut contents = Vec::new();
+    image.read_to_end(&mut contents)?;
+    let igvm = IgvmFile::new_from_binary(&contents, None)
+        .map_err(|e| anyhow!("failed to parse IGVM image: {e:?}"))?;
+    let cfv_base = u64::from(TD_SHIM_CONFIG_BASE);
+    let cfv_end = cfv_base + CONFIG_VOLUME_SIZE as u64;
+    let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
+
+    for directive in igvm.directives() {
+        let IgvmDirectiveHeader::PageData { gpa, data, .. } = directive else {
+            continue;
+        };
+        copy_igvm_cfv_page(&mut cfv, cfv_base, cfv_end, *gpa, data)?;
+    }
+
+    Ok(cfv)
+}
+
+fn copy_igvm_cfv_page(
+    cfv: &mut [u8],
+    cfv_base: u64,
+    cfv_end: u64,
+    gpa: u64,
+    data: &[u8],
+) -> Result<()> {
+    if gpa < cfv_base || gpa >= cfv_end || data.is_empty() {
+        return Ok(());
+    }
+
+    let start = usize::try_from(gpa - cfv_base)
+        .map_err(|_| anyhow!("IGVM CFV page GPA {gpa:#x} does not fit usize"))?;
+    let end = start
+        .checked_add(data.len())
+        .filter(|end| *end <= cfv.len())
+        .ok_or_else(|| anyhow!("IGVM CFV page at GPA {gpa:#x} exceeds the CFV range"))?;
+    cfv[start..end].copy_from_slice(data);
+    Ok(())
 }
 
 pub fn calculate_servtd_info_hash(td_info: TdInfoStruct) -> Result<Vec<u8>, Error> {
@@ -219,4 +261,27 @@ fn calculate_digest(data: &[u8]) -> Result<Vec<u8>, Error> {
     }
 
     Ok(digest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_igvm_cfv_page;
+
+    #[test]
+    fn igvm_cfv_pages_preserve_gpa_gaps() {
+        let mut cfv = [0u8; 16];
+        copy_igvm_cfv_page(&mut cfv, 0x1000, 0x1010, 0x1008, &[1, 2, 3, 4]).unwrap();
+
+        assert_eq!(&cfv[..8], &[0u8; 8]);
+        assert_eq!(&cfv[8..12], &[1, 2, 3, 4]);
+        assert_eq!(&cfv[12..], &[0u8; 4]);
+    }
+
+    #[test]
+    fn igvm_cfv_pages_reject_range_overflow() {
+        let mut cfv = [0u8; 16];
+        assert!(copy_igvm_cfv_page(&mut cfv, 0x1000, 0x1010, 0x100f, &[1, 2]).is_err());
+        assert!(copy_igvm_cfv_page(&mut cfv, 0x1000, 0x1010, 0x2000, &[1, 2]).is_ok());
+        assert_eq!(cfv, [0u8; 16]);
+    }
 }
