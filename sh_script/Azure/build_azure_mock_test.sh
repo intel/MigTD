@@ -11,7 +11,7 @@
 #   - Extracts mock TD measurements from hard coded quote data.
 #   - Updates policy templates with extracted measurements
 #   - Generates certificate chain for signing
-#   - Signs all components (td_identity, tcb_mapping, final policy)
+#   - Signs td_identity and tcb_mapping, then emits an unsigned policy envelope
 #   - Creates test-ready signed policy
 #   - Optionally tests the generated policy with migtdemu.sh
 #
@@ -44,7 +44,7 @@
 #      json-signer, servtd-collateral-generator, migtd-policy-generator)
 #   3. Extracts report data from mock data
 #   4. Updates td_identity.json template with extracted measurements
-#   5. Updates tcb_mapping.json template with extracted measurements
+#   5. Updates tcb_mapping.json with the complete TDINFO hash
 #   6. Generates certificate chain (root CA + policy signing cert)
 #   7. Signs td_identity.json with policy signing key (testing only)
 #   8. Signs tcb_mapping.json with policy signing key (testing only)
@@ -293,8 +293,8 @@ if [ ! -f "$TD_IDENTITY_TEMPLATE" ]; then
 fi
 if [ ! -f "$TCB_MAPPING_TEMPLATE" ]; then
     echo -e "${YELLOW}Generating default tcb_mapping.json template${NC}"
-    printf '{"id":"BB9668CA-4EE8-4523-941A-B3B03BE46E03","version":1,"issueDate":"2025-01-01T00:00:00Z","nextUpdate":"2026-01-01T00:00:00Z","mrSigner":"%s","isvProdId":1,"svnMappings":[{"tdMeasurements":{"mrtd":"%s","rtmr0":"%s","rtmr1":"%s"},"isvsvn":1}]}' \
-        "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" > "$TCB_MAPPING_TEMPLATE"
+    printf '{"id":"BB9668CA-4EE8-4523-941A-B3B03BE46E03","version":1,"issueDate":"2025-01-01T00:00:00Z","nextUpdate":"2026-01-01T00:00:00Z","svnMappings":[]}' \
+        > "$TCB_MAPPING_TEMPLATE"
 fi
 
 # Verify input files exist
@@ -373,6 +373,10 @@ cargo build --release -p servtd-collateral-generator 2>&1 | grep -E "(Compiling|
 
 echo "Building migtd-policy-generator..."
 cargo build --release -p migtd-policy-generator 2>&1 | grep -E "(Compiling|Finished|error)" || true
+
+# Build migtd-hash
+echo "Building migtd-hash..."
+cargo build --release -p migtd-hash 2>&1 | grep -E "(Compiling|Finished|error)" || true
 
 # Verify tools exist
 # Note: azcvm-extract-report is in a different location
@@ -454,15 +458,15 @@ echo -e "${GREEN}✓ TD Identity updated: $TD_IDENTITY_UPDATED${NC}"
 echo
 
 #
-# Step 4: Update tcb_mapping.json with extracted measurements
-# Make sure no ending newline is added (important for signing)
+# Step 4: Update tcb_mapping.json with the complete TDINFO hash
 #
 echo -e "${BLUE}=== Step 4: Updating TCB Mapping Template ===${NC}"
-jq -c ".svnMappings[0].tdMeasurements.mrtd = \"$MRTD\" | \
-.svnMappings[0].tdMeasurements.rtmr0 = \"$RTMR0\" | \
-.svnMappings[0].tdMeasurements.rtmr1 = \"$RTMR1\" | \
-.svnMappings[0].isvsvn = $ISVSVN" \
-"$TCB_MAPPING_TEMPLATE" | tr -d '\n' > "$TCB_MAPPING_UPDATED"
+"$TOOLS_DIR/migtd-hash" \
+    --policy-v2 \
+    --from-report "$REPORT_DATA_FILE" \
+    --update-tcb-mapping "$TCB_MAPPING_TEMPLATE" \
+    --output-tcb-mapping "$TCB_MAPPING_UPDATED" \
+    --mapping-isvsvn "$ISVSVN"
 
 echo -e "${GREEN}✓ TCB Mapping updated: $TCB_MAPPING_UPDATED${NC}"
 echo
@@ -519,13 +523,11 @@ echo
 #
 echo -e "${BLUE}=== Step 8: Generating ServTD Collateral ===${NC}"
 IDENTITY_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
-MAPPING_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
 
 "$TOOLS_DIR/servtd-collateral-generator" \
     --identity "$TD_IDENTITY_SIGNED" \
     --identity-chain "$IDENTITY_CHAIN" \
     --mapping "$TCB_MAPPING_SIGNED" \
-    --mapping-chain "$MAPPING_CHAIN" \
     --output "$SERVTD_COLLATERAL"
 
 echo -e "${GREEN}✓ ServTD Collateral generated: $SERVTD_COLLATERAL${NC}"
@@ -545,17 +547,12 @@ echo -e "${GREEN}✓ Policy data merged: $POLICY_DATA_MERGED${NC}"
 echo
 
 #
-# Step 10: Sign the final policy
+# Step 10: Wrap the final policy without an outer signature
 #
-echo -e "${BLUE}=== Step 10: Signing Final Policy ===${NC}"
-"$TOOLS_DIR/json-signer" \
-    --sign \
-    --name "policyData" \
-    --private-key "$PRIVATE_KEY" \
-    --input "$POLICY_DATA_MERGED" \
-    --output "$OUTPUT_POLICY"
+echo -e "${BLUE}=== Step 10: Wrapping Final Policy ===${NC}"
+jq -c '{policyData: .}' "$POLICY_DATA_MERGED" > "$OUTPUT_POLICY"
 
-echo -e "${GREEN}✓ Policy signed: $OUTPUT_POLICY${NC}"
+echo -e "${GREEN}✓ Policy generated: $OUTPUT_POLICY${NC}"
 echo
 
 #

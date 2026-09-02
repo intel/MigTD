@@ -11,6 +11,7 @@ use migtd::{
         MIGTD_ROOT_CA_FFS_GUID,
     },
     event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
+    policy,
 };
 use std::{
     fs::File,
@@ -36,16 +37,31 @@ const SERVTD_ATTR_IGNORE_RTMR1: u64 = 0x80_0000_0000;
 const SERVTD_ATTR_IGNORE_RTMR2: u64 = 0x100_0000_0000;
 const SERVTD_ATTR_IGNORE_RTMR3: u64 = 0x200_0000_0000;
 
-pub fn build_td_info(
+/// Build the unmasked TDINFO_STRUCT from the MigTD image and its manifest.
+///
+/// MRTD/RTMR0 are derived from the IGVM image's measured pages alone.
+/// RTMR1/RTMR2 are derived from the CFV contents (policy issuer chain +
+/// signed policyData fields). The build pipeline produces a base IGVM with
+/// dummy CFV contents; the release pipeline injects the production policy +
+/// chain into the same base IGVM via `td-shim-enroll` (no Rust rebuild) and
+/// then calls this function on the re-enrolled binary to get the production
+/// `tdinfo_hash`. There is therefore no projection / override path here:
+/// what the IGVM contains is what we measure.
+///
+/// This does NOT apply any `servtd_attr` ignore-bit masking. Call
+/// [`apply_servtd_attr_masks`] separately if you need a masked copy. The
+/// unmasked struct is required for the `tdinfo_hash` field of v2 TCB mappings:
+/// `tdinfo_hash = SHA384(unmasked_TDINFO) = init_servtd_info_hash` when
+/// `servtd_attr == 0`.
+pub fn build_td_info_unmasked(
     manifest: &[u8],
     mut image: File,
     is_ra_disabled: bool,
     is_policy_v2: bool,
-    servtd_attr: u64,
     igvmformat: bool,
 ) -> Result<TdInfoStruct, Error> {
     // Initialize the configurable fields of TD info structure.
-    let manifest = serde_json::from_slice::<Manifest>(&manifest)?;
+    let manifest = serde_json::from_slice::<Manifest>(manifest)?;
     let mut td_info = TdInfoStruct {
         attributes: manifest.attributes,
         xfam: manifest.xfam,
@@ -56,15 +72,12 @@ pub fn build_td_info(
     };
 
     if igvmformat {
-        // Calculate the MRTD with MigTD image
         td_info.build_igvmmrtd(&mut image);
     } else {
-        // Calculate the MRTD with MigTD image
         td_info.build_mrtd(&mut image, MIGTD_IMAGE_SIZE);
     }
-    // Calculate RTMR0 and RTMR1
     td_info.build_rtmr_with_seperator(0);
-    // Calculate RTMR2 with CFV
+
     let mut cfv = vec![0u8; CONFIG_VOLUME_SIZE];
     image.seek(SeekFrom::Start(0))?;
     if igvmformat {
@@ -79,6 +92,28 @@ pub fn build_td_info(
         .rtmr2
         .copy_from_slice(rtmr2(&cfv, is_ra_disabled, is_policy_v2)?.as_slice());
 
+    Ok(td_info)
+}
+
+/// Field-by-field clone of a [`TdInfoStruct`] (which does not derive [`Clone`]).
+pub fn clone_td_info(td: &TdInfoStruct) -> TdInfoStruct {
+    TdInfoStruct {
+        attributes: td.attributes,
+        xfam: td.xfam,
+        mrtd: td.mrtd,
+        mrconfig_id: td.mrconfig_id,
+        mrowner: td.mrowner,
+        mrownerconfig: td.mrownerconfig,
+        rtmr0: td.rtmr0,
+        rtmr1: td.rtmr1,
+        rtmr2: td.rtmr2,
+        rtmr3: td.rtmr3,
+        reserved: td.reserved,
+    }
+}
+
+/// Apply the `IGNORE_*` masks in `servtd_attr` to `td_info` in place.
+pub fn apply_servtd_attr_masks(td_info: &mut TdInfoStruct, servtd_attr: u64) {
     if (servtd_attr & SERVTD_ATTR_IGNORE_ATTRIBUTES) != 0 {
         td_info.attributes.fill(0);
     }
@@ -109,7 +144,21 @@ pub fn build_td_info(
     if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR3) != 0 {
         td_info.rtmr3.fill(0);
     }
+}
 
+/// Backwards-compatible wrapper that builds the TDINFO_STRUCT and applies the
+/// `servtd_attr` ignore-bit masks in one shot.
+pub fn build_td_info(
+    manifest: &[u8],
+    image: File,
+    is_ra_disabled: bool,
+    is_policy_v2: bool,
+    servtd_attr: u64,
+    igvmformat: bool,
+) -> Result<TdInfoStruct, Error> {
+    let mut td_info =
+        build_td_info_unmasked(manifest, image, is_ra_disabled, is_policy_v2, igvmformat)?;
+    apply_servtd_attr_masks(&mut td_info, servtd_attr);
     Ok(td_info)
 }
 
@@ -162,6 +211,18 @@ pub fn calculate_servtd_info_hash(td_info: TdInfoStruct) -> Result<Vec<u8>, Erro
     digest_sha384(&buffer).map_err(|_| anyhow!("Calculate digest"))
 }
 
+/// Compute the canonical v2 `tdinfo_hash` for a production MigTD (attr=0).
+///
+/// Definition (per the TDX module specification):
+///   `tdinfo_hash = SHA384(TDINFO_STRUCT_512_bytes)`
+///
+/// This equals `init_servtd_info_hash` in SERVTD_EXT_STRUCT when `servtd_attr
+/// == 0` (the production profile), enabling direct MAA lookup through
+/// `svnMappings[].tdMeasurements.tdinfo_hash`.
+pub fn calculate_tdinfo_hash(td_info: TdInfoStruct) -> Result<Vec<u8>, Error> {
+    calculate_servtd_info_hash(td_info)
+}
+
 fn rtmr1(
     cfv: &[u8],
     rtmr1: &[u8; SHA384_DIGEST_SIZE],
@@ -175,6 +236,7 @@ fn rtmr1(
             MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
         )
         .ok_or(anyhow!("Unable to get policy issuer chain from image"))?;
+
         rtmr1.extend_with_raw_data(policy_issuer_chain)?;
     }
 
@@ -186,9 +248,25 @@ fn rtmr2(cfv: &[u8], is_ra_disabled: bool, is_policy_v2: bool) -> Result<Vec<u8>
     if !is_ra_disabled {
         let policy = fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_POLICY_FFS_GUID)
             .ok_or(anyhow!("Unable to get policy from image"))?;
-        rtmr2.extend_with_raw_data(policy)?;
 
-        if !is_policy_v2 {
+        if is_policy_v2 {
+            // v2 (single-extend RTMR2): one extend over the canonical bytes
+            // of `policyData` with `servtdCollateral.servtdTcbMapping`
+            // removed so the mapping remains updateable after publication.
+            // The exact same helper is used by the runtime
+            // (`get_policy_and_measure`) and the integrity verifier
+            // (`check_policy_integrity`), so a mismatch here would also break
+            // runtime attestation — there is no separate "offline format".
+            //
+            // The bytes are taken straight from the CFV's enrolled policy;
+            // the release pipeline injects the production-signed policy via
+            // `td-shim-enroll` before this function is called, so what we
+            // measure here is what the shipped IGVM will produce at runtime.
+            let policy_data_bytes = policy::extract_canonical_policy_data_bytes(policy)
+                .map_err(|e| anyhow!("Failed to extract canonical policyData bytes: {e:?}"))?;
+            rtmr2.extend_with_raw_data(&policy_data_bytes)?;
+        } else {
+            rtmr2.extend_with_raw_data(policy)?;
             let root_ca =
                 fv::get_file_from_fv(cfv, pi::fv::FV_FILETYPE_RAW, MIGTD_ROOT_CA_FFS_GUID)
                     .ok_or(anyhow!("Unable to get root CA from image"))?;
