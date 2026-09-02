@@ -8,8 +8,10 @@ use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 mod servtd_collateral;
 pub use servtd_collateral::*;
 mod collaterals;
+pub use crate::measurement::*;
 pub use collaterals::*;
 mod policy;
+pub use crate::measurement;
 pub use policy::*;
 
 impl<'a> Report<'a> {
