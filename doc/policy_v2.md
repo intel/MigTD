@@ -39,12 +39,29 @@ Produce ServTD identity and TCB mapping collateral bundle:
 
 ```sh
 cargo build -p servtd-collateral-generator
-./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json --mapping-chain /path/to/identity_issuer_chain.pem -o servtd_collateral.json
+./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json -o servtd_collateral.json
 ```
 
-Result: `servtd_collateral.json` (contains signed `td identity` and `tcb mapping`, and their issuer chains).
+Result: `servtd_collateral.json` contains the signed ServTD identity, its issuer
+chain, and the signed TCB mapping. The TCB mapping is verified with the policy
+issuer chain measured into RTMR1.
 
-## 3. Generate and Sign Policy
+### Mapping signer authority
+
+Peer authentication verifies the mapping signature and binds its issuer chain
+to the peer's attested RTMR1. The peer chain must have the same root CA and
+complete leaf Subject Name as the local chain. The CA must issue that Subject
+Name only to authorized mapping signers for the intended product and purpose.
+Intermediate certificates must be valid CAs, but need not match the local
+intermediates.
+
+The authenticated source mapping resolves the initial and current release SVNs,
+including releases absent from an older destination's local mapping. The
+mapping signer is therefore trusted to assign SVNs correctly to complete
+TDINFO hashes, including their measured policy contents; the destination's
+local mapping is not an allowlist for future source releases.
+
+## 3. Generate Policy
 
 Generate a policy v2 JSON referencing:
 - Attestation collaterals (from step 1)
@@ -60,14 +77,33 @@ cargo build -p migtd-policy-generator
   -o policy_v2.json
 ```
 
-Sign the policy:
+Package the generated policy data without an outer signature:
 
 ```sh
-cargo build -p json-signer
-./target/debug/json-signer --sign  --name policyData --private-key /path/to/pkcs8 --input /path/to/policy_v2.json --output policy_v2_signed.json
+jq -c '{policyData: .}' policy_v2.json > policy_v2_signed.json
 ```
 
-Result: `policy_v2_signed.json` (contains `policyData` and its signature).
+RTMR2 measures canonical `policyData` with only `servtdTcbMapping` removed to
+avoid the mapping/image circular dependency. The TCB mapping remains separately
+signed by the RTMR1-bound policy issuer.
+
+### Release SVN and policy SVN
+
+The mapping's `isvsvn` orders complete TDINFO values, including the measured
+policy and `MROWNERCONFIG`. Migration and rebinding source continuity require
+the initial release SVN to be no greater than the current release SVN. The
+initial hash comes from `SERVTD_EXT`; the current hash comes from the
+authenticated peer quote or TDREPORT.
+
+This one-hash flow does not separately compare initial and current `policySvn`
+values or require their `MROWNER` values to match. Different hashes assigned
+the same `isvsvn` need not have equal or monotonic `policySvn` values. If a
+security-relevant policy update must not be rolled back, assign it a higher
+release `isvsvn`. Including `policySvn` in a hash authenticates its value; it
+does not establish numeric ordering between releases.
+
+The existing current-policy check remains: the source/old MigTD requires the
+destination/new MigTD's `policySvn` to be no lower than its own.
 
 ## 4. Build Final MigTD Image with Policy and Issuer Chain
 
@@ -89,7 +125,8 @@ cargo image --policy-v2 \
 
 During startup:
 - Policy issuer chain is measured (see measurement flow in [src/migtd/src/bin/migtd/main.rs](../src/migtd/src/bin/migtd/main.rs)).
-- Policy integrity is verified with issuer chain and measured by RTMR and event log (`RawPolicyData::verify` in [src/policy/src/v2/policy.rs](../src/policy/src/v2/policy.rs)).
+- The supplied policy issuer chain and canonical `policyData` are matched to
+  their authenticated RTMR1 and RTMR2 event digests before the mapping is used.
 - Collaterals are used for quote verification and TCB evaluation.
 
 ## 5. Build Final MigTD Image with policy which contain updated TCD mapping
@@ -118,12 +155,13 @@ popd
 ./target/debug/migtd-hash --manifest config/servtd_info.json \
  --image target/release/migtd.bin \
  --policy-v2 \
+ --mapping-isvsvn <release-svn> \
  --update-tcb-mapping config/templates/tcb_mapping.json
 ```
 
-### Resign policy with generated keys
+### Sign the cumulative mapping and rebuild the policy
 ```
-bash sh_script/build_policy_v2.sh [preprod/prod]
+bash sh_script/build_policy_v2.sh [preprod/prod] config/templates/tcb_mapping.json
 ```
 ### Rebuild migtd with new policy
 ```
@@ -135,6 +173,6 @@ cargo image --policy-v2 \
 ## Summary Flow
 
 1. Platform collaterals -> `collateral_*.json`
-2. ServTD collateral -> sign -> `servtd_collateral_signed.json`
-3. Policy generator -> `policy_v2.json` -> sign -> `policy_v2_signed.json`
-4. Build image with signed policy + issuer chain -> `cargo image --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem`
+2. Sign the ServTD identity and cumulative TCB mapping -> generate `servtd_collateral.json`
+3. Generate policy data -> package it as `policy_v2_signed.json` without an outer signature
+4. Build the image with measured policy data and issuer chain

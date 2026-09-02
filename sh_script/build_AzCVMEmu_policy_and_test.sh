@@ -347,6 +347,7 @@ MOCK_QUOTE_FILE=""
 FETCH_COLLATERALS=false
 AZURE_REGION="useast"
 EXTRA_FEATURES=""
+TCB_MAPPING_INPUT=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -386,6 +387,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_FEATURES="$2"
             shift 2
             ;;
+        --tcb-mapping)
+            TCB_MAPPING_INPUT="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo
@@ -398,6 +403,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --azure-region REGION        Azure region for THIM (useast, westus, northeurope)"
             echo "                               (default: useast, applies with --fetch-collaterals)"
             echo "  --extra-features FEATURES    Extra cargo features to add (e.g., 'igvm-attest')"
+            echo "  --tcb-mapping FILE           Previous authority-maintained mapping to extend"
+            echo "                               (default: existing output, then config/AzCVMEmu)"
             echo "  -h, --help                   Show this help message"
             echo
             echo "Examples:"
@@ -452,8 +459,18 @@ echo
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$CERT_DIR"
 
+if [[ -n "$TCB_MAPPING_INPUT" && "$TCB_MAPPING_INPUT" != /* ]]; then
+    TCB_MAPPING_INPUT="$PROJECT_ROOT/$TCB_MAPPING_INPUT"
+fi
+TCB_MAPPING_SOURCE="$TCB_MAPPING_TEMPLATE"
+if [ -n "$TCB_MAPPING_INPUT" ]; then
+    TCB_MAPPING_SOURCE="$TCB_MAPPING_INPUT"
+elif [ -f "$OUTPUT_DIR/tcb_mapping.json" ]; then
+    TCB_MAPPING_SOURCE="$OUTPUT_DIR/tcb_mapping.json"
+fi
+
 # Verify input files exist
-for file in "$POLICY_DATA_RAW" "$TD_IDENTITY_TEMPLATE" "$TCB_MAPPING_TEMPLATE"; do
+for file in "$POLICY_DATA_RAW" "$TD_IDENTITY_TEMPLATE" "$TCB_MAPPING_SOURCE"; do
     if [ ! -f "$file" ]; then
         echo -e "${RED}Error: Required input file not found: $file${NC}" >&2
         exit 1
@@ -541,6 +558,12 @@ if ! cargo build --release -p migtd-policy-generator; then
     exit 1
 fi
 
+echo "Building migtd-hash..."
+if ! cargo build --release -p migtd-hash; then
+    echo -e "${RED}Error: Failed to build migtd-hash${NC}" >&2
+    exit 1
+fi
+
 # Verify tools exist
 # azcvm-extract-report may be emitted either to the local crate target/ or the
 # workspace target/ when CARGO_TARGET_DIR is set.
@@ -555,7 +578,7 @@ else
     exit 1
 fi
 
-for tool in json-signer servtd-collateral-generator migtd-policy-generator; do
+for tool in json-signer servtd-collateral-generator migtd-policy-generator migtd-hash; do
     if [ ! -f "$TOOLS_DIR/$tool" ]; then
         echo -e "${RED}Error: Tool '$tool' not found at $TOOLS_DIR/$tool${NC}" >&2
         exit 1
@@ -650,17 +673,34 @@ echo -e "${GREEN}✓ TD Identity updated: $TD_IDENTITY_UPDATED${NC}"
 echo
 
 #
-# Step 4: Update tcb_mapping.json with extracted measurements
+# Step 4: Update the cumulative tcb_mapping.json with the v2 tdinfo_hash
 # Make sure no ending newline is added (important for signing)
 #
-echo -e "${BLUE}=== Step 4: Updating TCB Mapping Template ===${NC}"
-jq -c ".svnMappings[0].tdMeasurements.mrtd = \"$MRTD\" | \
-.svnMappings[0].tdMeasurements.rtmr0 = \"$RTMR0\" | \
-.svnMappings[0].tdMeasurements.rtmr1 = \"$RTMR1\" | \
-.svnMappings[0].isvsvn = $ISVSVN" \
-"$TCB_MAPPING_TEMPLATE" | tr -d '\n' > "$TCB_MAPPING_UPDATED"
+# The Rust helper retains all supported historical hashes, replaces the
+# current hash by key, rejects conflicting duplicates, and emits deterministic
+# compact JSON for signing. The --from-report path remains byte-identical to
+# the release pipeline.
+#
+echo -e "${BLUE}=== Step 4: Updating Cumulative TCB Mapping ===${NC}"
+
+TDINFO_HASH_FILE="$TEMP_DIR/tdinfo_hash.hex"
+MAPPING_UPDATE_ARGS=(
+    --update-tcb-mapping "$TCB_MAPPING_SOURCE"
+    --output-tcb-mapping "$TCB_MAPPING_UPDATED"
+    --mapping-isvsvn "$ISVSVN"
+)
+"$TOOLS_DIR/migtd-hash" \
+    --policy-v2 \
+    --from-report "$REPORT_DATA_FILE" \
+    --output-tdinfo-hash "$TDINFO_HASH_FILE" \
+    "${MAPPING_UPDATE_ARGS[@]}"
+# Uppercase to match the convention used by signed policies.
+TDINFO_HASH=$(tr 'a-z' 'A-Z' < "$TDINFO_HASH_FILE")
 
 echo -e "${GREEN}✓ TCB Mapping updated: $TCB_MAPPING_UPDATED${NC}"
+echo -e "  history source = $TCB_MAPPING_SOURCE"
+echo -e "  tdinfo_hash = $TDINFO_HASH"
+cp "$TCB_MAPPING_UPDATED" "$OUTPUT_DIR/tcb_mapping.json"
 echo
 
 #
@@ -856,4 +896,3 @@ fi
 
 echo
 echo -e "${GREEN}=== All Done! ===${NC}"
-
