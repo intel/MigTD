@@ -148,12 +148,7 @@ mod v2 {
         if is_src {
             authenticate_migration_dest(quote_peer, event_log_peer, policy_peer, peer_issuer_chain)
         } else {
-            authenticate_migration_source(
-                quote_peer,
-                event_log_peer,
-                policy_peer,
-                peer_issuer_chain,
-            )
+            evaluate_migration_source(quote_peer, event_log_peer, policy_peer, peer_issuer_chain)
         }
     }
 
@@ -191,7 +186,7 @@ mod v2 {
         Ok(suppl_data)
     }
 
-    fn authenticate_migration_source(
+    fn evaluate_migration_source(
         quote_src: &[u8],
         event_log_src: &[u8],
         mig_policy_src: &[u8],
@@ -408,7 +403,10 @@ mod v2 {
         // 1. Verify the event log integrity
         verify_event_log(event_log, rtmrs).map_err(|_| PolicyError::InvalidEventLog)?;
 
-        // 2. Verify the peer policy using the peer's issuer chain
+        let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
+        check_policy_issuer_chain_integrity(policy_issuer_chain, &events)?;
+
+        // 2. Verify the peer policy using its RTMR1-bound issuer chain
         let verified_policy = unverified_policy.verify(policy_issuer_chain)?;
 
         // 3. Validate that peer's chains share the same root CA and leaf
@@ -429,7 +427,6 @@ mod v2 {
         .log_err("Peer identity cert chain validation")
         .map_err(|_| PolicyError::PeerCertChainValidation)?;
         // 4. Check the integrity of the policy with its event log
-        let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
         check_policy_integrity(mig_policy, &events)?;
 
         Ok(verified_policy)
@@ -439,6 +436,7 @@ mod v2 {
         quote: &[u8],
         collaterals: &Collaterals,
     ) -> Result<([u8; 6], Vec<u8>), PolicyError> {
+        verify_migtd_servtd_hash(quote)?;
         let fmspc = get_fmspc_from_quote(quote)?;
         let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
         let collateral_cstr = convert_collateral_to_cstring(&collateral)?;
@@ -455,6 +453,10 @@ mod v2 {
         // Verify the REPORTMACSTRUCT
         tdcall_verify_report(tdx_report.report_mac.as_bytes())
             .map_err(|_| PolicyError::TdReportVerification)?;
+
+        if tdx_report.td_info.servtd_hash != [0; SHA384_DIGEST_SIZE] {
+            return Err(PolicyError::UnqualifiedMigTdInfo);
+        }
 
         // Verify the TDINFO_STRUCT and TEE_TCB_INFO
         let tdinfo_hash = digest_sha384(tdx_report.td_info.as_bytes())
@@ -620,12 +622,11 @@ mod v2 {
     }
 
     /// Authenticate the source MigTD and require its initial mapped SVN to be
-    /// no newer than its current mapped SVN. The legacy init TDINFO argument
-    /// is ignored after request framing validation.
+    /// no newer than its current mapped SVN.
     ///
     /// Returns the verified supplemental data on success so the caller can
     /// reuse it for SPDM-level bindings (e.g., REPORTDATA / TH1).
-    pub fn authenticate_migration_source_with_init_tdinfo(
+    pub fn authenticate_migration_source(
         quote_src: &[u8],
         peer_data: &[u8],
         event_log_src: &[u8],
