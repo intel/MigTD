@@ -1432,9 +1432,11 @@ dependencies = [
  "clap",
  "crypto",
  "env_logger",
+ "igvm",
  "log",
  "migtd",
  "serde_json",
+ "td-layout",
  "td-shim-interface",
  "td-shim-tools",
 ]
