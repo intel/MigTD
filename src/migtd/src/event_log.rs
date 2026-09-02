@@ -127,6 +127,11 @@ pub fn write_tagged_event_log(
     let mut log_size = event_log_size(event_log).ok_or_else(|| anyhow!("Parsing event log"))?;
     let event = TaggedEvent::new(tagged_event_id, tagged_event_data);
 
+    // An RTMR extend is irreversible, so ensure its event can be recorded first.
+    if event_log.len() < log_size + size_of::<CcEventHeader>() + event.as_bytes().len() {
+        return Err(anyhow!("Event log out of memory"));
+    }
+
     let digest = calculate_digest(hash_data)?;
     extend_rtmr(&digest, mr_index)?;
 
@@ -142,10 +147,6 @@ pub fn write_tagged_event_log(
         },
         event_size: event.as_bytes().len() as u32,
     };
-
-    if event_log.len() < log_size + size_of::<CcEventHeader>() + event.as_bytes().len() {
-        return Err(anyhow!("Event log out of memory"));
-    }
 
     event_log[log_size..log_size + size_of::<CcEventHeader>()]
         .copy_from_slice(event_header.as_bytes());
@@ -348,6 +349,16 @@ mod tests {
             event_log_with_single_cc_event(EV_EFI_PLATFORM_FIRMWARE_BLOB2, &[0x10, b'T']);
 
         assert!(parse_events(&event_log).is_none());
+    }
+
+    #[test]
+    fn write_tagged_event_log_checks_capacity_before_extending_rtmr() {
+        let mut event_log = event_log_with_single_cc_event(EV_EVENT_TAG, &[0; 8]);
+
+        let error = write_tagged_event_log(&mut event_log, 0, b"hash", 1, b"event")
+            .expect_err("undersized event log must be rejected");
+
+        assert_eq!(error.to_string(), "Event log out of memory");
     }
 
     // Regression test for the `+1` workaround in `get_event_log()`.
