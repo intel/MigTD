@@ -234,17 +234,11 @@ fn populate_servtd_fields(binding_handle: u64, target_td_uuid: [u64; 4]) {
             core::mem::size_of_val(&report.tdinfo),
         )
     };
-    let info_hash: [u8; 48] = Sha384::digest(td_info_bytes).into();
+    // Per TDX module spec: init_servtd_info_hash = SHA384(TDINFO masked by
+    // servtd_attr). With servtd_attr=0 (production), no masking is applied.
+    let servtd_info_hash: [u8; 48] = Sha384::digest(td_info_bytes).into();
 
-    const SERVTD_TYPE_MIGTD: u16 = 0;
     let servtd_attr: u64 = 0;
-
-    let mut buffer = [0u8; 48 + 2 + 8];
-    buffer[..48].copy_from_slice(&info_hash);
-    buffer[48..50].copy_from_slice(&SERVTD_TYPE_MIGTD.to_le_bytes());
-    buffer[50..58].copy_from_slice(&servtd_attr.to_le_bytes());
-
-    let servtd_info_hash: [u8; 48] = Sha384::digest(&buffer).into();
 
     let write_field = |field_base: u64, data: &[u8], elem_size: usize| {
         for (idx, chunk) in data.chunks(elem_size).enumerate() {
