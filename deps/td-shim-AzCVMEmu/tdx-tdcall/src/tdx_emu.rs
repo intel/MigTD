@@ -137,6 +137,8 @@ pub fn set_emulated_start_migration(
         target_td_uuid,
         binding_handle,
     });
+
+    populate_servtd_fields(binding_handle, target_td_uuid);
 }
 
 /// Helper: Set a GetTDReport request
