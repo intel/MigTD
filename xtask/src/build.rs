@@ -82,6 +82,9 @@ pub(crate) struct BuildArgs {
     /// Issuer chain of migration policy v2, required if `policy_v2` is set
     #[clap(long)]
     policy_issuer_chain: Option<PathBuf>,
+    /// SERVTD_ATTR to embed in the image; must match cargo hash and the VMM binding
+    #[clap(long, default_value = "0", value_parser = crate::parse_u64)]
+    servtd_attr: u64,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -228,6 +231,7 @@ impl BuildArgs {
                 .to_str()
                 .unwrap(),
         );
+        sh.set_var("MIGTD_SERVTD_ATTR", self.servtd_attr.to_string());
 
         cmd!(
             sh,

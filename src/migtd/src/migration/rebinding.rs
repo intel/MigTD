@@ -12,7 +12,7 @@ use crypto::{
 use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 
-use crate::migration::servtd_ext::read_servtd_ext;
+use crate::migration::servtd_ext::{read_servtd_ext, validate_servtd_attr};
 use crate::migration::transport::*;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
@@ -431,6 +431,7 @@ pub fn write_servtd_rebind_attr(servtd_attr: &[u8]) -> Result<(), MigrationResul
     }
 
     let elem = u64::from_le_bytes(servtd_attr.try_into().unwrap());
+    validate_servtd_attr(elem)?;
     tdcall_vm_write(TDCS_FIELD_SERVTD_REBIND_ATTR, elem, TDCS_FIELD_WRITE_MASK)?;
 
     Ok(())

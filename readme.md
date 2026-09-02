@@ -165,9 +165,17 @@ cargo hash --image /path/to/migtd.bin --servtd-info /path/to/servtd_info.json
 The hash value in string will be ouput to `stdout`. You can also output the binary by specifing
 output file through `-o`.
 
-To use the hash generated above, bits 42:32 of `SERVTD_ATTR` (defined in [TDX Module ABI Specification](https://cdrdv2.intel.com/v1/dl/getContent/733579))
-shall be set to 0. For example, when launching a user TD with QEMU, `migtd-attr=0x0000000000000001`
-or `migtd-attr=0x0000000000000000` shall be set by `-object` subcommand.
+`SERVTD_ATTR` is part of the MigTD binding configuration. The same value must be
+used when building the measured MigTD image, calculating `SERVTD_INFO_HASH`, and
+pre-binding the image with the VMM. For example, instance binding uses:
+```
+cargo image --servtd-attr 1
+cargo hash --image /path/to/migtd.bin --servtd-attr 1
+```
+and `migtd-attr=0x0000000000000001` in the QEMU `-object` subcommand. If
+`--servtd-attr` is omitted, `cargo image` and `cargo hash` default to class
+binding (`SERVTD_ATTR=0`). The selected value must satisfy the target TDX
+module's `SERVTD_ATTR_FIXED0` and `SERVTD_ATTR_FIXED1` masks.
 
 ## How to run
 

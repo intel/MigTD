@@ -6,6 +6,7 @@ use crate::migration::MigrationResult;
 use crate::{
     migration::{
         data::MigrationSessionKey,
+        servtd_ext::verify_servtd_attr,
         session::{cal_mig_version, exchange_info, set_mig_version, write_msk},
         MigtdMigrationInformation,
     },
@@ -917,6 +918,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
     };
 
     let mig_ver = cal_mig_version(true, &exchange_information, &remote_information)?;
+    verify_servtd_attr(mig_info.binding_handle, &mig_info.target_td_uuid)?;
     set_mig_version(mig_info, mig_ver)?;
     write_msk(mig_info, &remote_information.key)?;
     log::info!("Set MSK and report status\n");

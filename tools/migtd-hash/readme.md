@@ -27,6 +27,9 @@ popd
   ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --servtd-attr 0 --calc-servtd-hash
   ```
 
+  The `--servtd-attr` value must match the value embedded in the MigTD image
+  and the `SERVTD_ATTR` used by the VMM when binding or pre-binding it.
+
 - Generate migtd SERVTD_INFO_HASH with debug infomation:
   ```
   ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --verbose

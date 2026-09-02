@@ -50,8 +50,12 @@ popd
 ```
 ### Build Migration TD binary - Serial
 ```
-cargo image --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 ```
+The `SERVTD_ATTR` value must be identical in `cargo image --servtd-attr`,
+`cargo hash --servtd-attr`, and the VMM's `migtd-attr`. The pre-binding tests use
+instance binding, so all three values are set to `1`.
+
 ### Run Test
 Set stress_test_cycles to 1 in configration file.
 ```

@@ -48,19 +48,19 @@ jobs:
         run: bash sh_script/preparation.sh
 
       - name: Build Migration TD binary (policy v1 + TLS + Release)
-        run: cargo image --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --servtd-attr 1 --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin)
+          sudo pytest -k "pre_migration" --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin --servtd-attr 1)
           popd
       
       - name: Clean Up
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image  --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --servtd-attr 1 --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -75,7 +75,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --servtd-attr 1 --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
 
       - name: Run Tests - Test pre-binding
         run: |
@@ -106,12 +106,12 @@ jobs:
         run: bash sh_script/preparation.sh
 
       - name: Build Migration TD binary (policy v1 + TLS + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin)
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin --servtd-attr 1)
           popd
       
       - name: Build all test binaries
@@ -127,36 +127,36 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v1 + TLS + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
+        run: cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
       
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin) --target debug
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin --servtd-attr 1) --target debug
           popd
       
       - name: Clean Up
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin --policy-v2)
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin --policy-v2 --servtd-attr 1)
           popd
       
       - name: Clean Up
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
+        run: cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
       
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin --policy-v2) --target debug
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin --policy-v2 --servtd-attr 1) --target debug
           popd
 
       - name: Set Spdm Config
@@ -166,12 +166,12 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v1 + SPDM + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin)
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin --servtd-attr 1)
           popd
       
       - name: Run SPDM Attestation Tests
@@ -181,12 +181,12 @@ jobs:
           popd
       
       - name: Build Migration TD binary (policy v1 + SPDM + Debug)
-        run: cargo image --debug --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --servtd-attr 1 --debug --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy config/policy_pre_production_fmspc.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
 
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin) --target debug
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin --servtd-attr 1) --target debug
           popd
 
       - name: Set Spdm Config
@@ -196,22 +196,22 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
 
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin --policy-v2)
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/release/migtd.bin --policy-v2 --servtd-attr 1)
           popd
 
       - name: Clean Up
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Debug)
-        run: cargo image --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --debug
+        run: cargo image --servtd-attr 1 --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --debug
 
       - name: Run Tests
         run: |
           pushd sh_script/test
-          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin --policy-v2) --target debug
+          sudo pytest -k "pre_migration" --device_type serial --servtd_hash $(cargo hash --image $GITHUB_WORKSPACE/target/debug/migtd.bin --policy-v2 --servtd-attr 1) --target debug
           popd

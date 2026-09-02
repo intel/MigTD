@@ -24,6 +24,30 @@ pub const TDCS_FIELD_SERVTD_ATTR: u64 = 0x1910000300000202;
 pub const TDCS_FIELD_SERVTD_ACCEPT_SERVTD_EXT_HASH: u64 = 0x1910000300000214;
 const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 
+const fn parse_build_servtd_attr(value: &str) -> u64 {
+    let bytes = value.as_bytes();
+    let mut parsed = 0u64;
+    let mut index = 0;
+    while index < bytes.len() {
+        parsed = parsed * 10 + (bytes[index] - b'0') as u64;
+        index += 1;
+    }
+    parsed
+}
+
+/// Intended SERVTD_ATTR embedded in the measured MigTD image at build time.
+pub const EXPECTED_SERVTD_ATTR: u64 = parse_build_servtd_attr(env!("MIGTD_EXPECTED_SERVTD_ATTR"));
+
+pub(crate) fn validate_servtd_attr(actual_attr: u64) -> Result<(), MigrationResult> {
+    if actual_attr != EXPECTED_SERVTD_ATTR {
+        log::error!(
+            "SERVTD_ATTR mismatch: VMM wrote {actual_attr:#x}, MigTD expects {EXPECTED_SERVTD_ATTR:#x}"
+        );
+        return Err(MigrationResult::InvalidParameter);
+    }
+    Ok(())
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ServtdExt {
@@ -111,6 +135,7 @@ pub fn read_servtd_ext(
     read_field(TDCS_FIELD_INIT_TEE_MODEL, 4, &mut init_tee_model)?;
     read_field(TDCS_FIELD_SERVTD_INFO_HASH, 8, &mut cur_servtd_info_hash)?;
     read_field(TDCS_FIELD_SERVTD_ATTR, 8, &mut cur_servtd_attr)?;
+    validate_servtd_attr(u64::from_le_bytes(cur_servtd_attr))?;
 
     Ok(ServtdExt {
         init_servtd_info_hash,
@@ -124,6 +149,16 @@ pub fn read_servtd_ext(
         reserved: [0u8; 8],
         reserved2: [0u8; 104],
     })
+}
+
+/// Verify that the VMM-provided CURR_SERVTD_ATTR matches the value embedded in
+/// the measured MigTD image.
+pub fn verify_servtd_attr(
+    binding_handle: u64,
+    target_td_uuid: &[u64],
+) -> Result<(), MigrationResult> {
+    let result = tdcall_servtd_rd(binding_handle, TDCS_FIELD_SERVTD_ATTR, target_td_uuid)?;
+    validate_servtd_attr(result.content)
 }
 
 pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), MigrationResult> {
@@ -145,10 +180,16 @@ pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), Migr
 
 #[cfg(test)]
 mod test {
-    use super::ServtdExt;
+    use super::{validate_servtd_attr, ServtdExt, EXPECTED_SERVTD_ATTR};
 
     #[test]
     fn test_structure_sizes() {
         assert_eq!(size_of::<ServtdExt>(), 272)
+    }
+
+    #[test]
+    fn test_validate_servtd_attr() {
+        assert!(validate_servtd_attr(EXPECTED_SERVTD_ATTR).is_ok());
+        assert!(validate_servtd_attr(EXPECTED_SERVTD_ATTR ^ 1).is_err());
     }
 }

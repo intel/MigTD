@@ -30,14 +30,19 @@ pub(crate) struct ServtdInfoHashArgs {
     test_disable_ra_and_accept_all: bool,
     #[clap(long)]
     policy_v2: bool,
+    /// SERVTD_ATTR used for the hash; must match the image and the VMM binding
+    #[clap(long, default_value = "0", value_parser = crate::parse_u64)]
+    servtd_attr: u64,
 }
 
 impl ServtdInfoHashArgs {
     pub fn generate(&self) -> Result<()> {
         let sh = Shell::new()?;
+        let servtd_attr = self.servtd_attr.to_string();
         let mut cmd = cmd!(sh, "cargo run -p migtd-hash  -- ")
             .args(&["--image", self.image()?.to_str().unwrap()])
-            .args(&["--manifest", self.servtd_info()?.to_str().unwrap()]);
+            .args(&["--manifest", self.servtd_info()?.to_str().unwrap()])
+            .args(&["--servtd-attr", servtd_attr.as_str()]);
 
         if self.output.is_some() {
             cmd = cmd.args(&["--output-file", self.output()?.to_str().unwrap()])
