@@ -201,20 +201,6 @@ pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result
         raw_packet.zeroize();
         let res = Box::pin(spdm_responder.process_message(false, 0, raw_packet)).await;
 
-        let session_id = spdm_responder.common.runtime_info.get_last_session_id();
-        if session_id.is_some() {
-            sid = session_id;
-        }
-        if sid.is_some()
-            && spdm_responder
-                .common
-                .get_session_via_id(sid.unwrap())
-                .is_none()
-        {
-            //Terminate the responder upon end_session received.
-            break;
-        }
-
         match res {
             Ok(spdm_result) => {
                 match spdm_result {
@@ -235,6 +221,20 @@ pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result
             Err(_) => {
                 return Err(SPDM_STATUS_RECEIVE_FAIL);
             }
+        }
+
+        let session_id = spdm_responder.common.runtime_info.get_last_session_id();
+        if session_id.is_some() {
+            sid = session_id;
+        }
+        if sid.is_some()
+            && spdm_responder
+                .common
+                .get_session_via_id(sid.unwrap())
+                .is_none()
+        {
+            //Terminate the responder upon end_session received.
+            break;
         }
     }
     Ok(())
