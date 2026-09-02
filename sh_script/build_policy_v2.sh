@@ -47,7 +47,6 @@ cargo build -p servtd-collateral-generator
   --identity $config_temp_dir/td_identity_signed.json \
   --identity-chain $key_dir/migtd_issuer_chain.pem \
   --mapping $config_temp_dir/tcb_mapping_signed.json \
-  --mapping-chain $key_dir/migtd_issuer_chain.pem \
   -o $config_temp_dir/servtd_collateral.json
 
 # Build migtd-policy-generator and generate policy_v2.json
@@ -58,9 +57,7 @@ cargo build -p migtd-policy-generator
   --servtd-collateral $config_temp_dir/servtd_collateral.json \
   -o $config_temp_dir/policy_v2.json
 
-# Sign policy_v2.json
-./target/debug/json-signer --sign \
-  --name policyData \
-  --private-key $key_dir/issuer_pkcs8.key \
-  --input $config_temp_dir/policy_v2.json \
-  --output $config_temp_dir/policy_v2_signed.json
+# policyData integrity is provided by RTMR2; the policy blob has no outer
+# signature. Keep the historical output filename for build compatibility.
+jq -c '{policyData: .}' $config_temp_dir/policy_v2.json \
+  > $config_temp_dir/policy_v2_signed.json

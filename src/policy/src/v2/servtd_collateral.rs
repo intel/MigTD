@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{string::String, vec::Vec};
+use core::convert::TryInto;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, value::RawValue};
 
@@ -10,6 +11,8 @@ use crate::{
     v2::{bytes_to_hex_string, hex_string_to_bytes},
     MigTdInfoProperty, PolicyError, Report,
 };
+
+use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,7 +29,6 @@ pub struct ServtdCollateral<'a> {
     pub servtd_identity_issuer_chain: String,
     #[serde(borrow)]
     pub servtd_identity: RawServtdIdentity<'a>,
-    pub servtd_tcb_mapping_issuer_chain: String,
     pub servtd_tcb_mapping: RawServtdTcbMapping<'a>,
 }
 
@@ -143,8 +145,6 @@ pub struct TdTcbMapping {
     pub version: u32,
     pub issue_date: String,
     pub next_update: String,
-    pub mr_signer: String,
-    pub isv_prod_id: u16,
     pub svn_mappings: Vec<SvnMapping>,
 }
 
@@ -155,73 +155,72 @@ pub struct SvnMapping {
     pub isvsvn: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Measurements {
-    pub mrtd: String,
-    pub rtmr0: String,
-    pub rtmr1: String,
-    pub rtmr2: Option<String>,
-    pub rtmr3: Option<String>,
+    /// Single-hash measurement key for hash-to-SVN TCB mapping.
+    ///
+    /// Equals `init_servtd_info_hash` for production MigTDs (servtd_attr=0):
+    ///   tdinfo_hash = SHA384(unmasked TDINFO_STRUCT bytes)
+    ///
+    /// Hex-encoded (case-insensitive). The serde alias accepts both
+    /// the canonical snake_case key and the legacy camelCase spelling.
+    #[serde(rename = "tdinfo_hash", alias = "tdinfoHash")]
+    pub tdinfo_hash: String,
 }
 
 impl Measurements {
-    pub fn new_from_bytes(
-        mrtd: &[u8],
-        rtmr0: &[u8],
-        rtmr1: &[u8],
-        rtmr2: Option<&[u8]>,
-        rtmr3: Option<&[u8]>,
-    ) -> Self {
+    pub fn new_from_bytes(tdinfo_hash: &[u8]) -> Self {
         Measurements {
-            mrtd: bytes_to_hex_string(mrtd),
-            rtmr0: bytes_to_hex_string(rtmr0),
-            rtmr1: bytes_to_hex_string(rtmr1),
-            rtmr2: rtmr2.map(|b| bytes_to_hex_string(b)),
-            rtmr3: rtmr3.map(|b| bytes_to_hex_string(b)),
+            tdinfo_hash: bytes_to_hex_string(tdinfo_hash),
         }
     }
 
     fn to_ascii_uppercase(&self) -> Self {
         Measurements {
-            mrtd: self.mrtd.to_ascii_uppercase(),
-            rtmr0: self.rtmr0.to_ascii_uppercase(),
-            rtmr1: self.rtmr1.to_ascii_uppercase(),
-            rtmr2: self.rtmr2.as_ref().map(|v| v.to_ascii_uppercase()),
-            rtmr3: self.rtmr3.as_ref().map(|v| v.to_ascii_uppercase()),
+            tdinfo_hash: self.tdinfo_hash.to_ascii_uppercase(),
         }
     }
 }
 
 impl TdTcbMapping {
+    fn validate(&self) -> Result<(), PolicyError> {
+        for (index, mapping) in self.svn_mappings.iter().enumerate() {
+            let hash = hex_string_to_bytes(&mapping.td_measurements.tdinfo_hash)
+                .map_err(|_| PolicyError::InvalidServtdTcbMapping)?;
+            if hash.len() != SHA384_DIGEST_SIZE {
+                return Err(PolicyError::InvalidServtdTcbMapping);
+            }
+
+            for previous in &self.svn_mappings[..index] {
+                if previous
+                    .td_measurements
+                    .tdinfo_hash
+                    .eq_ignore_ascii_case(&mapping.td_measurements.tdinfo_hash)
+                    && previous.isvsvn != mapping.isvsvn
+                {
+                    return Err(PolicyError::InvalidServtdTcbMapping);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Look up the engine SVN for the TD represented by `report` by computing
+    /// `tdinfo_hash` (per redesign §RTMR-layout) and matching the
+    /// `svnMappings[].tdMeasurements.tdinfoHash` entries.
     pub fn get_engine_svn_by_report(&self, report: &Report) -> Option<u16> {
-        let measurements = Measurements {
-            mrtd: bytes_to_hex_string(
-                report
-                    .get_migtd_info_property(&MigTdInfoProperty::MrTd)
-                    .ok()?,
-            ),
-            rtmr0: bytes_to_hex_string(
-                report
-                    .get_migtd_info_property(&MigTdInfoProperty::Rtmr0)
-                    .ok()?,
-            ),
-            rtmr1: bytes_to_hex_string(
-                report
-                    .get_migtd_info_property(&MigTdInfoProperty::Rtmr1)
-                    .ok()?,
-            ),
-            rtmr2: Some(bytes_to_hex_string(
-                report
-                    .get_migtd_info_property(&MigTdInfoProperty::Rtmr2)
-                    .ok()?,
-            )),
-            rtmr3: Some(bytes_to_hex_string(
-                report
-                    .get_migtd_info_property(&MigTdInfoProperty::Rtmr3)
-                    .ok()?,
-            )),
-        };
-        self.get_engine_svn_by_measurements(&measurements)
+        let tdinfo_hash = compute_tdinfo_hash_from_report(report).ok()?;
+        self.get_engine_svn_by_tdinfo_hash(&tdinfo_hash)
+    }
+
+    /// Look up the engine SVN by an already-computed `tdinfo_hash`
+    /// (48 raw bytes). This is the canonical entry point for the redesign.
+    pub fn get_engine_svn_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<u16> {
+        if tdinfo_hash.len() != SHA384_DIGEST_SIZE {
+            return None;
+        }
+        let target = Measurements::new_from_bytes(tdinfo_hash);
+        self.get_engine_svn_by_measurements(&target)
     }
 
     pub fn get_engine_svn_by_measurements(&self, measurements: &Measurements) -> Option<u16> {
@@ -261,38 +260,141 @@ impl TdTcbMapping {
 
     #[inline]
     fn compare_measurements(pattern: &Measurements, target: &Measurements) -> bool {
-        // Convert both to uppercase for case-insensitive comparison
+        // Hex strings are case-insensitive.
         let pattern = pattern.to_ascii_uppercase();
         let target = target.to_ascii_uppercase();
-
-        if pattern.mrtd != target.mrtd
-            || pattern.rtmr0 != target.rtmr0
-            || pattern.rtmr1 != target.rtmr1
-        {
-            return false;
-        }
-
-        // Optional RTMR2 / RTMR3:
-        // If pattern provides a value -> target must also provide and match.
-        // If pattern is None -> treated as wildcard (ignore target value).
-        if pattern.rtmr2.is_some() {
-            match (&pattern.rtmr2, &target.rtmr2) {
-                (Some(p), Some(t)) if p != t => return false,
-                (Some(_), None) => return false,
-                _ => {}
-            }
-        }
-
-        if pattern.rtmr3.is_some() {
-            match (&pattern.rtmr3, &target.rtmr3) {
-                (Some(p), Some(t)) if p != t => return false,
-                (Some(_), None) => return false,
-                _ => {}
-            }
-        }
-
-        true
+        pattern.tdinfo_hash == target.tdinfo_hash
     }
+}
+
+/// Packed TDINFO size: 8 + 8 + 8*48 + 0x70 = 512 bytes.
+const TDINFO_PACKED_SIZE: usize = 8 + 8 + 8 * SHA384_DIGEST_SIZE + TDINFO_RESERVED_SIZE;
+const TDINFO_RESERVED_SIZE: usize = 0x70;
+
+/// Pack the *unmasked* `TdInfoStruct` bytes from its 10 measurement fields in
+/// the same canonical order used by `td-shim-tools` (and therefore by
+/// `migtd-hash`).
+///
+/// Field order: attributes, xfam, mrtd, mrconfigid, mrowner, mrownerconfig,
+/// rtmr0, rtmr1, rtmr2, rtmr3, reserved(0x70 zero bytes).
+///
+/// The trailing 0x70 bytes are zero. This corresponds to the SEAM module's
+/// internal `TDINFO_STRUCT` layout used to compute `init_servtd_info_hash`
+/// when a service TD is bound; for the bound MigTD itself, `servtd_hash` is
+/// always zero (no nested bindings).
+#[allow(clippy::too_many_arguments)]
+pub fn pack_unmasked_tdinfo(
+    attributes: &[u8; 8],
+    xfam: &[u8; 8],
+    mrtd: &[u8; SHA384_DIGEST_SIZE],
+    mrconfig_id: &[u8; SHA384_DIGEST_SIZE],
+    mrowner: &[u8; SHA384_DIGEST_SIZE],
+    mrownerconfig: &[u8; SHA384_DIGEST_SIZE],
+    rtmr0: &[u8; SHA384_DIGEST_SIZE],
+    rtmr1: &[u8; SHA384_DIGEST_SIZE],
+    rtmr2: &[u8; SHA384_DIGEST_SIZE],
+    rtmr3: &[u8; SHA384_DIGEST_SIZE],
+) -> [u8; TDINFO_PACKED_SIZE] {
+    let mut buf = [0u8; TDINFO_PACKED_SIZE];
+    let mut off = 0usize;
+    let mut put = |off: &mut usize, src: &[u8]| {
+        buf[*off..*off + src.len()].copy_from_slice(src);
+        *off += src.len();
+    };
+    put(&mut off, attributes);
+    put(&mut off, xfam);
+    put(&mut off, mrtd);
+    put(&mut off, mrconfig_id);
+    put(&mut off, mrowner);
+    put(&mut off, mrownerconfig);
+    put(&mut off, rtmr0);
+    put(&mut off, rtmr1);
+    put(&mut off, rtmr2);
+    put(&mut off, rtmr3);
+    debug_assert_eq!(off, TDINFO_PACKED_SIZE - TDINFO_RESERVED_SIZE);
+    buf
+}
+
+/// Compute `tdinfo_hash` from the 10 individual TDINFO measurement fields.
+/// Equals `init_servtd_info_hash` for MigTDs bound with `servtd_attr == 0`.
+///
+/// Formula: `SHA384(pack(attributes, xfam, mrtd, ..., rtmr3, reserved))`
+#[allow(clippy::too_many_arguments)]
+pub fn compute_tdinfo_hash_from_fields(
+    attributes: &[u8; 8],
+    xfam: &[u8; 8],
+    mrtd: &[u8; SHA384_DIGEST_SIZE],
+    mrconfig_id: &[u8; SHA384_DIGEST_SIZE],
+    mrowner: &[u8; SHA384_DIGEST_SIZE],
+    mrownerconfig: &[u8; SHA384_DIGEST_SIZE],
+    rtmr0: &[u8; SHA384_DIGEST_SIZE],
+    rtmr1: &[u8; SHA384_DIGEST_SIZE],
+    rtmr2: &[u8; SHA384_DIGEST_SIZE],
+    rtmr3: &[u8; SHA384_DIGEST_SIZE],
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    let packed = pack_unmasked_tdinfo(
+        attributes,
+        xfam,
+        mrtd,
+        mrconfig_id,
+        mrowner,
+        mrownerconfig,
+        rtmr0,
+        rtmr1,
+        rtmr2,
+        rtmr3,
+    );
+    digest_sha384(&packed)
+        .map_err(|_| PolicyError::HashCalculation)?
+        .try_into()
+        .map_err(|_| PolicyError::HashCalculation)
+}
+
+fn as_array<const N: usize>(slice: &[u8]) -> Result<&[u8; N], PolicyError> {
+    slice.try_into().map_err(|_| PolicyError::InvalidParameter)
+}
+
+/// Compute `tdinfo_hash` for the TD described by `report`.
+///
+/// Returns the 48-byte hash, equals `init_servtd_info_hash` for
+/// production MigTDs (`servtd_attr == 0`).
+pub fn compute_tdinfo_hash_from_report(
+    report: &Report,
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    let attributes =
+        as_array::<8>(report.get_migtd_info_property(&MigTdInfoProperty::Attributes)?)?;
+    let xfam = as_array::<8>(report.get_migtd_info_property(&MigTdInfoProperty::Xfam)?)?;
+    let mrtd =
+        as_array::<SHA384_DIGEST_SIZE>(report.get_migtd_info_property(&MigTdInfoProperty::MrTd)?)?;
+    let mrconfig_id = as_array::<SHA384_DIGEST_SIZE>(
+        report.get_migtd_info_property(&MigTdInfoProperty::MrConfigId)?,
+    )?;
+    let mrowner = as_array::<SHA384_DIGEST_SIZE>(
+        report.get_migtd_info_property(&MigTdInfoProperty::MrOwner)?,
+    )?;
+    let mrownerconfig = as_array::<SHA384_DIGEST_SIZE>(
+        report.get_migtd_info_property(&MigTdInfoProperty::MrOwnerConfig)?,
+    )?;
+    let rtmr0 =
+        as_array::<SHA384_DIGEST_SIZE>(report.get_migtd_info_property(&MigTdInfoProperty::Rtmr0)?)?;
+    let rtmr1 =
+        as_array::<SHA384_DIGEST_SIZE>(report.get_migtd_info_property(&MigTdInfoProperty::Rtmr1)?)?;
+    let rtmr2 =
+        as_array::<SHA384_DIGEST_SIZE>(report.get_migtd_info_property(&MigTdInfoProperty::Rtmr2)?)?;
+    let rtmr3 =
+        as_array::<SHA384_DIGEST_SIZE>(report.get_migtd_info_property(&MigTdInfoProperty::Rtmr3)?)?;
+    compute_tdinfo_hash_from_fields(
+        attributes,
+        xfam,
+        mrtd,
+        mrconfig_id,
+        mrowner,
+        mrownerconfig,
+        rtmr0,
+        rtmr1,
+        rtmr2,
+        rtmr3,
+    )
 }
 
 #[cfg(test)]
@@ -303,51 +405,46 @@ mod test {
     fn test_get_engine_svn() {
         let engine_bytes = include_bytes!("../../test/policy_v2/tcb_mapping.json");
         let engine: TdTcbMapping = serde_json::from_slice(engine_bytes).unwrap();
-        let mrtd = String::from("E2C7DA7CF0D93973480F0A34A6FE52A204EA81B4F1B6CD16018F5B4CAEE7B3B544A9738464A7C95E1705E20687A0ADA6");
-        let rtmr0 = String::from("518923B0F955D08DA077C96AABA522B9DECEDE61C599CEA6C41889CFBEA4AE4D50529D96FE4D1AFDAFB65E7F95BF23C4");
-        let rtmr1 = String::from("518923B0F955D08DA077C96AABA522B9DECEDE61C599CEA6C41889CFBEA4AE4D50529D96FE4D1AFDAFB65E7F95BF23C4");
-        let rtmr3 = String::from("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
 
-        let mut td_measurements = Measurements {
-            mrtd: mrtd.clone(),
-            rtmr0,
-            rtmr1,
-            rtmr2: None,
-            rtmr3: Some(rtmr3),
+        // The first svnMappings entry in the test fixture is the canonical
+        // tdinfo_hash (= SHA384(TDINFO) = init_servtd_info_hash for attr=0).
+        let expected_hash = engine.svn_mappings[0].td_measurements.tdinfo_hash.clone();
+        let target = Measurements {
+            tdinfo_hash: expected_hash.clone(),
         };
-        assert_eq!(
-            engine.get_engine_svn_by_measurements(&td_measurements),
-            Some(1)
+        assert_eq!(engine.get_engine_svn_by_measurements(&target), Some(1));
+
+        // Case-insensitive match.
+        let lower = Measurements {
+            tdinfo_hash: expected_hash.to_ascii_lowercase(),
+        };
+        assert_eq!(engine.get_engine_svn_by_measurements(&lower), Some(1));
+
+        // Wrong hash -> no match.
+        let bogus = Measurements {
+            tdinfo_hash:
+                "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                    .into(),
+        };
+        assert!(engine.get_engine_svn_by_measurements(&bogus).is_none());
+    }
+
+    #[test]
+    fn legacy_measurements_without_tdinfo_hash_are_rejected() {
+        assert!(
+            serde_json::from_str::<Measurements>(r#"{"mrtd":"00","rtmr0":"00","rtmr1":"00"}"#)
+                .is_err()
         );
-
-        td_measurements.mrtd = String::from("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
-        assert!(engine
-            .get_engine_svn_by_measurements(&td_measurements)
-            .is_none());
-
-        td_measurements.mrtd = mrtd.to_ascii_lowercase();
-        assert_eq!(
-            engine.get_engine_svn_by_measurements(&td_measurements),
-            Some(1)
-        );
-
-        td_measurements.rtmr3 = None;
-        assert!(engine
-            .get_engine_svn_by_measurements(&td_measurements)
-            .is_none());
     }
 
     #[test]
     fn test_check_engine_not_older() {
-        let engine =
-            |tag: u8| Measurements::new_from_bytes(&[tag; 48], &[tag; 48], &[tag; 48], None, None);
+        let engine = |tag: u8| Measurements::new_from_bytes(&[tag; 48]);
         let mapping = TdTcbMapping {
             id: String::from("TEST"),
             version: 1,
             issue_date: String::from("2025-01-01T00:00:00Z"),
             next_update: String::from("2026-01-01T00:00:00Z"),
-            mr_signer: String::from("00"),
-            isv_prod_id: 1,
             svn_mappings: [(0xa1u8, 1u16), (0xb2, 2)]
                 .iter()
                 .map(|(tag, isvsvn)| SvnMapping {
@@ -378,17 +475,134 @@ mod test {
     }
 
     #[test]
+    fn conflicting_duplicate_tdinfo_hash_is_invalid() {
+        let hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let mapping: TdTcbMapping = serde_json::from_str(&format!(
+            r#"{{
+                "id": "mapping",
+                "version": 1,
+                "issueDate": "2025-01-01T00:00:00Z",
+                "nextUpdate": "2026-01-01T00:00:00Z",
+                "svnMappings": [
+                    {{"tdMeasurements": {{"tdinfo_hash": "{hash}"}}, "isvsvn": 1}},
+                    {{"tdMeasurements": {{"tdinfo_hash": "{}"}}, "isvsvn": 2}}
+                ]
+            }}"#,
+            hash.to_ascii_lowercase()
+        ))
+        .unwrap();
+
+        assert!(matches!(
+            mapping.validate(),
+            Err(PolicyError::InvalidServtdTcbMapping)
+        ));
+    }
+
+    #[test]
     fn verify_servtd_collateral_signatures() {
         let servtd_collateral = include_bytes!("../../test/policy_v2/servtd_collateral.json");
         let collateral: ServtdCollateral =
             serde_json::from_slice(servtd_collateral).expect("Failed to parse collateral");
+        let policy_issuer_chain =
+            include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
         assert!(collateral
             .servtd_tcb_mapping
-            .verify_signature(collateral.servtd_tcb_mapping_issuer_chain.as_bytes())
+            .verify_signature(policy_issuer_chain)
             .is_ok());
         assert!(collateral
             .servtd_identity
-            .verify_signature(collateral.servtd_tcb_mapping_issuer_chain.as_bytes())
+            .verify_signature(collateral.servtd_identity_issuer_chain.as_bytes())
             .is_ok());
+    }
+
+    /// Regression guard for the 512-byte TDINFO wire layout.
+    #[test]
+    fn packed_tdinfo_size_matches_servtd_ext_layout() {
+        assert_eq!(TDINFO_PACKED_SIZE, 512);
+        let attributes = [0x01u8; 8];
+        let xfam = [0x02u8; 8];
+        let m = [
+            [0x10u8; SHA384_DIGEST_SIZE],
+            [0x20u8; SHA384_DIGEST_SIZE],
+            [0x30u8; SHA384_DIGEST_SIZE],
+            [0x40u8; SHA384_DIGEST_SIZE],
+            [0x50u8; SHA384_DIGEST_SIZE],
+            [0x60u8; SHA384_DIGEST_SIZE],
+            [0x70u8; SHA384_DIGEST_SIZE],
+            [0x80u8; SHA384_DIGEST_SIZE],
+        ];
+        let packed = pack_unmasked_tdinfo(
+            &attributes,
+            &xfam,
+            &m[0],
+            &m[1],
+            &m[2],
+            &m[3],
+            &m[4],
+            &m[5],
+            &m[6],
+            &m[7],
+        );
+        assert_eq!(packed.len(), 512);
+        assert_eq!(&packed[..8], &attributes);
+        assert_eq!(&packed[8..16], &xfam);
+        for (i, expected) in m.iter().enumerate() {
+            let off = 16 + i * SHA384_DIGEST_SIZE;
+            assert_eq!(&packed[off..off + SHA384_DIGEST_SIZE], &expected[..]);
+        }
+        assert!(packed[16 + 8 * SHA384_DIGEST_SIZE..]
+            .iter()
+            .all(|b| *b == 0));
+    }
+
+    /// Cross-implementation parity: `tdinfo_hash` computed from the
+    /// canonical 10 fields here MUST equal `SHA384(unmasked_TDINFO_512)` used
+    /// by `migtd-hash`, `mig-td-tools tdinfo-hash`, and the bash mock-test
+    /// scripts. If they ever drift, runtime policy lookup silently fails for
+    /// all valid TDs.
+    #[test]
+    fn tdinfo_hash_matches_direct_sha384_formula() {
+        use crypto::hash::digest_sha384;
+        let attributes = [0xAAu8; 8];
+        let xfam = [0xBBu8; 8];
+        let mrtd = [0x11u8; SHA384_DIGEST_SIZE];
+        let mrconfig_id = [0x22u8; SHA384_DIGEST_SIZE];
+        let mrowner = [0x33u8; SHA384_DIGEST_SIZE];
+        let mrownerconfig = [0x44u8; SHA384_DIGEST_SIZE];
+        let rtmr0 = [0x55u8; SHA384_DIGEST_SIZE];
+        let rtmr1 = [0x66u8; SHA384_DIGEST_SIZE];
+        let rtmr2 = [0x77u8; SHA384_DIGEST_SIZE];
+        let rtmr3 = [0x88u8; SHA384_DIGEST_SIZE];
+
+        let got = compute_tdinfo_hash_from_fields(
+            &attributes,
+            &xfam,
+            &mrtd,
+            &mrconfig_id,
+            &mrowner,
+            &mrownerconfig,
+            &rtmr0,
+            &rtmr1,
+            &rtmr2,
+            &rtmr3,
+        )
+        .unwrap();
+
+        let packed = pack_unmasked_tdinfo(
+            &attributes,
+            &xfam,
+            &mrtd,
+            &mrconfig_id,
+            &mrowner,
+            &mrownerconfig,
+            &rtmr0,
+            &rtmr1,
+            &rtmr2,
+            &rtmr3,
+        );
+        assert_eq!(packed.len(), 512);
+        let expected = digest_sha384(&packed).unwrap();
+
+        assert_eq!(&got[..], expected.as_slice());
     }
 }
