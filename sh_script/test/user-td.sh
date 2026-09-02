@@ -161,9 +161,9 @@ OBJ_SUBCOMMAND=" -object tdx-guest,id=tdx0,sept-ve-disable=on,debug=off"
     fi
 
     if [[ ${PRE_BINDING} == "true" ]]; then
-        OBJ_SUBCOMMAND+=",migtd-hash=${SERVTD_HASH},migtd-attr=0x0000000000000001"
+        OBJ_SUBCOMMAND+=",migtd-hash=${SERVTD_HASH},migtd-attr=0x0000000000000000"
     else
-        OBJ_SUBCOMMAND+=",migtd-pid=${TARGET_PID}"
+        OBJ_SUBCOMMAND+=",migtd-pid=${TARGET_PID},migtd-attr=0x0000000000000000"
     fi
 
     if [[ -n ${QUOTE_TYPE} ]]; then
