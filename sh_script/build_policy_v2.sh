@@ -5,6 +5,7 @@ config_temp_dir="./config/templates"
 key_dir="./key"
 
 environment="${1:-pre-production}"
+tcb_mapping_file="${2:-}"
 case "$environment" in
   pre-production|preprod)
     collateral_file="collateral_pre_production_fmspc.json"
@@ -13,12 +14,22 @@ case "$environment" in
     collateral_file="collateral_production_fmspc.json"
     ;;
   *)
-    echo "Usage: $0 <pre-production|production>"
+    echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json>"
     exit 1
     ;;
 esac
 
 echo "Selected collateral environment '$environment' using $collateral_file"
+if [[ -z "$tcb_mapping_file" ]]; then
+  echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json>" >&2
+  exit 1
+fi
+if ! jq -e '.svnMappings | type == "array" and length > 0' "$tcb_mapping_file" >/dev/null; then
+  echo "TCB mapping must contain at least one reviewed release: $tcb_mapping_file" >&2
+  echo "Generate it cumulatively with migtd-hash before signing." >&2
+  exit 1
+fi
+echo "Signing cumulative TCB mapping: $tcb_mapping_file"
 
 # Build migtd-collateral-generator and generate collateral_pre_production_fmspc.json
 # cargo build -p migtd-collateral-generator
@@ -38,7 +49,7 @@ cargo build -p json-signer
 ./target/debug/json-signer --sign \
   --name tdTcbMapping \
   --private-key $key_dir/issuer_pkcs8.key \
-  --input $config_temp_dir/tcb_mapping.json \
+  --input "$tcb_mapping_file" \
   --output $config_temp_dir/tcb_mapping_signed.json
 
 # Build servtd-collateral-generator and generate servtd_collateral.json

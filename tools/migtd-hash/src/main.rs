@@ -7,7 +7,8 @@ use clap::Parser;
 use log::debug;
 use migtd_hash::{
     apply_servtd_attr_masks, build_td_info_unmasked, calculate_servtd_hash,
-    calculate_servtd_info_hash, calculate_tdinfo_hash, clone_td_info, SERVTD_TYPE_MIGTD,
+    calculate_servtd_info_hash, calculate_tdinfo_hash, clone_td_info, update_tcb_mapping_v2,
+    SERVTD_TYPE_MIGTD,
 };
 use serde_json::{json, Value};
 use std::{
@@ -75,69 +76,37 @@ fn build_td_info_from_report(report_path: &Path) -> anyhow::Result<TdInfoStruct>
     Ok(td)
 }
 
-/// Write the v2-style `tdinfo_hash` into the TCB mapping JSON at
-/// `svnMappings[0].tdMeasurements`. Removes the legacy
-/// `{mrtd, rtmr0, rtmr1}` fields if present.
-fn update_tcb_mapping_file_v2(path: &Path, tdinfo_hash: &[u8]) -> anyhow::Result<()> {
+fn update_tcb_mapping_file_v2(
+    input_path: &Path,
+    output_path: &Path,
+    current_mapping: Option<(&[u8], u16)>,
+) -> anyhow::Result<()> {
     let manifest =
-        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-    let mut tcb_mapping: Value = serde_json::from_str(&manifest)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
-
-    let svn_mappings = tcb_mapping
-        .get_mut("svnMappings")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| {
-            anyhow!(
-                "'svnMappings' missing or not an array in {}",
-                path.display()
-            )
-        })?;
-    let td_measurements = svn_mappings
-        .get_mut(0)
-        .ok_or_else(|| anyhow!("'svnMappings' array is empty in {}", path.display()))?
-        .get_mut("tdMeasurements")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| {
-            anyhow!(
-                "'tdMeasurements' missing or not an object in {}",
-                path.display()
-            )
-        })?;
-
-    // Remove legacy fields if present so the file matches the v2 schema exactly.
-    for legacy_key in ["mrtd", "rtmr0", "rtmr1"] {
-        td_measurements.remove(legacy_key);
-    }
-
-    td_measurements.insert(
-        "tdinfo_hash".to_string(),
-        Value::String(bytes_to_hex(tdinfo_hash).to_uppercase()),
-    );
-
-    let serialized = serde_json::to_string(&tcb_mapping).with_context(|| {
+        fs::read(input_path).with_context(|| format!("Failed to read {}", input_path.display()))?;
+    let serialized = update_tcb_mapping_v2(&manifest, current_mapping)
+        .with_context(|| format!("Failed to update {}", input_path.display()))?;
+    fs::write(output_path, serialized).with_context(|| {
         format!(
-            "Failed to serialize updated tcb mapping for {}",
-            path.display()
+            "Failed to write updated tcb mapping to {}",
+            output_path.display()
         )
     })?;
-    fs::write(path, serialized)
-        .with_context(|| format!("Failed to write updated tcb mapping to {}", path.display()))?;
-    println!("Updated {} successfully.", path.display());
+    println!("Updated {} successfully.", output_path.display());
     Ok(())
 }
 
 /// Legacy v1 writer: writes mrtd/rtmr0/rtmr1 into the TCB mapping file.
 fn update_tcb_mapping_file_v1(
-    path: &Path,
+    input_path: &Path,
+    output_path: &Path,
     mrtd: &[u8],
     rtmr0: &[u8],
     rtmr1: &[u8],
 ) -> anyhow::Result<()> {
-    let manifest =
-        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let manifest = fs::read_to_string(input_path)
+        .with_context(|| format!("Failed to read {}", input_path.display()))?;
     let mut tcb_mapping: Value = serde_json::from_str(&manifest)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
+        .with_context(|| format!("Failed to parse {}", input_path.display()))?;
 
     let svn_mappings = tcb_mapping
         .get_mut("svnMappings")
@@ -145,18 +114,18 @@ fn update_tcb_mapping_file_v1(
         .ok_or_else(|| {
             anyhow!(
                 "'svnMappings' missing or not an array in {}",
-                path.display()
+                input_path.display()
             )
         })?;
     let td_measurements = svn_mappings
         .get_mut(0)
-        .ok_or_else(|| anyhow!("'svnMappings' array is empty in {}", path.display()))?
+        .ok_or_else(|| anyhow!("'svnMappings' array is empty in {}", input_path.display()))?
         .get_mut("tdMeasurements")
         .and_then(Value::as_object_mut)
         .ok_or_else(|| {
             anyhow!(
                 "'tdMeasurements' missing or not an object in {}",
-                path.display()
+                input_path.display()
             )
         })?;
 
@@ -173,12 +142,16 @@ fn update_tcb_mapping_file_v1(
     let serialized = serde_json::to_string(&tcb_mapping).with_context(|| {
         format!(
             "Failed to serialize updated tcb mapping for {}",
-            path.display()
+            input_path.display()
         )
     })?;
-    fs::write(path, serialized)
-        .with_context(|| format!("Failed to write updated tcb mapping to {}", path.display()))?;
-    println!("Updated {} successfully.", path.display());
+    fs::write(output_path, serialized).with_context(|| {
+        format!(
+            "Failed to write updated tcb mapping to {}",
+            output_path.display()
+        )
+    })?;
+    println!("Updated {} successfully.", output_path.display());
     Ok(())
 }
 #[derive(Clone, Parser)]
@@ -234,6 +207,15 @@ struct Config {
     /// For v1, writes `mrtd`/`rtmr0`/`rtmr1`.
     #[clap(long)]
     pub update_tcb_mapping: Option<PathBuf>,
+    /// Write the updated TCB mapping to a separate path instead of replacing
+    /// `--update-tcb-mapping`. This preserves the previous signed release
+    /// artifact as the input history.
+    #[clap(long, requires = "update_tcb_mapping")]
+    pub output_tcb_mapping: Option<PathBuf>,
+    /// ISV SVN assigned to the generated v2 `tdinfo_hash`. Required when
+    /// `--policy-v2` updates a mapping from an image or report.
+    #[clap(long, requires = "update_tcb_mapping")]
+    pub mapping_isvsvn: Option<u16>,
 }
 
 fn main() {
@@ -254,6 +236,11 @@ fn main() {
 
     let servtd_attr = config.servtd_attr.unwrap_or(0);
     debug!("ServTD attributes: {servtd_attr:#x}");
+
+    if !config.policy_v2 && config.mapping_isvsvn.is_some() {
+        eprintln!("--mapping-isvsvn requires --policy-v2");
+        exit(1);
+    }
 
     // Branch 1: --from-report mode. Build TDINFO from the saved report JSON
     // directly. RTMR2 is taken verbatim from the report (it was extended at
@@ -384,14 +371,23 @@ fn main() {
 
     debug!("Updating tcb_mapping file...");
     if let Some(tcb_mapping_path) = &config.update_tcb_mapping {
+        let output_path = config
+            .output_tcb_mapping
+            .as_deref()
+            .unwrap_or(tcb_mapping_path.as_path());
         let result = if config.policy_v2 {
             let hash = tdinfo_hash_v2
                 .as_ref()
                 .expect("v2 tcb-mapping update requires tdinfo_hash to be computed");
-            update_tcb_mapping_file_v2(tcb_mapping_path, hash)
+            let isvsvn = config.mapping_isvsvn.unwrap_or_else(|| {
+                eprintln!("--mapping-isvsvn is required with --policy-v2 --update-tcb-mapping");
+                exit(1);
+            });
+            update_tcb_mapping_file_v2(tcb_mapping_path, output_path, Some((hash, isvsvn)))
         } else {
             update_tcb_mapping_file_v1(
                 tcb_mapping_path,
+                output_path,
                 &td_info.mrtd,
                 &td_info.rtmr0,
                 &td_info.rtmr1,

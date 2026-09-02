@@ -13,7 +13,9 @@ use migtd::{
     event_log::TEST_DISABLE_RA_AND_ACCEPT_ALL_EVENT,
     policy,
 };
+use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     fs::File,
     io::{Read, Seek, SeekFrom},
     mem::size_of,
@@ -223,6 +225,94 @@ pub fn calculate_tdinfo_hash(td_info: TdInfoStruct) -> Result<Vec<u8>, Error> {
     calculate_servtd_info_hash(td_info)
 }
 
+fn canonical_tdinfo_hash(hash: &str) -> Result<String> {
+    let bytes =
+        hex::decode(hash.trim()).map_err(|_| anyhow!("tdinfo_hash is not valid hexadecimal"))?;
+    if bytes.len() != SHA384_DIGEST_SIZE {
+        return Err(anyhow!(
+            "tdinfo_hash is {} bytes, expected {}",
+            bytes.len(),
+            SHA384_DIGEST_SIZE
+        ));
+    }
+    Ok(hex::encode_upper(bytes))
+}
+
+/// Add or replace an entry in a v2 TCB mapping.
+///
+/// Existing mappings are retained by default. Duplicate hashes with the same
+/// SVN are collapsed, while conflicting duplicate hashes are rejected. The
+/// result is sorted by the canonical uppercase hash and serialized without a
+/// trailing newline so repeated updates produce stable signing input.
+pub fn update_tcb_mapping_v2(
+    input: &[u8],
+    current_mapping: Option<(&[u8], u16)>,
+) -> Result<Vec<u8>> {
+    let mut document: Value =
+        serde_json::from_slice(input).map_err(|e| anyhow!("invalid TCB mapping JSON: {e}"))?;
+    let svn_mappings = document
+        .get_mut("svnMappings")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow!("'svnMappings' missing or not an array"))?;
+
+    let mut mappings = BTreeMap::<String, u16>::new();
+    for (index, mapping) in svn_mappings.iter().enumerate() {
+        let hash = mapping
+            .get("tdMeasurements")
+            .and_then(|measurements| measurements.get("tdinfo_hash"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                anyhow!("svnMappings[{index}].tdMeasurements.tdinfo_hash missing or not a string")
+            })?;
+        let hash = canonical_tdinfo_hash(hash)
+            .map_err(|e| anyhow!("invalid svnMappings[{index}] tdinfo_hash: {e}"))?;
+        let svn = mapping
+            .get("isvsvn")
+            .and_then(Value::as_u64)
+            .and_then(|svn| u16::try_from(svn).ok())
+            .ok_or_else(|| anyhow!("svnMappings[{index}].isvsvn missing or outside u16 range"))?;
+
+        if let Some(previous_svn) = mappings.insert(hash.clone(), svn) {
+            if previous_svn != svn {
+                return Err(anyhow!(
+                    "conflicting duplicate tdinfo_hash {hash}: SVN {previous_svn} and {svn}"
+                ));
+            }
+        }
+    }
+
+    let current_mapping = current_mapping
+        .map(|(hash, svn)| {
+            if hash.len() != SHA384_DIGEST_SIZE {
+                return Err(anyhow!(
+                    "current tdinfo_hash is {} bytes, expected {}",
+                    hash.len(),
+                    SHA384_DIGEST_SIZE
+                ));
+            }
+            Ok((hex::encode_upper(hash), svn))
+        })
+        .transpose()?;
+
+    if let Some((hash, svn)) = current_mapping {
+        mappings.insert(hash, svn);
+    }
+
+    *svn_mappings = mappings
+        .into_iter()
+        .map(|(hash, svn)| {
+            json!({
+                "tdMeasurements": {
+                    "tdinfo_hash": hash,
+                },
+                "isvsvn": svn,
+            })
+        })
+        .collect();
+
+    serde_json::to_vec(&document).map_err(|e| anyhow!("failed to serialize TCB mapping: {e}"))
+}
+
 fn rtmr1(
     cfv: &[u8],
     rtmr1: &[u8; SHA384_DIGEST_SIZE],
@@ -343,7 +433,8 @@ fn calculate_digest(data: &[u8]) -> Result<Vec<u8>, Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::copy_igvm_cfv_page;
+    use super::{copy_igvm_cfv_page, update_tcb_mapping_v2};
+    use serde_json::Value;
 
     #[test]
     fn igvm_cfv_pages_preserve_gpa_gaps() {
@@ -361,5 +452,122 @@ mod tests {
         assert!(copy_igvm_cfv_page(&mut cfv, 0x1000, 0x1010, 0x100f, &[1, 2]).is_err());
         assert!(copy_igvm_cfv_page(&mut cfv, 0x1000, 0x1010, 0x2000, &[1, 2]).is_ok());
         assert_eq!(cfv, [0u8; 16]);
+    }
+
+    const HASH_11: &str =
+        "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111";
+    const HASH_AA: &str =
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    #[test]
+    fn tcb_mapping_add_retains_historical_releases() {
+        let input = format!(
+            r#"{{"id":"mapping","svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+        );
+        let current = [0x11u8; 48];
+
+        let output = update_tcb_mapping_v2(input.as_bytes(), Some((&current, 2))).unwrap();
+        let value: Value = serde_json::from_slice(&output).unwrap();
+        let mappings = value["svnMappings"].as_array().unwrap();
+
+        assert_eq!(mappings.len(), 2);
+        assert_eq!(mappings[0]["tdMeasurements"]["tdinfo_hash"], HASH_11);
+        assert_eq!(mappings[0]["isvsvn"], 2);
+        assert_eq!(mappings[1]["tdMeasurements"]["tdinfo_hash"], HASH_AA);
+        assert_eq!(mappings[1]["isvsvn"], 1);
+    }
+
+    #[test]
+    fn tcb_mapping_retains_multiple_hashes_for_same_svn() {
+        let input = format!(
+            r#"{{"id":"mapping","svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+        );
+        let current = [0x11u8; 48];
+
+        let output = update_tcb_mapping_v2(input.as_bytes(), Some((&current, 1))).unwrap();
+        let value: Value = serde_json::from_slice(&output).unwrap();
+        let mappings = value["svnMappings"].as_array().unwrap();
+
+        assert_eq!(mappings.len(), 2);
+        assert!(mappings.iter().all(|mapping| mapping["isvsvn"] == 1));
+        assert!(mappings
+            .iter()
+            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == HASH_11));
+        assert!(mappings
+            .iter()
+            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == HASH_AA));
+    }
+
+    #[test]
+    fn tcb_mapping_two_phase_uses_authority_history_not_mock_output() {
+        let historical_hash = "22".repeat(48);
+        let authority = format!(
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{historical_hash}"}},"isvsvn":1}}]}}"#
+        );
+        let mock_hash = [0x33u8; 48];
+        let real_hash = [0x44u8; 48];
+
+        let phase_one = update_tcb_mapping_v2(authority.as_bytes(), Some((&mock_hash, 2))).unwrap();
+        let phase_one: Value = serde_json::from_slice(&phase_one).unwrap();
+        assert!(phase_one["svnMappings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == "33".repeat(48)));
+
+        // The measured-image phase must restart from the authority input, not
+        // from phase one's generated output containing the transient mock hash.
+        let final_mapping =
+            update_tcb_mapping_v2(authority.as_bytes(), Some((&real_hash, 2))).unwrap();
+        let final_mapping: Value = serde_json::from_slice(&final_mapping).unwrap();
+        let mappings = final_mapping["svnMappings"].as_array().unwrap();
+
+        assert_eq!(mappings.len(), 2);
+        assert!(mappings
+            .iter()
+            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == historical_hash));
+        assert!(mappings
+            .iter()
+            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == "44".repeat(48)));
+        assert!(!mappings
+            .iter()
+            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == "33".repeat(48)));
+    }
+
+    #[test]
+    fn tcb_mapping_replace_same_hash_is_deterministic() {
+        let input = format!(
+            r#"{{"svnMappings":[{{"isvsvn":1,"tdMeasurements":{{"tdinfo_hash":"{}"}}}}]}}"#,
+            HASH_AA.to_ascii_lowercase()
+        );
+        let current = [0xAAu8; 48];
+
+        let first = update_tcb_mapping_v2(input.as_bytes(), Some((&current, 7))).unwrap();
+        let second = update_tcb_mapping_v2(&first, Some((&current, 7))).unwrap();
+        let value: Value = serde_json::from_slice(&first).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(value["svnMappings"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            value["svnMappings"][0]["tdMeasurements"]["tdinfo_hash"],
+            HASH_AA
+        );
+        assert_eq!(value["svnMappings"][0]["isvsvn"], 7);
+    }
+
+    #[test]
+    fn tcb_mapping_rejects_conflicting_duplicate_hashes() {
+        let input = format!(
+            r#"{{"svnMappings":[
+                {{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}},
+                {{"tdMeasurements":{{"tdinfo_hash":"{}"}},"isvsvn":2}}
+            ]}}"#,
+            HASH_AA.to_ascii_lowercase()
+        );
+
+        let error = update_tcb_mapping_v2(input.as_bytes(), None).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("conflicting duplicate tdinfo_hash"));
     }
 }
