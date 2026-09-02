@@ -123,6 +123,11 @@ pub(super) async fn send_pre_session_data<T: AsyncRead + AsyncWrite + Unpin>(
             log::error!("send_pre_session_data: Network error: {:?}\n", e);
             MigrationResult::NetworkError
         })?;
+        // Fail closed if the transport reports success without progress.
+        if n == 0 {
+            log::error!("send_pre_session_data: zero-length transport write\n");
+            return Err(MigrationResult::NetworkError);
+        }
         sent += n;
     }
     Ok(())
