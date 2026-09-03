@@ -7,5 +7,6 @@
     "TdInfo": "0x001000",
     "Payload": "0xEE5000",
     "Ipl": "0x50000",
-    "ResetVector": "0x008000"
+    "ResetVector": "0x008000",
+    "TempMemBase": "0x1FDF000"
 }
