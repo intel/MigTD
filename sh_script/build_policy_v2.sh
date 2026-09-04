@@ -42,7 +42,7 @@ if ! jq -e '.svnMappings | type == "array" and length > 0' "$tcb_mapping_file" >
   exit 1
 fi
 echo "Signing cumulative TCB mapping: $tcb_mapping_file"
-measured_policy=$(jq -cS 'del(.servtdCollateral.servtdTcbMapping)' \
+measured_policy=$(jq -cS 'del(.servtdCollateral.servtdTcbMapping, .servtdCollateral.servtdTcbMappingIssuerChain)' \
   "$config_temp_dir/policy_v2.json")
 
 # Build migtd-collateral-generator and generate collateral_pre_production_fmspc.json
@@ -78,7 +78,7 @@ trap 'rm -f -- "$policy_output"' EXIT
   --servtd-collateral "$config_temp_dir/servtd_collateral.json" \
   -o "$policy_output"
 
-updated_measurement=$(jq -cS 'del(.servtdCollateral.servtdTcbMapping)' "$policy_output")
+updated_measurement=$(jq -cS 'del(.servtdCollateral.servtdTcbMapping, .servtdCollateral.servtdTcbMappingIssuerChain)' "$policy_output")
 if [[ "$updated_measurement" != "$measured_policy" ]]; then
   echo "Finalization would change measured policy data; prepare and measure a new release first." >&2
   exit 1
