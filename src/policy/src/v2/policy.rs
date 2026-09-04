@@ -13,12 +13,25 @@ use serde_json::{self, value::RawValue};
 
 use crate::{
     v2::{
-        bytes_to_hex_string,
-        measurement::{compute_signer_anchor_from_chain_pem, extract_canonical_policy_data_bytes},
-        policy, verify_event_hash,
+        bytes_to_hex_string, compute_signer_anchor_from_chain_pem,
+        measurement::extract_canonical_policy_data_bytes, policy, resolve_signer_anchor,
+        verify_event_hash,
     },
-    CcEvent, Collaterals, EventName, PolicyError, ServtdCollateral, TdIdentity, TdTcbMapping,
+    CcEvent, Collaterals, EventName, PolicyError, Report, ServtdCollateral, TdIdentity,
+    TdTcbMapping,
 };
+use crypto::SHA384_DIGEST_SIZE;
+
+#[cfg(feature = "servtd_corim")]
+use crate::v2::ServtdCorim;
+
+/// MigTD TCB information resolved from authenticated collateral.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServtdLookup {
+    pub isvsvn: u16,
+    pub tcb_date: Option<String>,
+    pub tcb_status: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum TcbStatus {
@@ -159,10 +172,10 @@ pub struct PolicyEvaluationInfo {
     /// The isvsvn of the MigTD TCB
     pub migtd_isvsvn: Option<u16>,
 
-    /// The status of the MigTD TCB
     pub migtd_tcb_status: Option<String>,
 
-    /// The date of the MigTD TCB in ISO-8601 format, e.g. "2023-06-19T00:00:00Z"
+    /// The date of the MigTD TCB in ISO-8601 format (from the optional TD
+    /// Identity), e.g. "2023-06-19T00:00:00Z"
     pub migtd_tcb_date: Option<String>,
 
     /// The minimal crl_num of pck_crl
@@ -171,18 +184,29 @@ pub struct PolicyEvaluationInfo {
     /// The minimal crl_num of root_ca_crl
     pub root_ca_crl_num: Option<u32>,
 
-    /// The minimal CRL number for the servTD signer chain.
+    /// The CRL number of the servTD signer CRL, used for
+    /// monotonic anti-rollback of the signer revocation list.
     pub servtd_crl_num: Option<u32>,
 }
 
 pub struct VerifiedPolicy<'a> {
     pub policy_data: policy::PolicyData<'a>,
-    pub servtd_identity: TdIdentity,
-    pub servtd_identity_issuer_chain: String,
-    pub servtd_tcb_mapping: TdTcbMapping,
+    /// JSON TCB mapping; absent for CoRIM-only policies.
+    pub servtd_tcb_mapping: Option<TdTcbMapping>,
+    /// JSON mapping signer chain retained for CRL checks.
+    pub servtd_tcb_mapping_issuer_chain: Option<String>,
+    /// Optional JSON TD Identity for date and status lookup.
+    pub servtd_identity: Option<TdIdentity>,
+    /// JSON TD Identity signer chain retained for CRL checks.
+    pub servtd_identity_issuer_chain: Option<String>,
+    /// Authoritative signer CRL from top-level or legacy JSON collateral.
     pub servtd_crl: String,
-    /// The policy signing certificate chain (PEM) used to verify this policy.
-    pub policy_issuer_chain: String,
+    /// The RTMR1 root-certificate plus leaf-subject signer anchor used to
+    /// authenticate peer collateral.
+    pub signer_anchor: [u8; SHA384_DIGEST_SIZE],
+    /// Authenticated CoRIM; when set, it is the sole hash-to-SVN authority.
+    #[cfg(feature = "servtd_corim")]
+    servtd_corim: Option<ServtdCorim>,
 }
 
 impl VerifiedPolicy<'_> {
@@ -192,6 +216,91 @@ impl VerifiedPolicy<'_> {
 
     pub fn get_version(&self) -> &str {
         &self.policy_data.version
+    }
+
+    /// Whether the optional JSON TD Identity must provide status.
+    pub fn requires_servtd_tcb_status(&self) -> bool {
+        self.servtd_identity.is_some()
+    }
+
+    /// Set the sole hash-to-SVN authority. Peer CoRIMs must first be
+    /// authenticated against that peer's signer anchor.
+    #[cfg(feature = "servtd_corim")]
+    pub fn set_servtd_corim(&mut self, corim: ServtdCorim) {
+        self.servtd_corim = Some(corim);
+    }
+
+    /// Verify and attach a peer's TCB-mapping CoRIM using its signer anchor.
+    #[cfg(feature = "servtd_corim")]
+    pub fn attach_verified_peer_servtd_corim(
+        &mut self,
+        peer_servtd_corim_cose: &[u8],
+    ) -> Result<(), PolicyError> {
+        let corim = ServtdCorim::decode_signed(peer_servtd_corim_cose, 0, &self.signer_anchor)?;
+        self.servtd_corim = Some(corim);
+        Ok(())
+    }
+
+    /// Check all signer chains against the local authoritative CRL.
+    pub fn verify_signer_chains_not_revoked(
+        &self,
+        authoritative_crl: &[u8],
+    ) -> Result<(), PolicyError> {
+        if let Some(mapping_chain) = self.servtd_tcb_mapping_issuer_chain.as_deref() {
+            crypto::verify_signer_chain_not_revoked(
+                crypto::SignerChain::Pem(mapping_chain.as_bytes()),
+                authoritative_crl,
+            )
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        }
+        if let Some(identity_chain) = self.servtd_identity_issuer_chain.as_deref() {
+            crypto::verify_signer_chain_not_revoked(
+                crypto::SignerChain::Pem(identity_chain.as_bytes()),
+                authoritative_crl,
+            )
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        }
+        #[cfg(feature = "servtd_corim")]
+        if let Some(corim) = self.servtd_corim.as_ref() {
+            corim.verify_signer_chain_not_revoked(authoritative_crl)?;
+        }
+        Ok(())
+    }
+
+    fn servtd_svn_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<u16> {
+        #[cfg(feature = "servtd_corim")]
+        if let Some(corim) = &self.servtd_corim {
+            return corim
+                .lookup_by_tdinfo_hash(tdinfo_hash)
+                .map(|lookup| lookup.isvsvn);
+        }
+        self.servtd_tcb_mapping
+            .as_ref()?
+            .get_engine_svn_by_tdinfo_hash(tdinfo_hash)
+    }
+
+    /// Resolve a TDINFO hash through the active mapping, then enrich its SVN
+    /// with the optional JSON TD Identity. CoRIM misses remain unendorsed.
+    pub fn servtd_lookup_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<ServtdLookup> {
+        let isvsvn = self.servtd_svn_by_tdinfo_hash(tdinfo_hash)?;
+        let (tcb_date, tcb_status) = match &self.servtd_identity {
+            Some(identity) => {
+                let level = identity.get_tcb_level_by_svn(isvsvn)?;
+                (Some(level.tcb_date.clone()), Some(level.tcb_status.clone()))
+            }
+            None => (None, None),
+        };
+        Some(ServtdLookup {
+            isvsvn,
+            tcb_date,
+            tcb_status,
+        })
+    }
+
+    /// Resolve the TDINFO hash in a verified report.
+    pub fn servtd_lookup_by_report(&self, report: &Report) -> Option<ServtdLookup> {
+        let hash = crate::v2::compute_tdinfo_hash_from_report(report).ok()?;
+        self.servtd_lookup_by_tdinfo_hash(&hash)
     }
 }
 
@@ -211,7 +320,7 @@ pub fn check_policy_issuer_chain_integrity(
     issuer_chain: &[u8],
     events: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
-    let signer_anchor = compute_signer_anchor_from_chain_pem(issuer_chain)?;
+    let signer_anchor = resolve_signer_anchor(issuer_chain)?;
     if !verify_event_hash(events, &EventName::MigTdPolicySigner, &signer_anchor)? {
         return Err(PolicyError::PolicyHashMismatch);
     }
@@ -237,35 +346,100 @@ impl<'a> RawPolicyData<'a> {
         Ok(policy_data.collaterals)
     }
 
-    /// Verify servTD collateral using the RTMR1-measured policy issuer chain.
+    /// Verify the servtd collateral using the given (RTMR1-anchored) issuer
+    /// chain.
     pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
-        let policy_issuer_chain = core::str::from_utf8(issuer_chain)
-            .map_err(|_| PolicyError::InvalidPolicy)?
-            .to_string();
+        let verified_policy = self.verify_signatures_and_anchors(issuer_chain)?;
+        verified_policy.verify_signer_chains_not_revoked(verified_policy.servtd_crl.as_bytes())?;
+        crypto::crl::get_crl_number(verified_policy.servtd_crl.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+        Ok(verified_policy)
+    }
+
+    /// Verify a peer policy while applying only the caller-provided,
+    /// locally-authoritative servTD CRL to its signer chains. The peer's own
+    /// delivered CRL remains part of its measured policy data but is not
+    /// trusted for revocation decisions.
+    pub fn verify_with_authoritative_servtd_crl(
+        &self,
+        issuer_chain: &[u8],
+        authoritative_crl: &[u8],
+    ) -> Result<VerifiedPolicy<'a>, PolicyError> {
+        let verified_policy = self.verify_signatures_and_anchors(issuer_chain)?;
+        verified_policy.verify_signer_chains_not_revoked(authoritative_crl)?;
+        crypto::crl::get_crl_number(verified_policy.servtd_crl.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+        Ok(verified_policy)
+    }
+
+    fn verify_signatures_and_anchors(
+        &self,
+        issuer_chain: &[u8],
+    ) -> Result<VerifiedPolicy<'a>, PolicyError> {
+        let cfv_anchor = resolve_signer_anchor(issuer_chain)?;
 
         let policy_data: PolicyData<'a> =
             serde_json::from_str(self.policy_data.get()).map_err(|_| PolicyError::InvalidPolicy)?;
 
-        let servtd_collateral = &policy_data.servtd_collateral;
-        let servtd_identity = servtd_collateral
-            .servtd_identity
-            .verify_signature(servtd_collateral.servtd_identity_issuer_chain.as_bytes())?;
-        let servtd_tcb_mapping = servtd_collateral
-            .servtd_tcb_mapping
-            .verify_signature(issuer_chain)?;
+        let servtd_crl = match (
+            policy_data.servtd_crl.as_ref(),
+            policy_data
+                .servtd_collateral
+                .as_ref()
+                .and_then(|collateral| collateral.servtd_crl.as_ref()),
+        ) {
+            (Some(top_level), Some(legacy)) if top_level != legacy => {
+                return Err(PolicyError::InvalidCollateral);
+            }
+            (Some(top_level), _) => Some(top_level.clone()),
+            (None, legacy) => legacy.cloned(),
+        }
+        .ok_or(PolicyError::InvalidPolicy)?;
 
-        let servtd_identity_issuer_chain = servtd_collateral.servtd_identity_issuer_chain.clone();
-        let servtd_crl = servtd_collateral.servtd_crl.clone();
+        let (
+            servtd_tcb_mapping,
+            servtd_tcb_mapping_issuer_chain,
+            servtd_identity,
+            servtd_identity_issuer_chain,
+        ) = match &policy_data.servtd_collateral {
+            Some(servtd_collateral) => {
+                let mapping_chain =
+                    match servtd_collateral.servtd_tcb_mapping_issuer_chain.as_deref() {
+                        Some(mapping_chain) => mapping_chain,
+                        None => core::str::from_utf8(issuer_chain)
+                            .map_err(|_| PolicyError::InvalidServtdTcbMapping)?,
+                    };
+                let servtd_tcb_mapping = servtd_collateral
+                    .servtd_tcb_mapping
+                    .verify_signature(mapping_chain.as_bytes())?;
 
-        crypto::verify_signer_chain_not_revoked(issuer_chain, servtd_crl.as_bytes())
-            .map_err(|_| PolicyError::SignerRevoked)?;
-        crypto::verify_signer_chain_not_revoked(
-            servtd_identity_issuer_chain.as_bytes(),
-            servtd_crl.as_bytes(),
-        )
-        .map_err(|_| PolicyError::SignerRevoked)?;
-        crypto::crl::get_crl_number(servtd_crl.as_bytes())
-            .map_err(|_| PolicyError::InvalidCollateral)?;
+                // Identity and its signer chain must be present together.
+                let servtd_identity = match (
+                    servtd_collateral.servtd_identity.as_ref(),
+                    servtd_collateral.servtd_identity_issuer_chain.as_deref(),
+                ) {
+                    (Some(raw_identity), Some(identity_chain)) => {
+                        Some(raw_identity.verify_signature(identity_chain.as_bytes())?)
+                    }
+                    (None, None) => None,
+                    _ => return Err(PolicyError::InvalidServtdIdentity),
+                };
+
+                let mapping_anchor =
+                    compute_signer_anchor_from_chain_pem(mapping_chain.as_bytes())?;
+                if cfv_anchor != mapping_anchor {
+                    return Err(PolicyError::SignerAnchorMismatch);
+                }
+
+                (
+                    Some(servtd_tcb_mapping),
+                    Some(mapping_chain.to_string()),
+                    servtd_identity,
+                    servtd_collateral.servtd_identity_issuer_chain.clone(),
+                )
+            }
+            None => (None, None, None, None),
+        };
 
         if !policy_data.validate() {
             return Err(PolicyError::InvalidParameter);
@@ -273,11 +447,14 @@ impl<'a> RawPolicyData<'a> {
 
         Ok(VerifiedPolicy {
             policy_data,
+            servtd_tcb_mapping,
+            servtd_tcb_mapping_issuer_chain,
             servtd_identity,
             servtd_identity_issuer_chain,
-            servtd_tcb_mapping,
             servtd_crl,
-            policy_issuer_chain,
+            signer_anchor: cfv_anchor,
+            #[cfg(feature = "servtd_corim")]
+            servtd_corim: None,
         })
     }
 }
@@ -292,8 +469,13 @@ pub struct PolicyData<'a> {
     forward_policy: Option<Vec<PolicyTypes>>,
     backward_policy: Option<Vec<PolicyTypes>>,
     pub collaterals: Collaterals,
-    #[serde(borrow)]
-    pub servtd_collateral: ServtdCollateral<'a>,
+    /// Top-level signer CRL for CoRIM-only policies; the legacy nested form is
+    /// also accepted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub servtd_crl: Option<String>,
+    /// JSON servTD collateral, absent for CoRIM-only policies.
+    #[serde(borrow, default, skip_serializing_if = "Option::is_none")]
+    pub servtd_collateral: Option<ServtdCollateral<'a>>,
 }
 
 impl<'a> PolicyData<'a> {
@@ -373,8 +555,7 @@ impl<'a> PolicyData<'a> {
 
     /// Enforce non-optional deny checks.
     ///
-    /// Reject `Revoked` platform status when global checks are enabled.
-    /// Always check engine status; treat unknown (`None`) as denied.
+    /// Reject any available `Revoked` status.
     fn enforce_mandatory_deny(
         value: &PolicyEvaluationInfo,
         skip_global: bool,
@@ -387,14 +568,10 @@ impl<'a> PolicyData<'a> {
             }
         }
 
-        // Engine status must be known; fail closed on `None`.
-        match value.migtd_tcb_status.as_deref() {
-            Some(status) => {
-                if ServtdTcbStatus::try_from(status)? == ServtdTcbStatus::Revoked {
-                    return Err(PolicyError::SvnMismatch);
-                }
+        if let Some(status) = value.migtd_tcb_status.as_deref() {
+            if ServtdTcbStatus::try_from(status)? == ServtdTcbStatus::Revoked {
+                return Err(PolicyError::SvnMismatch);
             }
-            None => return Err(PolicyError::UnqualifiedMigTdInfo),
         }
 
         Ok(())
@@ -587,6 +764,7 @@ impl ServtdPolicy {
             }
         }
 
+        // Date and status constraints require a TD Identity.
         if let Some(property) = &self.migtd_identity.tcb_date {
             if !property.evaluate_string(
                 value
@@ -882,14 +1060,13 @@ impl PolicyProperty {
         }
     }
 
-    /// Evaluate a ServtdTcbStatus property against a reference value
     fn evaluate_servtd_tcb_status(
         &self,
         value: ServtdTcbStatus,
         _relative_reference: Option<ServtdTcbStatus>,
     ) -> Result<bool, PolicyError> {
         // "UpToDate" is always allowed.
-        // "OutOfDate" is always allowed, because time stamp is not trusted.
+        // "OutOfDate" is always allowed, because the time stamp is not trusted.
         const ALWAYS_ALLOW: &[ServtdTcbStatus] =
             &[ServtdTcbStatus::UpToDate, ServtdTcbStatus::OutOfDate];
         // "Revoked" is always denied.
@@ -903,8 +1080,6 @@ impl PolicyProperty {
             return Ok(true);
         }
 
-        // Every status already falls into either the always-allow or always-deny
-        // set.
         Ok(false)
     }
 }
@@ -928,13 +1103,170 @@ mod test {
         assert!(serde_json::from_str::<PolicyData>(policy).is_ok());
     }
 
-    #[test]
-    fn test_verify_policy() {
+    fn verified_test_policy() -> VerifiedPolicy<'static> {
         let policy_data = include_bytes!("../../test/policy_v2/policy_v2.json");
         let policy = RawPolicyData::deserialize_from_json(policy_data).unwrap();
         let issuer_chain =
             include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
-        policy.verify(issuer_chain).unwrap();
+        policy.verify(issuer_chain).unwrap()
+    }
+
+    #[test]
+    fn test_verify_policy() {
+        assert!(verified_test_policy().requires_servtd_tcb_status());
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn corim_svn_is_enriched_by_optional_json_identity() {
+        let mut policy = verified_test_policy();
+        let svn = policy
+            .servtd_identity
+            .as_ref()
+            .unwrap()
+            .tcb_levels
+            .iter()
+            .map(|level| level.tcb.isvsvn)
+            .max()
+            .unwrap()
+            .checked_add(1)
+            .unwrap();
+        let hash = vec![0xAA; SHA384_DIGEST_SIZE];
+        let payload = crate::v2::servtd_corim::test::build_tcb_mapping(&[(hash.clone(), svn)]);
+        policy.set_servtd_corim(ServtdCorim::decode(&payload, 0).unwrap());
+
+        assert!(policy.requires_servtd_tcb_status());
+        let lookup = policy.servtd_lookup_by_tdinfo_hash(&hash).unwrap();
+        let level = policy
+            .servtd_identity
+            .as_ref()
+            .unwrap()
+            .get_tcb_level_by_svn(svn)
+            .unwrap();
+        assert_eq!(lookup.isvsvn, svn);
+        assert_eq!(lookup.tcb_date.as_deref(), Some(level.tcb_date.as_str()));
+        assert_eq!(
+            lookup.tcb_status.as_deref(),
+            Some(level.tcb_status.as_str())
+        );
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn corim_without_json_identity_stays_svn_only() {
+        let mut policy = verified_test_policy();
+        policy.servtd_identity = None;
+        policy.servtd_identity_issuer_chain = None;
+        let hash = vec![0xAA; SHA384_DIGEST_SIZE];
+        let payload = crate::v2::servtd_corim::test::build_tcb_mapping(&[(hash.clone(), 7)]);
+        policy.set_servtd_corim(ServtdCorim::decode(&payload, 0).unwrap());
+
+        assert!(!policy.requires_servtd_tcb_status());
+        let lookup = policy.servtd_lookup_by_tdinfo_hash(&hash).unwrap();
+        assert_eq!(lookup.isvsvn, 7);
+        assert!(lookup.tcb_date.is_none());
+        assert!(lookup.tcb_status.is_none());
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn corim_miss_does_not_fall_back_to_json_mapping() {
+        let mut policy = verified_test_policy();
+        policy.servtd_identity = None;
+        let mapping = &policy.servtd_tcb_mapping.as_ref().unwrap().svn_mappings[0];
+        let json_hash =
+            crate::v2::hex_string_to_bytes(&mapping.td_measurements.tdinfo_hash).unwrap();
+        assert!(policy.servtd_lookup_by_tdinfo_hash(&json_hash).is_some());
+
+        let mut corim_hash = json_hash.clone();
+        corim_hash[0] ^= 0xff;
+        let payload = crate::v2::servtd_corim::test::build_tcb_mapping(&[(corim_hash, 7)]);
+        policy.set_servtd_corim(ServtdCorim::decode(&payload, 0).unwrap());
+        assert!(policy.servtd_lookup_by_tdinfo_hash(&json_hash).is_none());
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn corim_svn_wins_over_a_different_json_svn() {
+        let mut policy = verified_test_policy();
+        policy.servtd_identity = None;
+        let mapping = &policy.servtd_tcb_mapping.as_ref().unwrap().svn_mappings[0];
+        let hash = crate::v2::hex_string_to_bytes(&mapping.td_measurements.tdinfo_hash).unwrap();
+        let json_svn = policy.servtd_lookup_by_tdinfo_hash(&hash).unwrap().isvsvn;
+        let corim_svn = json_svn ^ 1;
+        let payload =
+            crate::v2::servtd_corim::test::build_tcb_mapping(&[(hash.clone(), corim_svn)]);
+        policy.set_servtd_corim(ServtdCorim::decode(&payload, 0).unwrap());
+
+        assert_ne!(json_svn, corim_svn);
+        assert_eq!(
+            policy.servtd_lookup_by_tdinfo_hash(&hash).unwrap().isvsvn,
+            corim_svn
+        );
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn corim_with_identity_but_no_tcb_level_fails_closed() {
+        let mut policy = verified_test_policy();
+        policy.servtd_identity.as_mut().unwrap().tcb_levels.clear();
+        let hash = vec![0xAA; SHA384_DIGEST_SIZE];
+        let payload = crate::v2::servtd_corim::test::build_tcb_mapping(&[(hash.clone(), 7)]);
+        policy.set_servtd_corim(ServtdCorim::decode(&payload, 0).unwrap());
+
+        assert!(policy.requires_servtd_tcb_status());
+        assert!(policy.servtd_lookup_by_tdinfo_hash(&hash).is_none());
+    }
+
+    #[test]
+    fn servtd_policy_svn_only_bars_and_fail_closed() {
+        let mut value = PolicyEvaluationInfo {
+            migtd_isvsvn: Some(5),
+            ..Default::default()
+        };
+        let relative = PolicyEvaluationInfo::default();
+
+        let svn_only: ServtdPolicy = serde_json::from_str(
+            r#"{"migtdIdentity":{"isvsvn":{"operation":"greater-or-equal","reference":5}}}"#,
+        )
+        .unwrap();
+        assert!(svn_only.evaluate(&value, &relative).is_ok());
+
+        let status_bar: ServtdPolicy = serde_json::from_str(
+            r#"{"migtdIdentity":{"isvsvn":{"operation":"greater-or-equal","reference":5},"tcbStatusAccepted":{"operation":"string-equal","reference":"UpToDate"}}}"#,
+        )
+        .unwrap();
+        assert!(status_bar.evaluate(&value, &relative).is_err());
+
+        let date_bar: ServtdPolicy = serde_json::from_str(
+            r#"{"migtdIdentity":{"tcbDate":{"operation":"greater-or-equal","reference":"2024-01-01T00:00:00Z"}}}"#,
+        )
+        .unwrap();
+        assert!(date_bar.evaluate(&value, &relative).is_err());
+
+        value.migtd_tcb_status = Some("UpToDate".to_string());
+        value.migtd_tcb_date = Some("2025-01-01T00:00:00Z".to_string());
+        assert!(status_bar.evaluate(&value, &relative).is_ok());
+        assert!(date_bar.evaluate(&value, &relative).is_ok());
+    }
+
+    #[test]
+    fn servtd_policy_enforces_servtd_crl_num_floor() {
+        let policy: ServtdPolicy = serde_json::from_str(
+            r#"{"migtdIdentity":{},"servtdCrlNum":{"operation":"greater-or-equal","reference":4097}}"#,
+        )
+        .unwrap();
+        let reference = PolicyEvaluationInfo::default();
+
+        let mut value = PolicyEvaluationInfo::default();
+        value.servtd_crl_num = Some(4097);
+        assert!(policy.evaluate(&value, &reference).is_ok());
+        value.servtd_crl_num = Some(5000);
+        assert!(policy.evaluate(&value, &reference).is_ok());
+        value.servtd_crl_num = Some(4096);
+        assert!(policy.evaluate(&value, &reference).is_err());
+        value.servtd_crl_num = None;
+        assert!(policy.evaluate(&value, &reference).is_err());
     }
 
     #[test]
@@ -1049,9 +1381,9 @@ mod test {
             tcb_status: Some("UpToDate".to_string()),
             tcb_evaluation_number: Some(15),
             fmspc: Some([0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00]),
+            migtd_isvsvn: None,
             migtd_tcb_status: None,
             migtd_tcb_date: None,
-            migtd_isvsvn: None,
             pck_crl_num: None,
             root_ca_crl_num: None,
             servtd_crl_num: None,
@@ -1440,51 +1772,6 @@ mod test {
     }
 
     #[test]
-    fn test_policy_servtd_tcb_status() {
-        let assert_servtd_tcb_status_allowed =
-            |policy: PolicyProperty,
-             relative_reference: ServtdTcbStatus,
-             allow_list: &[ServtdTcbStatus],
-             deny_list: &[ServtdTcbStatus]| {
-                for value in allow_list {
-                    assert!(policy
-                        .evaluate_servtd_tcb_status(*value, Some(relative_reference))
-                        .unwrap());
-                }
-                for value in deny_list {
-                    assert!(!policy
-                        .evaluate_servtd_tcb_status(*value, Some(relative_reference))
-                        .unwrap());
-                }
-            };
-        let relative_reference = ServtdTcbStatus::UpToDate;
-
-        // Test with an empty "allow-list"
-        let tcb_status_policy = PolicyProperty {
-            operation: "allow-list".to_string(),
-            reference: Reference::StringList(vec![]),
-        };
-        assert_servtd_tcb_status_allowed(
-            tcb_status_policy,
-            relative_reference,
-            &[ServtdTcbStatus::UpToDate, ServtdTcbStatus::OutOfDate],
-            &[ServtdTcbStatus::Revoked],
-        );
-
-        // Test with an "allow-list" operation and "Revoked" reference
-        let tcb_status_policy = PolicyProperty {
-            operation: "allow-list".to_string(),
-            reference: Reference::StringList(vec!["Revoked".to_string()]),
-        };
-        assert_servtd_tcb_status_allowed(
-            tcb_status_policy,
-            relative_reference,
-            &[ServtdTcbStatus::UpToDate, ServtdTcbStatus::OutOfDate],
-            &[ServtdTcbStatus::Revoked],
-        );
-    }
-
-    #[test]
     fn test_policy_tcb_evaluation_number() {
         // Test with a value reference
         let tcb_evaluation_number_policy = PolicyProperty {
@@ -1510,6 +1797,8 @@ mod test {
         // No block: still deny `Revoked` platform status.
         let value = PolicyEvaluationInfo {
             tcb_status: Some("Revoked".to_string()),
+            migtd_isvsvn: Some(1),
+            migtd_tcb_status: Some("UpToDate".to_string()),
             ..PolicyEvaluationInfo::default()
         };
         let relative = PolicyEvaluationInfo::default();
@@ -1524,6 +1813,7 @@ mod test {
     fn test_absent_block_denies_revoked_engine() {
         // No block: still deny `Revoked` engine status.
         let value = PolicyEvaluationInfo {
+            migtd_isvsvn: Some(1),
             migtd_tcb_status: Some("Revoked".to_string()),
             ..PolicyEvaluationInfo::default()
         };
@@ -1540,6 +1830,7 @@ mod test {
         // No block: non-`Revoked` status is allowed.
         let value = PolicyEvaluationInfo {
             tcb_status: Some("UpToDate".to_string()),
+            migtd_isvsvn: Some(1),
             migtd_tcb_status: Some("UpToDate".to_string()),
             ..PolicyEvaluationInfo::default()
         };
@@ -1555,6 +1846,7 @@ mod test {
         // In rebinding (`skip_global`), platform status is ignored.
         let value = PolicyEvaluationInfo {
             tcb_status: Some("Revoked".to_string()),
+            migtd_isvsvn: Some(1),
             migtd_tcb_status: Some("UpToDate".to_string()),
             ..PolicyEvaluationInfo::default()
         };
@@ -1566,20 +1858,38 @@ mod test {
     }
 
     #[test]
-    fn test_unclassifiable_engine_is_denied() {
-        // Fail closed: unknown engine status (`None`) is denied in all paths.
+    fn test_absent_block_allows_engine_without_identity_status() {
         let value = PolicyEvaluationInfo {
             tcb_status: Some("UpToDate".to_string()),
-            migtd_tcb_status: None,
             ..PolicyEvaluationInfo::default()
         };
         let relative = PolicyEvaluationInfo::default();
 
         assert!(
-            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, false).is_err()
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, false).is_ok()
         );
         assert!(
-            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, true).is_err()
+            PolicyData::<'static>::evaluate_policy_block(None, &value, &relative, true).is_ok()
         );
+    }
+
+    #[test]
+    fn test_servtd_rule_requires_endorsed_engine() {
+        let block = vec![PolicyTypes::Servtd(
+            serde_json::from_str(
+                r#"{"migtdIdentity":{"isvsvn":{"operation":"greater-or-equal","reference":1}}}"#,
+            )
+            .unwrap(),
+        )];
+        let value = PolicyEvaluationInfo::default();
+        let relative = PolicyEvaluationInfo::default();
+
+        assert!(PolicyData::<'static>::evaluate_policy_block(
+            Some(&block),
+            &value,
+            &relative,
+            false
+        )
+        .is_err());
     }
 }
