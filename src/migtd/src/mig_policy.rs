@@ -70,15 +70,14 @@ mod v2 {
     use spin::Once;
     use tdx_tdcall::tdreport::{tdcall_verify_report, TdInfo, TdxReport};
 
-    use crate::config::get_policy_issuer_chain;
     use crate::event_log::{parse_events, verify_event_log};
     use crate::mig_policy::get_rtmrs_from_suppl_data;
     use crate::migration::pre_session_data::LogErr;
     use crate::migration::servtd_ext::ServtdExt;
 
-    /// Compute the complete `tdinfo_hash` for the TD described by a `TdInfo`
-    /// returned by `TDG.MR.REPORT`. For `servtd_attr == 0`, this is the
-    /// canonical lookup key stored in `servtd_tcb_mapping`.
+    /// Compute the outer `tdinfo_hash` (attr=0) for the TD described by a
+    /// `TdInfo` returned by `TDG.MR.REPORT`. This is the canonical lookup key
+    /// for `servtd_tcb_mapping` after the TCB-mapping redesign.
     fn tdinfo_hash_from_td_info(td: &TdInfo) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
         policy::compute_tdinfo_hash_from_fields(
             &td.attributes,
@@ -106,7 +105,28 @@ mod v2 {
         let raw = RawPolicyData::deserialize_from_json(policy_json)?;
 
         // Get the root CA from collaterals and set it for quote verification
-        let verified_policy = raw.verify(cert_chain)?;
+        #[cfg_attr(not(feature = "servtd_corim"), allow(unused_mut))]
+        let mut verified_policy = raw.verify(cert_chain)?;
+
+        // Attach the optional CoRIM hash endorsement enrolled in the CFV. Its
+        // COSE signer chain is bound to the SAME RTMR1 signer anchor as the CFV
+        // policy issuer chain, so a CoRIM signed under a different root cert or
+        // leaf subject fails closed. The CoRIM is NOT measured
+        // (`config::get_servtd_corim` is never read by `do_measurements`), so
+        // enrolling it does not change the ServTD/`tdinfo_hash`.
+        // MigTD has no trusted wall clock. `decode_signed` rejects CWT
+        // `nbf`/`exp`; zero is used only for inner CoRIM validity validation.
+        #[cfg(feature = "servtd_corim")]
+        if let Some(cose) = crate::config::get_servtd_corim() {
+            let anchor = resolve_signer_anchor(cert_chain)?;
+            let corim = ServtdCorim::decode_signed(cose, 0, &anchor)?;
+            verified_policy.set_servtd_corim(corim);
+            log::info!("Loaded signed ServTD CoRIM endorsement");
+            if let Some(servtd_crl) = verified_policy.servtd_crl.as_deref() {
+                verified_policy.verify_signer_chains_not_revoked(servtd_crl.as_bytes())?;
+            }
+        }
+
         let root_ca_der = pem_cert_to_der(verified_policy.get_collaterals().root_ca.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
         attestation::root_ca::set_ca(root_ca_der.as_ref())
@@ -127,7 +147,7 @@ mod v2 {
                 _ => PolicyError::QuoteGeneration,
             })?;
         let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
-        setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
+        setup_evaluation_data(fmspc, &suppl_data, policy, policy, policy.get_collaterals())
     }
 
     /// Get reference to the global verified policy
@@ -142,17 +162,24 @@ mod v2 {
         policy_peer: &[u8],
         event_log_peer: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (policy_peer, peer_issuer_chain) =
+        let (policy_peer, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(policy_peer)
                 .ok_or(PolicyError::InvalidParameter)?;
         if is_src {
-            authenticate_migration_dest(quote_peer, event_log_peer, policy_peer, peer_issuer_chain)
+            authenticate_migration_dest(
+                quote_peer,
+                event_log_peer,
+                policy_peer,
+                peer_issuer_chain,
+                peer_servtd_corim,
+            )
         } else {
             authenticate_migration_source(
                 quote_peer,
                 event_log_peer,
                 policy_peer,
                 peer_issuer_chain,
+                peer_servtd_corim,
             )
         }
     }
@@ -162,12 +189,14 @@ mod v2 {
         event_log_dst: &[u8],
         mig_policy_dst: &[u8],
         policy_issuer_chain: &[u8],
+        peer_servtd_corim: Option<&[u8]>,
     ) -> Result<Vec<u8>, PolicyError> {
         let (evaluation_data_dst, verified_policy_dst, suppl_data) = authenticate_remote_common(
             quote_dst,
             event_log_dst,
             mig_policy_dst,
             policy_issuer_chain,
+            peer_servtd_corim,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -196,12 +225,14 @@ mod v2 {
         event_log_src: &[u8],
         mig_policy_src: &[u8],
         policy_issuer_chain: &[u8],
+        peer_servtd_corim: Option<&[u8]>,
     ) -> Result<Vec<u8>, PolicyError> {
         let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
             quote_src,
             event_log_src,
             mig_policy_src,
             policy_issuer_chain,
+            peer_servtd_corim,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -220,13 +251,13 @@ mod v2 {
         Ok(suppl_data)
     }
 
-    // Authenticate the migtd-new from migtd-old side.
+    // Authenticate the migtd-new from migtd-old side
     pub fn authenticate_rebinding_new(
         tdreport_dst: &[u8],
         event_log_dst: &[u8],
         mig_policy_dst: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (mig_policy_dst, peer_issuer_chain) =
+        let (mig_policy_dst, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(mig_policy_dst)
                 .ok_or(PolicyError::InvalidParameter)?;
         let (evaluation_data_dst, verified_policy_dst, tdx_report) = authenticate_rebinding_common(
@@ -234,6 +265,7 @@ mod v2 {
             event_log_dst,
             mig_policy_dst,
             peer_issuer_chain,
+            peer_servtd_corim,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -257,14 +289,15 @@ mod v2 {
         Ok(tdx_report.as_bytes().to_vec())
     }
 
-    // Authenticate the migtd-old from migtd-new side.
+    // Authenticate the migtd-old from migtd-new side
+    // The one-hash flow derives init identity from SERVTD_EXT.
     pub fn authenticate_rebinding_old(
         tdreport_src: &[u8],
         event_log_src: &[u8],
         mig_policy_src: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (mig_policy_src, peer_issuer_chain) =
+        let (mig_policy_src, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(mig_policy_src)
                 .ok_or(PolicyError::InvalidParameter)?;
         // Verify quote src / event log src / policy src
@@ -273,17 +306,16 @@ mod v2 {
             event_log_src,
             mig_policy_src,
             peer_issuer_chain,
+            peer_servtd_corim,
         )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        let servtd_ext =
+        let servtd_ext_src_obj =
             ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
         verify_init_servtd_svn_order(
-            &verified_policy_src.servtd_tcb_mapping,
-            &servtd_ext.init_servtd_info_hash,
-            &servtd_ext.init_attr,
-            &servtd_ext.cur_servtd_info_hash,
-            &servtd_ext.cur_servtd_attr,
+            &verified_policy_src,
+            &evaluation_data_src,
+            &servtd_ext_src_obj,
         )?;
 
         // If backward policy exists, evaluate the migration src based on it.
@@ -302,6 +334,7 @@ mod v2 {
         event_log: &[u8],
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
+        peer_servtd_corim: Option<&[u8]>,
     ) -> Result<(PolicyEvaluationInfo, VerifiedPolicy<'p>, Vec<u8>), PolicyError> {
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
@@ -314,6 +347,7 @@ mod v2 {
             event_log,
             mig_policy,
             policy_issuer_chain,
+            peer_servtd_corim,
             &get_rtmrs_from_suppl_data(&suppl_data)?,
         )?;
 
@@ -322,6 +356,7 @@ mod v2 {
             fmspc,
             &suppl_data,
             &verified_policy,
+            policy,
             policy.get_collaterals(),
         )?;
 
@@ -333,6 +368,7 @@ mod v2 {
         event_log: &[u8],
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
+        peer_servtd_corim: Option<&[u8]>,
     ) -> Result<(PolicyEvaluationInfo, VerifiedPolicy<'p>, TdxReport), PolicyError> {
         // 1. Verify quote & get supplemental data
         let tdreport_verified = verify_tdreport(tdreport)?;
@@ -342,40 +378,34 @@ mod v2 {
             event_log,
             mig_policy,
             policy_issuer_chain,
+            peer_servtd_corim,
             &get_rtmrs_from_tdreport(&tdreport_verified)?,
         )?;
 
         // 3. Get TCB evaluation info from the collaterals
-        let evaluation_data =
-            setup_evaluation_data_with_tdreport(&tdreport_verified, &verified_policy)?;
+        let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let evaluation_data = setup_evaluation_data_with_tdreport(
+            &tdreport_verified,
+            &verified_policy,
+            local_policy,
+        )?;
 
         Ok((evaluation_data, verified_policy, tdreport_verified))
     }
 
-    /// Resolve both authenticated SERVTD_EXT hashes through the source's
-    /// verified JSON mapping so an older destination need not predict future
-    /// source releases.
+    /// Resolve both releases through the authenticated source's one-hash
+    /// mapping. The destination's local mapping is intentionally not used.
     fn verify_init_servtd_svn_order(
-        source_mapping: &TdTcbMapping,
-        init_servtd_info_hash: &[u8],
-        init_servtd_attr: &[u8; 8],
-        cur_servtd_info_hash: &[u8],
-        cur_servtd_attr: &[u8; 8],
+        source_policy: &VerifiedPolicy,
+        source_evaluation: &PolicyEvaluationInfo,
+        servtd_ext: &ServtdExt,
     ) -> Result<(), PolicyError> {
-        let init_attr = u64::from_le_bytes(*init_servtd_attr);
-        let cur_attr = u64::from_le_bytes(*cur_servtd_attr);
-        if init_attr != 0 || cur_attr != 0 {
-            log::error!(
-                "One-hash TCB mapping requires SERVTD_ATTR=0: init={init_attr:#x}, current={cur_attr:#x}"
-            );
-            return Err(PolicyError::UnqualifiedMigTdInfo);
-        }
-
-        let init_svn = source_mapping
-            .get_engine_svn_by_tdinfo_hash(init_servtd_info_hash)
-            .ok_or(PolicyError::UnqualifiedMigTdInfo)?;
-        let current_svn = source_mapping
-            .get_engine_svn_by_tdinfo_hash(cur_servtd_info_hash)
+        let init_svn = source_policy
+            .servtd_lookup_by_tdinfo_hash(&servtd_ext.init_servtd_info_hash)
+            .ok_or(PolicyError::UnqualifiedMigTdInfo)?
+            .isvsvn;
+        let current_svn = source_evaluation
+            .migtd_isvsvn
             .ok_or(PolicyError::UnqualifiedMigTdInfo)?;
 
         if init_svn > current_svn {
@@ -401,6 +431,8 @@ mod v2 {
         event_log: &[u8],
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
+        #[cfg_attr(not(feature = "servtd_corim"), allow(unused_variables))]
+        peer_servtd_corim: Option<&[u8]>,
         rtmrs: &[[u8; SHA384_DIGEST_SIZE]; 4],
     ) -> Result<VerifiedPolicy<'p>, PolicyError> {
         let unverified_policy = RawPolicyData::deserialize_from_json(mig_policy)?;
@@ -409,39 +441,67 @@ mod v2 {
         verify_event_log(event_log, rtmrs).map_err(|_| PolicyError::InvalidEventLog)?;
 
         // 2. Verify the peer policy using the peer's issuer chain
-        let verified_policy = unverified_policy.verify(policy_issuer_chain)?;
-
-        // 3. Validate that peer's chains share the same root CA and leaf
-        //    subject name as our local chains.
         let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-        let local_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-        crypto::validate_peer_cert_chain(
-            local_chain,
-            verified_policy.policy_issuer_chain.as_bytes(),
-        )
-        .log_err("Peer policy cert chain validation")
-        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        let local_servtd_crl = local_policy.servtd_crl.as_deref().map(str::as_bytes);
+        #[cfg_attr(not(feature = "servtd_corim"), allow(unused_mut))]
+        let mut verified_policy = unverified_policy
+            .verify_with_authoritative_servtd_crl(policy_issuer_chain, local_servtd_crl)?;
 
-        crypto::validate_peer_cert_chain(
-            local_policy.servtd_identity_issuer_chain.as_bytes(),
-            verified_policy.servtd_identity_issuer_chain.as_bytes(),
-        )
-        .log_err("Peer identity cert chain validation")
-        .map_err(|_| PolicyError::PeerCertChainValidation)?;
+        // 3. Validate that the peer's signer matches ours by comparing the
+        //    RTMR1 signer anchor (root CA + leaf subject) instead of the
+        //    full policy issuer chain PEM. This supports the anchor-only (CoRIM)
+        //    enrollment form, which carries no PEM. `verify()` has already
+        //    bound the peer's embedded mapping chain to `signer_anchor`.
+        if local_policy.signer_anchor != verified_policy.signer_anchor {
+            return Err(PolicyError::PeerCertChainValidation);
+        }
 
-        if let Some(servtd_crl) = local_policy.servtd_crl.as_deref() {
-            crypto::verify_signer_chain_not_revoked(
-                verified_policy.policy_issuer_chain.as_bytes(),
-                servtd_crl.as_bytes(),
-            )
-            .log_err("Peer policy signer revocation check")
-            .map_err(|_| PolicyError::SignerRevoked)?;
-            crypto::verify_signer_chain_not_revoked(
-                verified_policy.servtd_identity_issuer_chain.as_bytes(),
-                servtd_crl.as_bytes(),
-            )
-            .log_err("Peer identity signer revocation check")
-            .map_err(|_| PolicyError::SignerRevoked)?;
+        // Cross-check the JSON mapping issuer chains when both sides ship one
+        // (defense-in-depth; the signer_anchor equality above already binds the
+        // signer). Absent on both sides (CoRIM-only) is fine; one-sided fails.
+        match (
+            local_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
+            verified_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
+        ) {
+            (Some(local_mc), Some(peer_mc)) => {
+                crypto::validate_peer_cert_chain(local_mc.as_bytes(), peer_mc.as_bytes())
+                    .log_err("Peer tcb mapping cert chain validation")
+                    .map_err(|_| PolicyError::PeerCertChainValidation)?;
+            }
+            (None, None) => {}
+            _ => return Err(PolicyError::PeerCertChainValidation),
+        }
+
+        // Validate the peer's optional TD Identity issuer chain against ours
+        // when both sides ship one. If exactly one side has it, the chains do
+        // not match and it fails closed.
+        match (
+            local_policy.servtd_identity_issuer_chain.as_deref(),
+            verified_policy.servtd_identity_issuer_chain.as_deref(),
+        ) {
+            (Some(local_identity_chain), Some(peer_identity_chain)) => {
+                crypto::validate_peer_cert_chain(
+                    local_identity_chain.as_bytes(),
+                    peer_identity_chain.as_bytes(),
+                )
+                .log_err("Peer td identity cert chain validation")
+                .map_err(|_| PolicyError::PeerCertChainValidation)?;
+            }
+            (None, None) => {}
+            _ => return Err(PolicyError::PeerCertChainValidation),
+        }
+
+        // Peer SVN lookups must use the authenticated peer TCB-mapping CoRIM.
+        #[cfg(feature = "servtd_corim")]
+        if let Some(peer_corim_cose) = peer_servtd_corim {
+            verified_policy
+                .attach_verified_peer_servtd_corim(peer_corim_cose)
+                .log_err("Peer servtd CoRIM verification")?;
+        }
+        if let Some(servtd_crl) = local_servtd_crl {
+            verified_policy
+                .verify_signer_chains_not_revoked(servtd_crl)
+                .log_err("Peer servtd signer revocation check")?;
         }
 
         // 4. Check the integrity of the policy with its event log
@@ -489,69 +549,12 @@ mod v2 {
         Ok(tdx_report)
     }
 
-    fn setup_evaluation_data(
-        fmspc: [u8; 6],
-        suppl_data: &[u8],
-        policy: &VerifiedPolicy,
-        collaterals: &Collaterals,
-    ) -> Result<PolicyEvaluationInfo, PolicyError> {
-        let (tcb_date, tcb_status) = get_tcb_date_and_status_from_suppl_data(suppl_data)?;
-        let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
-        let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral)?;
-        let report_value = Report::new(suppl_data)?;
-
-        let migtd_svn = policy
-            .servtd_tcb_mapping
-            .get_engine_svn_by_report(&report_value);
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
-        let pck_crl_num = get_crl_number(collaterals.pck_crl.as_bytes())
-            .map_err(|_| PolicyError::InvalidCollateral)?;
-        let root_ca_crl_num = get_crl_number(collaterals.root_ca_crl.as_bytes())
-            .map_err(|_| PolicyError::InvalidCollateral)?;
-        let servtd_crl_num = servtd_crl_num_from_policy(policy)?;
-
-        Ok(PolicyEvaluationInfo {
-            tee_tcb_svn: None,
-            tcb_date: Some(tcb_date.to_string()),
-            tcb_status: Some(tcb_status.as_str().to_string()),
-            tcb_evaluation_number: Some(tcb_evaluation_number),
-            fmspc: Some(fmspc),
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
-            pck_crl_num: Some(pck_crl_num),
-            root_ca_crl_num: Some(root_ca_crl_num),
-            servtd_crl_num,
-        })
-    }
-
-    fn setup_evaluation_data_with_tdreport(
-        tdreport: &TdxReport,
-        policy: &VerifiedPolicy,
-    ) -> Result<PolicyEvaluationInfo, PolicyError> {
-        let tdinfo_hash = tdinfo_hash_from_td_info(&tdreport.td_info)?;
-        let migtd_svn = policy
-            .servtd_tcb_mapping
-            .get_engine_svn_by_tdinfo_hash(&tdinfo_hash);
-
-        let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
-
-        Ok(PolicyEvaluationInfo {
-            tee_tcb_svn: Some(tdreport.tee_tcb_info.tee_tcb_svn),
-            tcb_date: None,
-            tcb_status: None,
-            tcb_evaluation_number: None,
-            fmspc: None,
-            migtd_isvsvn: migtd_svn,
-            migtd_tcb_date: migtd_tcb.map(|tcb| tcb.tcb_date.clone()),
-            migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
-            pck_crl_num: None,
-            root_ca_crl_num: None,
-            servtd_crl_num: servtd_crl_num_from_policy(policy)?,
-        })
-    }
-
+    /// Compute the servtd signer CRL number from the authoritative local
+    /// policy, if a signer CRL is present (`servtdCrl`, or its legacy nested
+    /// location). Peer evaluation uses this local number rather than trusting
+    /// the peer-delivered CRL. `None` when it is absent (backward
+    /// compatibility); `Some(n)` feeds the `servtd_crl_num` anti-rollback
+    /// floor.
     fn servtd_crl_num_from_policy(policy: &VerifiedPolicy) -> Result<Option<u32>, PolicyError> {
         policy
             .servtd_crl
@@ -559,6 +562,81 @@ mod v2 {
             .map(|crl| get_crl_number(crl.as_bytes()))
             .transpose()
             .map_err(|_| PolicyError::InvalidCollateral)
+    }
+
+    fn setup_evaluation_data(
+        fmspc: [u8; 6],
+        suppl_data: &[u8],
+        policy: &VerifiedPolicy,
+        authoritative_crl_policy: &VerifiedPolicy,
+        collaterals: &Collaterals,
+    ) -> Result<PolicyEvaluationInfo, PolicyError> {
+        let (tcb_date, tcb_status) = get_tcb_date_and_status_from_suppl_data(suppl_data)?;
+        let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
+        let tcb_evaluation_number = get_tcb_evaluation_number_from_collateral(&collateral)?;
+        let report_value = Report::new(suppl_data)?;
+
+        let migtd = policy.servtd_lookup_by_report(&report_value);
+        if policy.requires_servtd_tcb_status()
+            && migtd
+                .as_ref()
+                .and_then(|lookup| lookup.tcb_status.as_deref())
+                .is_none()
+        {
+            return Err(PolicyError::UnqualifiedMigTdInfo);
+        }
+        let pck_crl_num = get_crl_number(collaterals.pck_crl.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+        let root_ca_crl_num = get_crl_number(collaterals.root_ca_crl.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+
+        Ok(PolicyEvaluationInfo {
+            tee_tcb_svn: None,
+            tcb_date: Some(tcb_date.to_string()),
+            tcb_status: Some(tcb_status.as_str().to_string()),
+            tcb_evaluation_number: Some(tcb_evaluation_number),
+            fmspc: Some(fmspc),
+            migtd_isvsvn: migtd.as_ref().map(|m| m.isvsvn),
+            migtd_tcb_status: migtd.as_ref().and_then(|m| m.tcb_status.clone()),
+            migtd_tcb_date: migtd.as_ref().and_then(|m| m.tcb_date.clone()),
+            pck_crl_num: Some(pck_crl_num),
+            root_ca_crl_num: Some(root_ca_crl_num),
+            servtd_crl_num: servtd_crl_num_from_policy(authoritative_crl_policy)?,
+        })
+    }
+
+    fn setup_evaluation_data_with_tdreport(
+        tdreport: &TdxReport,
+        policy: &VerifiedPolicy,
+        authoritative_crl_policy: &VerifiedPolicy,
+    ) -> Result<PolicyEvaluationInfo, PolicyError> {
+        // Rebinding authenticates this peer TDREPORT before reaching here.
+        // Keep all evaluation fields bound to that report, including in
+        // mock-quote builds, rather than substituting local test evidence.
+        let tdinfo_hash = tdinfo_hash_from_td_info(&tdreport.td_info)?;
+        let migtd = policy.servtd_lookup_by_tdinfo_hash(&tdinfo_hash);
+        if policy.requires_servtd_tcb_status()
+            && migtd
+                .as_ref()
+                .and_then(|lookup| lookup.tcb_status.as_deref())
+                .is_none()
+        {
+            return Err(PolicyError::UnqualifiedMigTdInfo);
+        }
+
+        Ok(PolicyEvaluationInfo {
+            tee_tcb_svn: Some(tdreport.tee_tcb_info.tee_tcb_svn),
+            tcb_date: None,
+            tcb_status: None,
+            tcb_evaluation_number: None,
+            fmspc: None,
+            migtd_isvsvn: migtd.as_ref().map(|m| m.isvsvn),
+            migtd_tcb_status: migtd.as_ref().and_then(|m| m.tcb_status.clone()),
+            migtd_tcb_date: migtd.as_ref().and_then(|m| m.tcb_date.clone()),
+            pck_crl_num: None,
+            root_ca_crl_num: None,
+            servtd_crl_num: servtd_crl_num_from_policy(authoritative_crl_policy)?,
+        })
     }
 
     fn get_tcb_date_and_status_from_suppl_data(
@@ -614,42 +692,9 @@ mod v2 {
         })
     }
 
-    /// Per GHCI 1.5: Verify that own TDINFO.MROWNER matches policy signing key hash
-    /// and TDINFO.MROWNERCONFIG matches policy SVN.
-    /// Must be called at MigTD startup to ensure VMM correctly provisioned the TD.
-    pub fn verify_own_tdinfo() -> Result<(), PolicyError> {
-        use crate::config::get_policy_issuer_chain;
-
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-        let policy_svn = policy.policy_data.get_policy_svn();
-
-        // Get own TDINFO from TDReport
-        let tdx_report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
-            .map_err(|_| PolicyError::GetTdxReport)?;
-        let td_info = &tdx_report.td_info;
-
-        // Verify MROWNERCONFIG == policy_svn (stored as little-endian u32 in first 4 bytes,
-        // remaining 44 bytes must be zero)
-        let mut expected_mrownerconfig = [0u8; SHA384_DIGEST_SIZE];
-        expected_mrownerconfig[..4].copy_from_slice(&policy_svn.to_le_bytes());
-        if td_info.mrownerconfig != expected_mrownerconfig {
-            return Err(PolicyError::SvnMismatch);
-        }
-
-        // Verify MROWNER == SHA384(policy signing public key)
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-        let policy_key_hash = crypto::get_policy_signer_key_hash(policy_issuer_chain)
-            .map_err(|_| PolicyError::InvalidCollateral)?;
-        if td_info.mrowner != policy_key_hash {
-            return Err(PolicyError::PolicyHashMismatch);
-        }
-
-        Ok(())
-    }
-
-    /// Authenticate the source MigTD and require its initial mapped SVN to be
-    /// no newer than its current mapped SVN. The legacy init TDINFO argument
-    /// is ignored after request framing validation.
+    /// Destination-side migration helper: authenticate the source MigTD and
+    /// require its initial mapped SVN to be no newer than its current mapped
+    /// SVN.
     ///
     /// Returns the verified supplemental data on success so the caller can
     /// reuse it for SPDM-level bindings (e.g., REPORTDATA / TH1).
@@ -659,7 +704,7 @@ mod v2 {
         event_log_src: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (mig_policy_src, peer_issuer_chain) =
+        let (mig_policy_src, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(peer_data)
                 .ok_or(PolicyError::InvalidParameter)?;
 
@@ -668,6 +713,7 @@ mod v2 {
             event_log_src,
             mig_policy_src,
             peer_issuer_chain,
+            peer_servtd_corim,
         )?;
 
         let relative_reference = get_local_tcb_evaluation_info()?;
@@ -687,13 +733,7 @@ mod v2 {
 
         let servtd_ext =
             ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
-        verify_init_servtd_svn_order(
-            &verified_policy_src.servtd_tcb_mapping,
-            &servtd_ext.init_servtd_info_hash,
-            &servtd_ext.init_attr,
-            &servtd_ext.cur_servtd_info_hash,
-            &servtd_ext.cur_servtd_attr,
-        )?;
+        verify_init_servtd_svn_order(&verified_policy_src, &evaluation_data_src, &servtd_ext)?;
 
         Ok(suppl_data)
     }
@@ -703,111 +743,6 @@ mod v2 {
         let timestamp = 1704067200; // Corresponds to 2024-01-01T00:00:00Z
         let iso_date = unix_to_iso8601(timestamp).unwrap();
         assert_eq!(iso_date, "2024-01-01T00:00:00Z");
-    }
-
-    #[cfg(test)]
-    fn continuity_mapping() -> TdTcbMapping {
-        TdTcbMapping {
-            id: String::from("TEST"),
-            version: 1,
-            issue_date: String::new(),
-            next_update: String::new(),
-            svn_mappings: [(0x11u8, 1u16), (0x22, 2)]
-                .iter()
-                .map(|(tag, isvsvn)| SvnMapping {
-                    td_measurements: Measurements::new_from_bytes(&[*tag; SHA384_DIGEST_SIZE]),
-                    isvsvn: *isvsvn,
-                })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn init_servtd_svn_must_not_exceed_current_svn() {
-        let mapping = continuity_mapping();
-        assert!(
-            verify_init_servtd_svn_order(&mapping, &[0x11; 48], &[0; 8], &[0x22; 48], &[0; 8],)
-                .is_ok()
-        );
-        assert!(matches!(
-            verify_init_servtd_svn_order(&mapping, &[0x22; 48], &[0; 8], &[0x11; 48], &[0; 8],),
-            Err(PolicyError::SvnMismatch)
-        ));
-    }
-
-    #[test]
-    fn init_servtd_svn_lookup_misses_fail_closed() {
-        let mapping = continuity_mapping();
-        assert!(matches!(
-            verify_init_servtd_svn_order(&mapping, &[0x33; 48], &[0; 8], &[0x22; 48], &[0; 8],),
-            Err(PolicyError::UnqualifiedMigTdInfo)
-        ));
-        assert!(matches!(
-            verify_init_servtd_svn_order(&mapping, &[0x11; 48], &[0; 8], &[0x33; 48], &[0; 8],),
-            Err(PolicyError::UnqualifiedMigTdInfo)
-        ));
-    }
-
-    #[test]
-    fn source_mapping_can_authorize_release_unknown_to_destination() {
-        let source_mapping = continuity_mapping();
-        let destination_mapping = TdTcbMapping {
-            id: String::from("DESTINATION"),
-            version: 1,
-            issue_date: String::new(),
-            next_update: String::new(),
-            svn_mappings: [(0x11u8, 1u16), (0x33, 2)]
-                .iter()
-                .map(|(tag, isvsvn)| SvnMapping {
-                    td_measurements: Measurements::new_from_bytes(&[*tag; SHA384_DIGEST_SIZE]),
-                    isvsvn: *isvsvn,
-                })
-                .collect(),
-        };
-
-        assert!(verify_init_servtd_svn_order(
-            &source_mapping,
-            &[0x11; 48],
-            &[0; 8],
-            &[0x22; 48],
-            &[0; 8],
-        )
-        .is_ok());
-        assert!(matches!(
-            verify_init_servtd_svn_order(
-                &destination_mapping,
-                &[0x11; 48],
-                &[0; 8],
-                &[0x22; 48],
-                &[0; 8],
-            ),
-            Err(PolicyError::UnqualifiedMigTdInfo)
-        ));
-    }
-
-    #[test]
-    fn one_hash_mapping_rejects_masked_servtd_info_hashes() {
-        let mapping = continuity_mapping();
-        assert!(matches!(
-            verify_init_servtd_svn_order(
-                &mapping,
-                &[0x11; 48],
-                &1u64.to_le_bytes(),
-                &[0x22; 48],
-                &[0; 8],
-            ),
-            Err(PolicyError::UnqualifiedMigTdInfo)
-        ));
-        assert!(matches!(
-            verify_init_servtd_svn_order(
-                &mapping,
-                &[0x11; 48],
-                &[0; 8],
-                &[0x22; 48],
-                &1u64.to_le_bytes(),
-            ),
-            Err(PolicyError::UnqualifiedMigTdInfo)
-        ));
     }
 }
 

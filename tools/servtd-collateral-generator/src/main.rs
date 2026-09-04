@@ -17,16 +17,22 @@ use build::build_servtd_collateral;
     propagate_version = true
 )]
 struct Cli {
-    /// Signed ServTD identity JSON file (contains identity and signature)
-    #[arg(long, value_name = "FILE")]
-    identity: PathBuf,
-    /// PEM issuer chain for identity
-    #[arg(long, value_name = "FILE")]
-    identity_chain: PathBuf,
+    /// Optional signed ServTD identity JSON file (contains identity and
+    /// signature). The TD Identity is optional; omit it (together with
+    /// `--identity-chain`) to produce SVN-only collateral.
+    #[arg(long, value_name = "FILE", requires = "identity_chain")]
+    identity: Option<PathBuf>,
+    /// PEM issuer chain for identity (required iff `--identity` is given)
+    #[arg(long, value_name = "FILE", requires = "identity")]
+    identity_chain: Option<PathBuf>,
     /// Signed ServTD TCB mapping JSON file (contains tcb mapping and signature)
     #[arg(long, value_name = "FILE")]
     mapping: PathBuf,
-    /// Optional PEM CRL for the servTD signer chains
+    /// PEM issuer chain for mapping. When omitted, the identity chain is used
+    /// for compatibility with policies that share one endorsement signer.
+    #[arg(long, value_name = "FILE")]
+    mapping_chain: Option<PathBuf>,
+    /// Optional PEM CRL for the servTD signer chain (embedded as `servtdCrl`)
     #[arg(long, value_name = "FILE")]
     servtd_crl: Option<PathBuf>,
     /// Where to write the generated file
@@ -38,9 +44,10 @@ fn main() {
     let cli = Cli::parse();
 
     let bytes = build_servtd_collateral(
-        &cli.identity,
-        &cli.identity_chain,
+        cli.identity.as_deref(),
+        cli.identity_chain.as_deref(),
         &cli.mapping,
+        cli.mapping_chain.as_deref(),
         cli.servtd_crl.as_deref(),
     )
     .unwrap_or_else(|e| {

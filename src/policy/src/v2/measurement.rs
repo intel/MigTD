@@ -113,13 +113,29 @@ fn parse_policy_data(policy_input: &[u8]) -> Result<Value, PolicyError> {
 pub fn extract_canonical_policy_data_bytes(policy_input: &[u8]) -> Result<Vec<u8>, PolicyError> {
     let mut policy_data = parse_policy_data(policy_input)?;
 
-    let coll = policy_data
-        .get_mut("servtdCollateral")
-        .and_then(|v| v.as_object_mut())
-        .ok_or(PolicyError::InvalidPolicy)?;
+    // Redact the servtd collateral sub-fields when a `servtdCollateral` object
+    // is present. A CoRIM-only policy omits `servtdCollateral` entirely; there
+    // is then nothing to redact and the whole `policyData` is measured as-is.
+    match policy_data.get_mut("servtdCollateral") {
+        None => {}
+        Some(value) => {
+            let coll = value.as_object_mut().ok_or(PolicyError::InvalidPolicy)?;
 
-    if coll.remove("servtdTcbMapping").is_none() {
-        return Err(PolicyError::InvalidPolicy);
+            if coll.remove("servtdTcbMapping").is_none() {
+                return Err(PolicyError::InvalidPolicy);
+            }
+
+            // Also redact `servtdTcbMappingIssuerChain`: it is already measured
+            // into RTMR1 (the signer anchor), so measuring it again here would
+            // be redundant AND would re-couple leaf/intermediate-CA rotation of
+            // the TCB-mapping signer to `tdinfo_hash`.
+            //
+            // Non-strict (remove if present): the security binding does not rest
+            // on this redaction: `RawPolicyData::verify` separately requires the
+            // chain that verifies `servtdTcbMapping` to hash to the RTMR1 signer
+            // anchor, so a swapped/absent chain fails closed there.
+            coll.remove("servtdTcbMappingIssuerChain");
+        }
     }
 
     canonical_value_bytes(&policy_data)
@@ -155,6 +171,28 @@ pub fn compute_signer_anchor_from_chain_pem(
     let leaf_subject = extract_leaf_subject_der_from_chain_pem(chain_pem)
         .map_err(|_| PolicyError::InvalidPolicy)?;
     compute_signer_anchor(&root_der, &leaf_subject)
+}
+
+/// Resolve a signer anchor from either representation carried in the CFV /
+/// exchanged with a peer:
+///
+/// * a **precomputed 48-byte anchor** (exactly `SHA384_DIGEST_SIZE` bytes) —
+///   returned as-is (the CoRIM-only enrollment form, which does not carry a
+///   full PEM), or
+/// * a **PEM issuer chain** (leaf-first) — the anchor is derived via
+///   [`compute_signer_anchor_from_chain_pem`] (the legacy JSON form).
+///
+/// This lets the runtime accept either enrollment/exchange form and bind the
+/// same RTMR1 anchor. A PEM is never 48 bytes, so the discriminator is
+/// unambiguous.
+pub fn resolve_signer_anchor(input: &[u8]) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    if input.len() == SHA384_DIGEST_SIZE {
+        let mut anchor = [0u8; SHA384_DIGEST_SIZE];
+        anchor.copy_from_slice(input);
+        Ok(anchor)
+    } else {
+        compute_signer_anchor_from_chain_pem(input)
+    }
 }
 
 #[cfg(test)]
@@ -273,9 +311,21 @@ mod tests {
     }
 
     #[test]
-    fn extract_rejects_missing_servtd_collateral() {
+    fn extract_allows_missing_servtd_collateral() {
+        // CoRIM-only policies omit `servtdCollateral` entirely: there is nothing
+        // to redact, so the whole `policyData` is measured as-is (Ok). The
+        // servtd endorsement is delivered as a separately-enrolled CoRIM.
         let input = br#"{"version":"2.0","id":"X","policySvn":1,"policy":[],"collaterals":{}}"#;
-        assert!(extract_canonical_policy_data_bytes(input).is_err());
+        assert!(extract_canonical_policy_data_bytes(input).is_ok());
+    }
+
+    #[test]
+    fn extract_measures_top_level_servtd_crl() {
+        let empty = br#"{"version":"2.0","id":"X","servtdCrl":"empty"}"#;
+        let revoked = br#"{"version":"2.0","id":"X","servtdCrl":"revoked"}"#;
+        let out_empty = extract_canonical_policy_data_bytes(empty).unwrap();
+        let out_revoked = extract_canonical_policy_data_bytes(revoked).unwrap();
+        assert_ne!(out_empty, out_revoked);
     }
 
     #[test]

@@ -12,6 +12,7 @@ use core::task::Poll;
 
 #[cfg(feature = "policy_v2")]
 use alloc::string::String;
+#[cfg(feature = "vmcall-raw")]
 use alloc::vec::Vec;
 use log::info;
 #[cfg(feature = "vmcall-raw")]
@@ -275,21 +276,6 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
 
     let version = initialize_policy();
 
-    // Per GHCI 1.5: Verify own TDINFO.MROWNER/MROWNERCONFIG matches policy key/SVN
-    // Skip in AzCVMEmu mode — emulator uses mock TD reports where VMM does not
-    // populate MROWNER/MROWNERCONFIG.
-    #[cfg(not(feature = "AzCVMEmu"))]
-    {
-        use migtd::mig_policy;
-        if let Err(e) = mig_policy::verify_own_tdinfo() {
-            log::error!("TDINFO policy binding verification failed: {:?}\n", e);
-            panic_with_guest_crash_reg_report(
-                MigrationResult::InvalidPolicyError as u64,
-                b"TDINFO MROWNER/MROWNERCONFIG mismatch with policy",
-            );
-        }
-    }
-
     let event_data = version.as_bytes();
 
     // Hash the canonical policyData bytes while recording only the version in
@@ -327,39 +313,49 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
 
 #[cfg(feature = "policy_v2")]
 fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
-    // Read policy issuer chain from CFV
-    let policy_issuer_chain = match config::get_policy_issuer_chain() {
-        Some(policy_issuer_chain) => policy_issuer_chain,
+    // Signer-anchor source from CFV: the 48-byte anchor slot (CoRIM-only
+    // enrollment) when present, else the legacy policy issuer chain PEM.
+    let anchor_source = match config::get_signer_anchor_source() {
+        Some(anchor_source) => anchor_source,
         None => {
-            log::error!("Fail to get policy issuer chain from CFV\n");
+            log::error!("Fail to get policy signer anchor / issuer chain from CFV\n");
             panic_with_guest_crash_reg_report(
                 MigrationResult::InvalidPolicyError as u64,
-                b"Fail to get policy issuer chain from CFV",
+                b"Fail to get policy signer anchor from CFV",
             );
         }
     };
 
-    let signer_anchor = migtd::policy::compute_signer_anchor_from_chain_pem(policy_issuer_chain)
-        .unwrap_or_else(|e| {
-            log::error!("Failed to compute policy signer anchor: {:?}\n", e);
+    // RTMR1 is extended with the signer anchor, not the full PEM chain. The
+    // anchor is derived from the root certificate and leaf subject, or read
+    // directly from the 48-byte CoRIM-only enrollment slot.
+    let signer_anchor = match migtd::policy::resolve_signer_anchor(anchor_source) {
+        Ok(a) => a,
+        Err(e) => {
+            log::error!("Failed to resolve signer anchor: {:?}\n", e);
             panic_with_guest_crash_reg_report(
                 MigrationResult::InvalidPolicyError as u64,
-                b"Failed to compute policy signer anchor",
+                b"Failed to resolve policy signer anchor",
             );
-        });
+        }
+    };
 
+    // `write_tagged_event_log` hashes the supplied bytes (signer_anchor) and
+    // extends RTMR1 with that digest. The recorded event still carries the
+    // anchor source (48-byte anchor or full PEM) as `tagged_event_data` so a
+    // verifier can re-derive A.
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
         &signer_anchor,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
-        policy_issuer_chain,
+        anchor_source,
     )
     .map_err(|e| {
-        log::error!("Failed to log policy issuer chain: {:?}\n", e);
+        log::error!("Failed to log policy signer anchor: {:?}\n", e);
         panic_with_guest_crash_reg_report(
             MigrationResult::InitializationError as u64,
-            b"Failed to log policy issuer chain",
+            b"Failed to log policy signer anchor",
         );
     });
 }
@@ -419,13 +415,13 @@ fn initialize_policy() -> String {
             );
         }
     };
-    let policy_issuer_chain = match config::get_policy_issuer_chain() {
+    let policy_issuer_chain = match config::get_signer_anchor_source() {
         Some(chain) => chain,
         None => {
-            log::error!("Fail to get policy issuer chain from CFV\n");
+            log::error!("Fail to get policy signer anchor / issuer chain from CFV\n");
             panic_with_guest_crash_reg_report(
                 MigrationResult::InvalidPolicyError as u64,
-                b"Fail to get policy issuer chain from CFV",
+                b"Fail to get policy signer anchor from CFV",
             );
         }
     };

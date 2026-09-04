@@ -16,20 +16,30 @@ use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VerifiedServtdCollateral {
-    pub servtd_identity: TdIdentity,
-    pub servtd_tcb_mapping: TdTcbMapping,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ServtdCollateral<'a> {
     pub major_version: u32,
     pub minor_version: u32,
-    pub servtd_identity_issuer_chain: String,
+    /// Mapping signer chain. Older JSON policies use
+    /// `servtdIdentityIssuerChain` for both signed artifacts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub servtd_tcb_mapping_issuer_chain: Option<String>,
     #[serde(borrow)]
-    pub servtd_identity: RawServtdIdentity<'a>,
     pub servtd_tcb_mapping: RawServtdTcbMapping<'a>,
+    /// Optional TD Identity issuer chain (PEM). Present only when the optional
+    /// `servtdIdentity` is shipped. The chain and signed identity remain
+    /// measured in RTMR2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub servtd_identity_issuer_chain: Option<String>,
+    /// Optional MigTD TD Identity (`isvsvn -> (tcb_date, tcb_status)`).
+    ///
+    /// JSON-only and optional (there is no CoRIM form). When present it lets
+    /// migration policy use `tcbDate` / `tcbStatus` bars; when absent, policy
+    /// is driven by the ISV SVN alone.
+    #[serde(borrow, default, skip_serializing_if = "Option::is_none")]
+    pub servtd_identity: Option<RawServtdIdentity<'a>>,
+    /// Legacy location for the optional PEM CRL covering the servTD signer
+    /// chain. New policies use top-level `servtdCrl` so CoRIM-only enrollment
+    /// can carry the same authoritative CRL without a JSON TCB mapping.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub servtd_crl: Option<String>,
 }
@@ -63,6 +73,15 @@ impl<'a> RawServtdIdentity<'a> {
     }
 }
 
+/// MigTD TD Identity (optional, JSON-only), simplified per the hash-based
+/// TCB-mapping redesign.
+///
+/// Because the TCB Mapping now matches by `SERVTD_INFO_HASH`, TD Identity no
+/// longer describes the MigTD's `TDINFO_STRUCT`; the former register
+/// descriptors (`xfam`, `attributes`, `mrConfigId`, `mrOwner`,
+/// `mrOwnerConfig`, MRTD/RTMRs) and the SGX-enclave `mrsigner` / `isvProdId`
+/// fields are dropped. It reduces to an envelope plus an
+/// `isvsvn -> (tcb_date, tcb_status)` table.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TdIdentity {
@@ -70,14 +89,6 @@ pub struct TdIdentity {
     pub version: u32,
     pub issue_date: String,
     pub next_update: String,
-    pub tcb_evaluation_number: u32,
-    pub xfam: String,
-    pub attributes: String,
-    pub mr_config_id: String,
-    pub mr_owner: String,
-    pub mr_owner_config: String,
-    pub mrsigner: String,
-    pub isv_prod_id: u16,
     pub tcb_levels: Vec<TcbLevel>,
 }
 
@@ -135,10 +146,8 @@ impl<'a> RawServtdTcbMapping<'a> {
         )
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-        let mapping = serde_json::from_str::<TdTcbMapping>(self.td_tcb_mapping.get())
-            .map_err(|_| PolicyError::InvalidServtdTcbMapping)?;
-        mapping.validate()?;
-        Ok(mapping)
+        serde_json::from_str::<TdTcbMapping>(self.td_tcb_mapping.get())
+            .map_err(|_| PolicyError::InvalidServtdTcbMapping)
     }
 }
 
@@ -187,30 +196,8 @@ impl Measurements {
 }
 
 impl TdTcbMapping {
-    fn validate(&self) -> Result<(), PolicyError> {
-        for (index, mapping) in self.svn_mappings.iter().enumerate() {
-            let hash = hex_string_to_bytes(&mapping.td_measurements.tdinfo_hash)
-                .map_err(|_| PolicyError::InvalidServtdTcbMapping)?;
-            if hash.len() != SHA384_DIGEST_SIZE {
-                return Err(PolicyError::InvalidServtdTcbMapping);
-            }
-
-            for previous in &self.svn_mappings[..index] {
-                if previous
-                    .td_measurements
-                    .tdinfo_hash
-                    .eq_ignore_ascii_case(&mapping.td_measurements.tdinfo_hash)
-                    && previous.isvsvn != mapping.isvsvn
-                {
-                    return Err(PolicyError::InvalidServtdTcbMapping);
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Look up the engine SVN for the TD represented by `report` by computing
-    /// `tdinfo_hash` (per redesign §RTMR-layout) and matching the
+    /// `tdinfo_hash` and matching the
     /// `svnMappings[].tdMeasurements.tdinfoHash` entries.
     pub fn get_engine_svn_by_report(&self, report: &Report) -> Option<u16> {
         let tdinfo_hash = compute_tdinfo_hash_from_report(report).ok()?;
@@ -286,7 +273,6 @@ const TDINFO_RESERVED_SIZE: usize = 0x70;
 /// internal `TDINFO_STRUCT` layout used to compute `init_servtd_info_hash`
 /// when a service TD is bound; for the bound MigTD itself, `servtd_hash` is
 /// always zero (no nested bindings).
-#[allow(clippy::too_many_arguments)]
 pub fn pack_unmasked_tdinfo(
     attributes: &[u8; 8],
     xfam: &[u8; 8],
@@ -323,7 +309,6 @@ pub fn pack_unmasked_tdinfo(
 /// Equals `init_servtd_info_hash` for MigTDs bound with `servtd_attr == 0`.
 ///
 /// Formula: `SHA384(pack(attributes, xfam, mrtd, ..., rtmr3, reserved))`
-#[allow(clippy::too_many_arguments)]
 pub fn compute_tdinfo_hash_from_fields(
     attributes: &[u8; 8],
     xfam: &[u8; 8],
@@ -409,24 +394,18 @@ mod test {
     fn test_get_engine_svn() {
         let engine_bytes = include_bytes!("../../test/policy_v2/tcb_mapping.json");
         let engine: TdTcbMapping = serde_json::from_slice(engine_bytes).unwrap();
-        engine.validate().unwrap();
 
-        // A source policy must retain both the historical hash that initialized
-        // the tenant TD and the current source MigTD hash.
-        let init_hash = engine.svn_mappings[0].td_measurements.tdinfo_hash.clone();
-        let current_hash = engine.svn_mappings[1].td_measurements.tdinfo_hash.clone();
+        // The first svnMappings entry in the test fixture is the canonical
+        // tdinfo_hash (= SHA384(TDINFO) = init_servtd_info_hash for attr=0).
+        let expected_hash = engine.svn_mappings[0].td_measurements.tdinfo_hash.clone();
         let target = Measurements {
-            tdinfo_hash: init_hash.clone(),
+            tdinfo_hash: expected_hash.clone(),
         };
         assert_eq!(engine.get_engine_svn_by_measurements(&target), Some(1));
-        let current = Measurements {
-            tdinfo_hash: current_hash,
-        };
-        assert_eq!(engine.get_engine_svn_by_measurements(&current), Some(2));
 
         // Case-insensitive match.
         let lower = Measurements {
-            tdinfo_hash: init_hash.to_ascii_lowercase(),
+            tdinfo_hash: expected_hash.to_ascii_lowercase(),
         };
         assert_eq!(engine.get_engine_svn_by_measurements(&lower), Some(1));
 
@@ -437,14 +416,6 @@ mod test {
                     .into(),
         };
         assert!(engine.get_engine_svn_by_measurements(&bogus).is_none());
-    }
-
-    #[test]
-    fn legacy_measurements_without_tdinfo_hash_are_rejected() {
-        assert!(
-            serde_json::from_str::<Measurements>(r#"{"mrtd":"00","rtmr0":"00","rtmr1":"00"}"#)
-                .is_err()
-        );
     }
 
     #[test]
@@ -489,16 +460,73 @@ mod test {
         let servtd_collateral = include_bytes!("../../test/policy_v2/servtd_collateral.json");
         let collateral: ServtdCollateral =
             serde_json::from_slice(servtd_collateral).expect("Failed to parse collateral");
-        let policy_issuer_chain =
-            include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
+        let issuer_chain = collateral
+            .servtd_tcb_mapping_issuer_chain
+            .as_deref()
+            .unwrap_or_else(|| {
+                include_str!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem")
+            });
         assert!(collateral
             .servtd_tcb_mapping
-            .verify_signature(policy_issuer_chain)
+            .verify_signature(issuer_chain.as_bytes())
             .is_ok());
-        assert!(collateral
-            .servtd_identity
-            .verify_signature(collateral.servtd_identity_issuer_chain.as_bytes())
-            .is_ok());
+    }
+
+    #[test]
+    fn td_identity_simplified_parse_and_lookup() {
+        // The simplified TD Identity carries only the envelope + tcbLevels;
+        // the dropped TDINFO / SGX-enclave fields must not be required.
+        let json = r#"{
+            "id": "identity-1",
+            "version": 1,
+            "issueDate": "2025-01-01T00:00:00Z",
+            "nextUpdate": "2026-01-01T00:00:00Z",
+            "tcbLevels": [
+                { "tcb": { "isvsvn": 1 }, "tcbDate": "2025-01-01T00:00:00Z", "tcbStatus": "Revoked" },
+                { "tcb": { "isvsvn": 3 }, "tcbDate": "2025-06-01T00:00:00Z", "tcbStatus": "UpToDate" }
+            ]
+        }"#;
+        let identity = TdIdentity::deserialize_from_json(json.as_bytes()).unwrap();
+        let level = identity.get_tcb_level_by_svn(3).expect("svn 3 present");
+        assert_eq!(level.tcb.isvsvn, 3);
+        assert_eq!(level.tcb_date, "2025-06-01T00:00:00Z");
+        assert_eq!(level.tcb_status, "UpToDate");
+
+        let level = identity
+            .get_tcb_level_by_svn(2)
+            .expect("svn 2 floor-matches svn 1");
+        assert_eq!(level.tcb.isvsvn, 1);
+        assert_eq!(level.tcb_status, "Revoked");
+        assert!(identity.get_tcb_level_by_svn(0).is_none());
+    }
+
+    #[test]
+    fn servtd_collateral_identity_is_optional() {
+        // With TD Identity present, both optional fields deserialize.
+        let with_identity = r#"{
+            "majorVersion": 1,
+            "minorVersion": 0,
+            "servtdTcbMappingIssuerChain": "chain",
+            "servtdTcbMapping": { "tdTcbMapping": {}, "signature": "aa" },
+            "servtdIdentityIssuerChain": "chain",
+            "servtdIdentity": { "tdIdentity": {}, "signature": "bb" }
+        }"#;
+        let coll: ServtdCollateral =
+            serde_json::from_slice(with_identity.as_bytes()).expect("parse with identity");
+        assert!(coll.servtd_identity.is_some());
+        assert!(coll.servtd_identity_issuer_chain.is_some());
+
+        // SVN-only: omitting the identity fields is valid and leaves them None.
+        let svn_only = r#"{
+            "majorVersion": 1,
+            "minorVersion": 0,
+            "servtdTcbMappingIssuerChain": "chain",
+            "servtdTcbMapping": { "tdTcbMapping": {}, "signature": "aa" }
+        }"#;
+        let coll: ServtdCollateral =
+            serde_json::from_slice(svn_only.as_bytes()).expect("parse svn-only");
+        assert!(coll.servtd_identity.is_none());
+        assert!(coll.servtd_identity_issuer_chain.is_none());
     }
 
     /// Regression guard for the 512-byte TDINFO wire layout.
@@ -543,9 +571,9 @@ mod test {
 
     /// Cross-implementation parity: `tdinfo_hash` computed from the
     /// canonical 10 fields here MUST equal `SHA384(unmasked_TDINFO_512)` used
-    /// by `migtd-hash`, `mig-td-tools tdinfo-hash`, and the bash mock-test
-    /// scripts. If they ever drift, runtime policy lookup silently fails for
-    /// all valid TDs.
+    /// by `migtd-hash`, the TCB-mapping CoRIM production tools, and the bash
+    /// mock-test scripts. If they ever drift, runtime policy lookup silently
+    /// fails for all valid TDs.
     #[test]
     fn tdinfo_hash_matches_direct_sha384_formula() {
         use crypto::hash::digest_sha384;

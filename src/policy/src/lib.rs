@@ -58,6 +58,14 @@ pub enum PolicyError {
     QuoteGeneration,
     GetTdxReport,
     PeerCertChainValidation,
+    /// The `servtdTcbMappingIssuerChain` does not resolve to the RTMR1 signer
+    /// anchor enrolled directly or derived from the CFV policy issuer chain.
+    /// Because the chain bytes are redacted from RTMR2, this root+subject binding
+    /// ensures the mapping signer matches the measured root of trust.
+    SignerAnchorMismatch,
+    /// A certificate in the servtd signer chain (TCB mapping or identity) is
+    /// listed in the authoritative signer CRL (`servtdCrl`), or that CRL
+    /// failed authentication. Fail-closed.
     SignerRevoked,
 }
 
@@ -194,7 +202,7 @@ pub enum EventName {
     MigTdPolicy,
     SgxRootKey,
     MigTdPolicySigner,
-    /// Canonical policyData bytes with the updateable TCB mapping removed.
+    /// Canonical policyData bytes with the updateable mapping and chain removed.
     MigTdPolicyData,
     Unknown,
 }
