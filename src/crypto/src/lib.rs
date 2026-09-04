@@ -119,7 +119,35 @@ pub fn get_policy_signer_key_hash(cert_chain_pem: &[u8]) -> Result<[u8; SHA384_D
     Ok(hash)
 }
 
-/// Verifies a certificate chain and then verifies a message signature
+/// Split a PEM certificate chain into (leaf_der, root_der).
+///
+/// Convention (matches other helpers in this crate): the PEM chain is leaf-first,
+/// i.e. `chain[0]` is the leaf and `chain.last()` is the trust anchor (root).
+/// A single-cert chain returns the same bytes for leaf and root.
+pub fn split_chain_pem_to_leaf_and_root_der(cert_chain_pem: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf = chain[0].as_ref().to_vec();
+    let root = chain.last().unwrap().as_ref().to_vec();
+    Ok((leaf, root))
+}
+
+/// Re-encode the leaf certificate's `tbsCertificate.subject` field as DER bytes.
+///
+/// Since the input certificate is canonical DER, re-encoding the parsed
+/// `subject` field via `der::Encode` produces the same bytes that were
+/// present in the original certificate.
+pub fn extract_leaf_subject_der_from_chain_pem(cert_chain_pem: &[u8]) -> Result<Vec<u8>> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf_der = chain[0].as_ref();
+    let cert = x509::Certificate::from_der(leaf_der).map_err(|_| Error::ParseCertificate)?;
+    cert.tbs_certificate
+        .subject
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)
+}
+
+/// Verifies a certificate chain, including issuer CA constraints, and then
+/// verifies a message signature.
 pub fn verify_cert_chain_and_signature(
     cert_chain_pem: &[u8],
     message: &[u8],
@@ -128,12 +156,150 @@ pub fn verify_cert_chain_and_signature(
     let cert_chain = extract_cert_chain_from_pem(cert_chain_pem)?;
 
     verify_certificate_chain(&cert_chain)?;
+    verify_issuer_ca_constraints(&cert_chain)?;
 
     // Extract public key from the leaf certificate and verify signature
     let leaf_cert = &cert_chain[0];
     verify_signature_with_cert(leaf_cert, message, signature)?;
 
     Ok(())
+}
+
+/// Verify a leaf-first signer certificate chain (PEM or DER) against a CRL and
+/// fail **closed** if any certificate in the chain has been revoked.
+///
+/// Steps:
+/// 1. Locate the CA certificate in `signer_chain` whose `subject` matches the
+///    CRL's `issuer`, and verify the CRL's ECDSA-P384/SHA-384 signature with
+///    that CA's public key. An unauthenticated CRL (issuer not in the chain, or
+///    bad signature) is rejected — it can neither add nor drop revocations.
+/// 2. Reject if the serial number of **any** certificate in the chain appears
+///    in the CRL's `revokedCertificates`.
+///
+/// This is the in-guest revocation control for the servtd signer chain, called
+/// in addition to the RTMR1 signer-anchor binding (which measures the chain but
+/// cannot, by design, distinguish a still-valid certificate from a revoked one
+/// under the same root + subject). Freshness/anti-rollback (monotonic CRL
+/// number) is enforced by the policy layer, not here.
+pub enum SignerChain<'a> {
+    /// Leaf-first PEM certificate chain.
+    Pem(&'a [u8]),
+    /// Leaf-first DER certificate chain, as carried by a COSE `x5chain`.
+    Der(&'a [&'a [u8]]),
+}
+
+pub fn verify_signer_chain_not_revoked(
+    signer_chain: SignerChain<'_>,
+    crl_pem: &[u8],
+) -> Result<()> {
+    let chain_der = match signer_chain {
+        SignerChain::Pem(chain_pem) => extract_cert_chain_from_pem(chain_pem)?,
+        SignerChain::Der(chain_der) => {
+            if chain_der.is_empty() {
+                return Err(Error::CertChainVerification(
+                    "No certificates found in chain".into(),
+                ));
+            }
+            chain_der
+                .iter()
+                .map(|der| CertificateDer::from(der.to_vec()))
+                .collect()
+        }
+    };
+    let chain = chain_der
+        .iter()
+        .map(|der| x509::Certificate::from_der(der.as_ref()).map_err(|_| Error::ParseCertificate))
+        .collect::<Result<Vec<_>>>()?;
+
+    // 1. Authenticate the CRL against its issuing CA in the chain: the CA's
+    //    subject must equal the CRL issuer, and it MUST be a CA (RFC 5280).
+    //    Requiring cA=TRUE stops a non-CA leaf — whose key a peer may hold —
+    //    from issuing its own CRL.
+    let crl_issuer_der = crl::get_crl_issuer_der(crl_pem)?;
+    let mut issuer_key = None;
+    for cert in &chain {
+        let subject_der = cert
+            .tbs_certificate
+            .subject
+            .to_der()
+            .map_err(|_| Error::ParseCertificate)?;
+        if subject_der == crl_issuer_der && is_ca_certificate(cert)? {
+            issuer_key = Some(extract_public_key_from_cert(cert)?);
+            break;
+        }
+    }
+    let issuer_key = issuer_key.ok_or_else(|| {
+        Error::CertChainVerification("CRL issuer does not match any CA in the signer chain".into())
+    })?;
+    crl::verify_crl_signature(crl_pem, &issuer_key)?;
+
+    for cert in &chain {
+        if crl::is_serial_revoked(crl_pem, cert.tbs_certificate.serial_number.as_bytes())? {
+            return Err(Error::CertChainVerification(
+                "a certificate in the signer chain is revoked".into(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Verify a `COSE_Sign1` ECDSA-P384/SHA-384 (ES384/ESP384) signature against
+/// an embedded RFC 9360 `x5chain`.
+///
+/// * `x5chain_der` — the certificate chain (DER, **end-entity first**) taken
+///   from the COSE protected header.
+/// * `tbs` — the COSE `Sig_structure1` to-be-signed bytes.
+/// * `signature` — the raw `r || s` ECDSA-P384 value. COSE uses the
+///   fixed-width encoding (96 bytes), **not** ASN.1 DER.
+///
+/// Steps performed:
+/// 1. Verify the chain's internal integrity (each cert signed by the next).
+/// 2. Require every issuer certificate to have `BasicConstraints.ca = true`.
+/// 3. Verify the COSE signature with the leaf certificate's public key.
+///
+/// Trust is **not** established here: this only proves the chain is internally
+/// consistent and the signature is valid. The caller must bind the returned
+/// `(root_der, leaf_subject_der)` to a measured trust anchor (see
+/// `policy::compute_signer_anchor`, which folds them into the RTMR1 signer
+/// anchor) before trusting the payload.
+pub fn verify_cose_sign1_es384_x5chain(
+    x5chain_der: &[&[u8]],
+    tbs: &[u8],
+    signature: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    if x5chain_der.is_empty() {
+        return Err(Error::CertChainVerification("empty x5chain".into()));
+    }
+
+    // 1. Chain integrity (leaf -> ... -> root).
+    let chain: Vec<CertificateDer> = x5chain_der
+        .iter()
+        .map(|der| CertificateDer::from(der.to_vec()))
+        .collect();
+    verify_certificate_chain(&chain)?;
+    verify_issuer_ca_constraints(&chain)?;
+
+    // 3. COSE signature over `tbs` by the leaf key (raw r||s, fixed-width).
+    let leaf = x509::Certificate::from_der(x5chain_der[0]).map_err(|_| Error::ParseCertificate)?;
+    let leaf_pubkey = extract_public_key_from_cert(&leaf)?;
+    ecdsa::ecdsa_verify_with_algorithm(
+        &leaf_pubkey,
+        tbs,
+        signature,
+        &ecdsa::ECDSA_P384_SHA384_FIXED,
+    )
+    .map_err(|_| Error::SignatureVerification)?;
+
+    // 4. Anchor material for the caller: trust-anchor cert DER + leaf subject DER.
+    let root_der = x5chain_der[x5chain_der.len() - 1].to_vec();
+    let leaf_subject_der = leaf
+        .tbs_certificate
+        .subject
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)?;
+
+    Ok((root_der, leaf_subject_der))
 }
 
 fn extract_cert_chain_from_pem(cert_chain_pem: &[u8]) -> Result<Vec<CertificateDer>> {
@@ -174,6 +340,23 @@ fn verify_certificate_chain(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
             .map_err(|_| Error::ParseCertificate)?;
 
         verify_cert_signature(&subject_cert, &issuer_cert)?;
+    }
+
+    Ok(())
+}
+
+/// Require every certificate acting as an issuer to be an X.509 CA.
+fn verify_issuer_ca_constraints(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
+    for cert_der in cert_chain.iter().skip(1) {
+        let issuer =
+            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
+        if !is_ca_certificate(&issuer)? {
+            return Err(Error::CertChainVerification(
+                "Certificate chain contains a non-CA issuer (BasicConstraints \
+                 cA=TRUE missing)"
+                    .into(),
+            ));
+        }
     }
 
     Ok(())
@@ -311,17 +494,10 @@ pub fn validate_peer_cert_chain(local_chain_pem: &[u8], peer_chain_pem: &[u8]) -
     }
 
     // 4. Every issuer in the peer chain must be a CA.
-    for cert_der in peer_chain.iter().skip(1) {
-        let issuer =
-            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
-        if !is_ca_certificate(&issuer)? {
-            return Err(Error::PeerCertChainValidation(
-                "Peer chain contains a non-CA issuer certificate (BasicConstraints \
-                 cA=TRUE missing)"
-                    .into(),
-            ));
-        }
-    }
+    verify_issuer_ca_constraints(&peer_chain).map_err(|err| match err {
+        Error::CertChainVerification(message) => Error::PeerCertChainValidation(message),
+        other => other,
+    })?;
 
     Ok(())
 }
