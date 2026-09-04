@@ -202,7 +202,7 @@ pub async fn rebinding_old_prepare(
         );
         MigrationResult::SecureSessionError
     })?;
-    with_timeout(
+    let session_result = with_timeout(
         SPDM_TIMEOUT,
         spdm::spdm_requester_rebind_old(
             &mut spdm_requester,
@@ -225,25 +225,34 @@ pub async fn rebinding_old_prepare(
             "rebinding: spdm_requester_rebind_old timeout error: {:?}\n",
             e
         );
-        e
-    })?
-    .map_err(|e| {
-        #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: rebinding_old_prepare(): spdm_requester_rebind_old failed ({:?}). Migration ID: {:x}\n",
-                e, info.mig_request_id,
-            )
-            .into_bytes(),
-        );
-        log::error!("rebinding: spdm_requester_rebind_old error: {:?}\n", e);
-        spdm::decode_spdm_session_err(e)
-    })?;
-    log::info!("Rebind completed\n");
+        MigrationResult::from(e)
+    })
+    .and_then(|result| {
+        result.map_err(|e| {
+            #[cfg(feature = "vmcall-raw")]
+            data.extend_from_slice(
+                &format!(
+                    "Error: rebinding_old_prepare(): spdm_requester_rebind_old failed ({:?}). Migration ID: {:x}\n",
+                    e, info.mig_request_id,
+                )
+                .into_bytes(),
+            );
+            log::error!("rebinding: spdm_requester_rebind_old error: {:?}\n", e);
+            spdm::decode_spdm_session_err(e)
+        })
+    });
 
+    spdm::teardown_last_session(&mut spdm_requester.common);
     let mut transport_lock = device_io_ref.lock();
     let transport = transport_lock.deref_mut();
-    shutdown_transport(&mut transport.transport, info.mig_request_id).await?;
+    let shutdown_result = shutdown_transport(&mut transport.transport, info.mig_request_id).await;
+
+    if let Err(error) = session_result {
+        let _ = shutdown_result;
+        return Err(error);
+    }
+    shutdown_result?;
+    log::info!("Rebind completed\n");
     Ok(())
 }
 
@@ -273,7 +282,7 @@ pub async fn rebinding_new_prepare(
         MigrationResult::SecureSessionError
     })?;
 
-    with_timeout(
+    let session_result = with_timeout(
         SPDM_TIMEOUT,
         spdm::spdm_responder_rebind_new(
             &mut spdm_responder,
@@ -296,25 +305,34 @@ pub async fn rebinding_new_prepare(
             "rebinding: spdm_responder_rebind_new timeout error: {:?}\n",
             e
         );
-        e
-    })?
-    .map_err(|e| {
-        #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: rebinding_new_prepare(): spdm_responder_rebind_new failed ({:?}). Migration ID: {:x}\n",
-                e, info.mig_request_id,
-            )
-            .into_bytes(),
-        );
-        log::error!("rebinding: spdm_responder_rebind_new error: {:?}\n", e);
-        spdm::decode_spdm_session_err(e)
-    })?;
-    log::info!("Rebind completed\n");
+        MigrationResult::from(e)
+    })
+    .and_then(|result| {
+        result.map_err(|e| {
+            #[cfg(feature = "vmcall-raw")]
+            data.extend_from_slice(
+                &format!(
+                    "Error: rebinding_new_prepare(): spdm_responder_rebind_new failed ({:?}). Migration ID: {:x}\n",
+                    e, info.mig_request_id,
+                )
+                .into_bytes(),
+            );
+            log::error!("rebinding: spdm_responder_rebind_new error: {:?}\n", e);
+            spdm::decode_spdm_session_err(e)
+        })
+    });
 
+    spdm::teardown_last_session(&mut spdm_responder.responder_context.common);
     let mut transport_lock = device_io_ref.lock();
     let transport = transport_lock.deref_mut();
-    shutdown_transport(&mut transport.transport, info.mig_request_id).await?;
+    let shutdown_result = shutdown_transport(&mut transport.transport, info.mig_request_id).await;
+
+    if let Err(error) = session_result {
+        let _ = shutdown_result;
+        return Err(error);
+    }
+    shutdown_result?;
+    log::info!("Rebind completed\n");
     Ok(())
 }
 

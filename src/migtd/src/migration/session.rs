@@ -966,7 +966,7 @@ async fn migration_src_exchange_msk(
         );
         MigrationResult::SecureSessionError
     })?;
-    with_timeout(
+    let session_result = with_timeout(
         SPDM_TIMEOUT,
         spdm::spdm_requester_transfer_msk(
             &mut spdm_requester,
@@ -981,17 +981,27 @@ async fn migration_src_exchange_msk(
             "exchange_msk: spdm_requester_transfer_msk timeout error: {:?}\n",
             e
         );
-        e
-    })?
-    .map_err(|e| {
-        log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
-        spdm::decode_spdm_session_err(e)
-    })?;
-    log::info!("MSK exchange completed\n");
+        MigrationResult::from(e)
+    })
+    .and_then(|result| {
+        result.map_err(|e| {
+            log::error!("exchange_msk: spdm_requester_transfer_msk error: {:?}\n", e);
+            spdm::decode_spdm_session_err(e)
+        })
+    });
 
+    spdm::teardown_last_session(&mut spdm_requester.common);
     let mut transport_lock = device_io_ref.lock();
     let transport = transport_lock.deref_mut();
-    shutdown_transport(&mut transport.transport, info.mig_info.mig_request_id).await?;
+    let shutdown_result =
+        shutdown_transport(&mut transport.transport, info.mig_info.mig_request_id).await;
+
+    if let Err(error) = session_result {
+        let _ = shutdown_result;
+        return Err(error);
+    }
+    shutdown_result?;
+    log::info!("MSK exchange completed\n");
     Ok(())
 }
 
@@ -1012,7 +1022,7 @@ async fn migration_dst_exchange_msk(
         MigrationResult::SecureSessionError
     })?;
 
-    with_timeout(
+    let session_result = with_timeout(
         SPDM_TIMEOUT,
         spdm::spdm_responder_transfer_msk(
             &mut spdm_responder,
@@ -1027,17 +1037,27 @@ async fn migration_dst_exchange_msk(
             "exchange_msk: spdm_responder_transfer_msk timeout error: {:?}\n",
             e
         );
-        e
-    })?
-    .map_err(|e| {
-        log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
-        spdm::decode_spdm_session_err(e)
-    })?;
-    log::info!("MSK exchange completed\n");
+        MigrationResult::from(e)
+    })
+    .and_then(|result| {
+        result.map_err(|e| {
+            log::error!("exchange_msk: spdm_responder_transfer_msk error: {:?}\n", e);
+            spdm::decode_spdm_session_err(e)
+        })
+    });
 
+    spdm::teardown_last_session(&mut spdm_responder.responder_context.common);
     let mut transport_lock = device_io_ref.lock();
     let transport = transport_lock.deref_mut();
-    shutdown_transport(&mut transport.transport, info.mig_info.mig_request_id).await?;
+    let shutdown_result =
+        shutdown_transport(&mut transport.transport, info.mig_info.mig_request_id).await;
+
+    if let Err(error) = session_result {
+        let _ = shutdown_result;
+        return Err(error);
+    }
+    shutdown_result?;
+    log::info!("MSK exchange completed\n");
     Ok(())
 }
 

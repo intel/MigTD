@@ -125,25 +125,33 @@ async fn spdm_requester_transfer_msk_inner(
     ))
     .await?;
 
-    Box::pin(send_and_receive_sdm_migration_attest_info(
-        spdm_requester,
-        mig_info,
-        session_id,
-        #[cfg(feature = "policy_v2")]
-        peer_data,
-    ))
-    .await?;
+    let result = async {
+        Box::pin(send_and_receive_sdm_migration_attest_info(
+            spdm_requester,
+            mig_info,
+            session_id,
+            #[cfg(feature = "policy_v2")]
+            peer_data,
+        ))
+        .await?;
 
-    Box::pin(spdm_requester.send_receive_spdm_finish(Some(0xff), session_id)).await?;
-    Box::pin(send_and_receive_sdm_exchange_migration_info(
-        spdm_requester,
-        mig_info,
-        Some(session_id),
-    ))
-    .await?;
-    Box::pin(spdm_requester.send_receive_spdm_end_session(session_id)).await?;
+        Box::pin(spdm_requester.send_receive_spdm_finish(Some(0xff), session_id)).await?;
+        Box::pin(send_and_receive_sdm_exchange_migration_info(
+            spdm_requester,
+            mig_info,
+            Some(session_id),
+        ))
+        .await?;
+        Box::pin(spdm_requester.send_receive_spdm_end_session(session_id)).await?;
 
-    Ok(())
+        Ok(())
+    }
+    .await;
+
+    if result.is_err() {
+        teardown_session(&mut spdm_requester.common, session_id);
+    }
+    result
 }
 
 pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> SpdmResult {

@@ -201,32 +201,25 @@ pub async fn rsp_handle_message(spdm_responder: &mut ResponderContext) -> Result
         raw_packet.zeroize();
         let res = Box::pin(spdm_responder.process_message(false, 0, raw_packet)).await;
 
-        match res {
-            Ok(spdm_result) => {
-                match spdm_result {
-                    Ok(_) => {}
-                    Err(spdm_status) => {
-                        if spdm_status.severity == StatusSeverity::ERROR
-                            && matches!(spdm_status.status_code, StatusCode::VDM(_))
-                        {
-                            return Err(spdm_status);
-                        }
-                        if spdm_status == SPDM_STATUS_INVALID_STATE_LOCAL {
-                            //Terminate the responder upon invalid state.
-                            return Err(spdm_status);
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                return Err(SPDM_STATUS_RECEIVE_FAIL);
-            }
-        }
-
         let session_id = spdm_responder.common.runtime_info.get_last_session_id();
         if session_id.is_some() {
             sid = session_id;
         }
+
+        match res {
+            Ok(Ok(_)) => {}
+            Ok(Err(spdm_status)) => {
+                if let Some(session_id) = sid {
+                    teardown_session(&mut spdm_responder.common, session_id);
+                }
+                return Err(spdm_status);
+            }
+            Err(_) => {
+                teardown_last_session(&mut spdm_responder.common);
+                return Err(SPDM_STATUS_RECEIVE_FAIL);
+            }
+        }
+
         if sid.is_some()
             && spdm_responder
                 .common
