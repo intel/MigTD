@@ -5,6 +5,8 @@ be used as production trust material. They include an ES384 COSE_Sign1 CoRIM,
 its leaf-first issuer chain and independently calculated 48-byte signer anchor,
 a numbered empty CRL (7), a CRL revoking the signer (8), and equivalent signed
 JSON collateral with optional TD Identity.
+The leaf asserts the test-only signer EKU `1.3.6.1.4.1.32473.1.1`; the anchor
+binds its DER-encoded OID to the root certificate hash.
 
 The chain is leaf -> intermediate -> root. Both CRLs are complete, direct,
 issuer-wide CRLs signed by the immediate intermediate with `cRLSign`; they
