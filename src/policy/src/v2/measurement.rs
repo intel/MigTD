@@ -22,6 +22,15 @@
 //! in this workspace enable `serde_json/preserve_order` to preserve insertion
 //! order.
 //!
+//! ## RTMR1 signer anchor
+//!
+//! `compute_signer_anchor` returns the 48-byte value `A` where
+//! `A = SHA384("MIGTD-RTMR1-ANCHOR-V1" || 0x00 || R || 0x00 || EKU_OID)`,
+//! `R = SHA384(DER(root_cert))`, and `EKU_OID` is the DER-encoded, dedicated
+//! signer-purpose Extended Key Usage OID from the leaf certificate.
+//! `A` is the value extended into RTMR1 (replacing the old "hash the full
+//! policy issuer chain PEM bytes" scheme).
+//!
 //! ## `tdinfo_hash` = `init_servtd_info_hash`
 //!
 //! Production MigTDs use `servtd_attr == 0`, so the mapping stores
@@ -29,7 +38,7 @@
 
 use alloc::{string::String, vec::Vec};
 use crypto::{
-    extract_leaf_subject_der_from_chain_pem, hash::digest_sha384,
+    extract_leaf_eku_oid_der_from_chain_pem, hash::digest_sha384,
     split_chain_pem_to_leaf_and_root_der, SHA384_DIGEST_SIZE,
 };
 use serde_json::Value;
@@ -37,6 +46,8 @@ use serde_json::Value;
 use crate::PolicyError;
 
 pub const SIGNER_ANCHOR_DOMAIN_TAG: &[u8] = b"MIGTD-RTMR1-ANCHOR-V1";
+
+/// Single byte separator (`0x00`) between domain tag, R, and the EKU OID.
 const SIGNER_ANCHOR_SEPARATOR: u8 = 0x00;
 
 // Canonicalization
@@ -141,36 +152,45 @@ pub fn extract_canonical_policy_data_bytes(policy_input: &[u8]) -> Result<Vec<u8
     canonical_value_bytes(&policy_data)
 }
 
+/// Compute the RTMR1 signer anchor `A` from its component digests.
+///
+/// `A = SHA384(SIGNER_ANCHOR_DOMAIN_TAG || 0x00 || R || 0x00 || EKU_OID)`
+///
+/// where `R = SHA384(DER(root_cert))` and `EKU_OID` is the DER-encoded,
+/// dedicated signer-purpose EKU OID from the leaf certificate.
 pub fn compute_signer_anchor(
     root_der: &[u8],
-    leaf_subject_der: &[u8],
+    leaf_eku_oid_der: &[u8],
 ) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
-    let root_hash = digest_sha384(root_der).map_err(|_| PolicyError::HashCalculation)?;
-    let subject_hash = digest_sha384(leaf_subject_der).map_err(|_| PolicyError::HashCalculation)?;
+    let r = digest_sha384(root_der).map_err(|_| PolicyError::HashCalculation)?;
 
-    let mut input = Vec::with_capacity(
-        SIGNER_ANCHOR_DOMAIN_TAG.len() + root_hash.len() + subject_hash.len() + 2,
+    let mut buf = Vec::with_capacity(
+        SIGNER_ANCHOR_DOMAIN_TAG.len() + 1 + r.len() + 1 + leaf_eku_oid_der.len(),
     );
-    input.extend_from_slice(SIGNER_ANCHOR_DOMAIN_TAG);
-    input.push(SIGNER_ANCHOR_SEPARATOR);
-    input.extend_from_slice(&root_hash);
-    input.push(SIGNER_ANCHOR_SEPARATOR);
-    input.extend_from_slice(&subject_hash);
+    buf.extend_from_slice(SIGNER_ANCHOR_DOMAIN_TAG);
+    buf.push(SIGNER_ANCHOR_SEPARATOR);
+    buf.extend_from_slice(&r);
+    buf.push(SIGNER_ANCHOR_SEPARATOR);
+    buf.extend_from_slice(leaf_eku_oid_der);
 
-    let digest = digest_sha384(&input).map_err(|_| PolicyError::HashCalculation)?;
-    let mut anchor = [0u8; SHA384_DIGEST_SIZE];
-    anchor.copy_from_slice(&digest);
-    Ok(anchor)
+    let digest = digest_sha384(&buf).map_err(|_| PolicyError::HashCalculation)?;
+    let mut out = [0u8; SHA384_DIGEST_SIZE];
+    out.copy_from_slice(&digest);
+    Ok(out)
 }
 
+/// Compute the RTMR1 signer anchor directly from a PEM cert chain (leaf-first).
+///
+/// Convenience wrapper combining the crypto crate's chain split + leaf EKU
+/// extraction with `compute_signer_anchor`.
 pub fn compute_signer_anchor_from_chain_pem(
     chain_pem: &[u8],
 ) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
     let (_, root_der) =
         split_chain_pem_to_leaf_and_root_der(chain_pem).map_err(|_| PolicyError::InvalidPolicy)?;
-    let leaf_subject = extract_leaf_subject_der_from_chain_pem(chain_pem)
+    let leaf_eku_oid = extract_leaf_eku_oid_der_from_chain_pem(chain_pem)
         .map_err(|_| PolicyError::InvalidPolicy)?;
-    compute_signer_anchor(&root_der, &leaf_subject)
+    compute_signer_anchor(&root_der, &leaf_eku_oid)
 }
 
 /// Resolve a signer anchor from either representation carried in the CFV /
@@ -199,7 +219,71 @@ pub fn resolve_signer_anchor(input: &[u8]) -> Result<[u8; SHA384_DIGEST_SIZE], P
 mod tests {
     use super::*;
 
-    // Canonicalization
+    #[test]
+    fn signer_anchor_is_stable_for_fixed_inputs() {
+        // Fixed test vectors so offline + runtime implementations cannot diverge.
+        let root = b"the-root-DER-placeholder";
+        let eku_oid_der = b"\x06\x0a\x2b\x06\x01\x04\x01\x81\xfd\x59\x01\x01";
+        let a = compute_signer_anchor(root, eku_oid_der).unwrap();
+        // Recompute and ensure deterministic.
+        let a2 = compute_signer_anchor(root, eku_oid_der).unwrap();
+        assert_eq!(a, a2);
+
+        // Verify the formula explicitly.
+        let r = digest_sha384(root).unwrap();
+        let mut buf = Vec::new();
+        buf.extend_from_slice(SIGNER_ANCHOR_DOMAIN_TAG);
+        buf.push(0u8);
+        buf.extend_from_slice(&r);
+        buf.push(0u8);
+        buf.extend_from_slice(eku_oid_der);
+        let expected = digest_sha384(&buf).unwrap();
+        assert_eq!(&a[..], expected.as_slice());
+    }
+
+    #[test]
+    fn signer_anchor_changes_with_root_or_eku() {
+        let a = compute_signer_anchor(b"root1", b"\x06\x02\x2a\x03").unwrap();
+        let b = compute_signer_anchor(b"root2", b"\x06\x02\x2a\x03").unwrap();
+        let c = compute_signer_anchor(b"root1", b"\x06\x02\x2a\x04").unwrap();
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(b, c);
+    }
+
+    #[test]
+    fn signer_anchor_from_chain_ignores_leaf_subject_and_key() {
+        let a = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_a.pem"
+        ))
+        .unwrap();
+        let rotated = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_b.pem"
+        ))
+        .unwrap();
+        let other_purpose = compute_signer_anchor_from_chain_pem(include_bytes!(
+            "../../../crypto/test/eku/signer_other_eku.pem"
+        ))
+        .unwrap();
+
+        assert_eq!(a, rotated);
+        assert_ne!(a, other_purpose);
+    }
+
+    #[test]
+    fn signer_anchor_from_chain_requires_single_dedicated_eku() {
+        for chain in [
+            include_bytes!("../../../crypto/test/eku/signer_no_eku.pem").as_slice(),
+            include_bytes!("../../../crypto/test/eku/signer_multiple_eku.pem").as_slice(),
+            include_bytes!("../../../crypto/test/eku/signer_any_eku.pem").as_slice(),
+        ] {
+            assert!(compute_signer_anchor_from_chain_pem(chain).is_err());
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // canonical_value_bytes
+    // ------------------------------------------------------------------
 
     #[test]
     fn canonical_value_sorts_keys_at_every_level() {

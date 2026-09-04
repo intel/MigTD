@@ -190,10 +190,11 @@ impl ServtdCorim {
 ///    an RFC 9360 `x5chain` to be present.
 /// 3. Verify the x5chain integrity and the COSE signature over the
 ///    `Sig_structure1` TBS (delegated to the `crypto` crate).
-/// 4. Bind the chain's `(root, leaf-subject)` to `expected_signer_anchor` —
-///    the RTMR1-measured policy signer anchor — so the CoRIM signer is the
-///    same root-of-trust the firmware measured from the CFV. A mismatch is
-///    fatal (fail-closed).
+/// 4. Bind the chain's root plus each dedicated EKU purpose the leaf asserts to
+///    `expected_signer_anchor` — the RTMR1-measured policy signer anchor — so
+///    the CoRIM signer is the same root-of-trust the firmware measured from the
+///    CFV. The anchor is recomputed for each asserted purpose and one must
+///    reproduce the measured value; otherwise it is fatal (fail-closed).
 fn verify_and_extract_payload(
     cose: &[u8],
     expected_signer_anchor: &[u8; SHA384_DIGEST_SIZE],
@@ -224,12 +225,24 @@ fn verify_and_extract_payload(
         .to_be_signed(&[])
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-    let (root_der, leaf_subject_der) =
+    let (root_der, leaf_eku_oids_der) =
         crypto::verify_cose_sign1_es384_x5chain(&certs, &tbs, &envelope.signature)
             .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-    let anchor = compute_signer_anchor(&root_der, &leaf_subject_der)?;
-    if anchor != *expected_signer_anchor {
+    // Anchor-first match: the signer leaf may assert the dedicated MigTD
+    // policy-signer purpose alongside unrelated EKUs (e.g. a code-signing OID).
+    // Recompute the signer anchor for each asserted purpose and accept iff one
+    // reproduces the RTMR1-measured `expected_signer_anchor` under the presented
+    // root. This binds the CoRIM signer to the measured root-of-trust without
+    // the firmware hard-coding which EKU OID identifies the signer.
+    let mut anchor_matches = false;
+    for leaf_eku_oid_der in &leaf_eku_oids_der {
+        if compute_signer_anchor(&root_der, leaf_eku_oid_der)? == *expected_signer_anchor {
+            anchor_matches = true;
+            break;
+        }
+    }
+    if !anchor_matches {
         return Err(PolicyError::SignatureVerificationFailed);
     }
 
