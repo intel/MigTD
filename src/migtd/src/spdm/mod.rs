@@ -20,7 +20,7 @@ use codec::Codec;
 use codec::Reader;
 use codec::Writer;
 use log::error;
-use spdmlib::common::SpdmDeviceIo;
+use spdmlib::common::{SpdmContext, SpdmDeviceIo};
 use spdmlib::error::*;
 use spdmlib::protocol::{SpdmDigestStruct, SPDM_MAX_HASH_SIZE};
 use spin::Mutex;
@@ -48,6 +48,18 @@ use crate::spdm::vmcall_msg::VMCALL_SPDM_MESSAGE_HEADER_SIZE;
 pub(crate) type SpdmDeviceIoArc<T> = Arc<Mutex<MigtdTransport<T>>>;
 pub struct MigtdTransport<T: AsyncRead + AsyncWrite + Unpin + Send> {
     pub transport: T,
+}
+
+pub(crate) fn teardown_session(context: &mut SpdmContext, session_id: u32) {
+    if let Some(session) = context.get_session_via_id(session_id) {
+        session.teardown();
+    }
+}
+
+pub(crate) fn teardown_last_session(context: &mut SpdmContext) {
+    if let Some(session_id) = context.runtime_info.get_last_session_id() {
+        teardown_session(context, session_id);
+    }
 }
 
 #[async_trait]
