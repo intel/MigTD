@@ -109,6 +109,12 @@ override or supplement the local revocation decision.
 The CRL itself remains in `servtdCollateral.servtdCrl`. `global.crl` accepts only
 `pckCrlNum` and `rootCaCrlNum`; placing `servtdCrlNum` there is rejected.
 
+Migration and rebinding always require the peer's attested TDINFO hash to resolve
+to an SVN in its authenticated mapping, even when the policy only checks CRL
+freshness or platform properties. Optional TD Identity controls date/status
+enrichment, not whether an endorsement is required. An attached CoRIM is the sole
+mapping authority: a lookup miss rejects the peer without falling back to JSON.
+
 ```sh
 cargo build -p migtd-policy-generator
 ./target/debug/migtd-policy-generator v2 \

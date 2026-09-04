@@ -17,15 +17,21 @@ use build::build_servtd_collateral;
     propagate_version = true
 )]
 struct Cli {
-    /// Signed ServTD identity JSON file (contains identity and signature)
-    #[arg(long, value_name = "FILE")]
-    identity: PathBuf,
-    /// PEM issuer chain for identity
-    #[arg(long, value_name = "FILE")]
-    identity_chain: PathBuf,
+    /// Optional signed ServTD identity JSON file (contains identity and
+    /// signature). The TD Identity is optional; omit it (together with
+    /// `--identity-chain`) to produce SVN-only collateral.
+    #[arg(long, value_name = "FILE", requires = "identity_chain")]
+    identity: Option<PathBuf>,
+    /// PEM issuer chain for identity (required iff `--identity` is given)
+    #[arg(long, value_name = "FILE", requires = "identity")]
+    identity_chain: Option<PathBuf>,
     /// Signed ServTD TCB mapping JSON file (contains tcb mapping and signature)
     #[arg(long, value_name = "FILE")]
     mapping: PathBuf,
+    /// PEM issuer chain for mapping. When omitted, MigTD uses the policy
+    /// issuer chain enrolled in its CFV, not the identity issuer chain.
+    #[arg(long, value_name = "FILE")]
+    mapping_chain: Option<PathBuf>,
     /// Required CA-signed PEM CRL with a CRL-number extension for the servTD signer
     /// chains, even if its revocation list is empty.
     #[arg(long, value_name = "FILE")]
@@ -39,9 +45,10 @@ fn main() {
     let cli = Cli::parse();
 
     let bytes = build_servtd_collateral(
-        &cli.identity,
-        &cli.identity_chain,
+        cli.identity.as_deref(),
+        cli.identity_chain.as_deref(),
         &cli.mapping,
+        cli.mapping_chain.as_deref(),
         &cli.servtd_crl,
     )
     .unwrap_or_else(|e| {
