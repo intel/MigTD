@@ -79,11 +79,14 @@ cumulative TCB mapping. Policy v1 is unchanged.
 
 ### Mapping signer authority
 
-Peer authentication verifies the mapping signature and matches the signer
-anchor derived from its issuer chain to the peer's attested RTMR1 event. The
-anchor binds the root certificate and the complete leaf Subject Name, not the
-full issuer-chain bytes. Peer chain validation requires those same components
-as the local signer anchor. The CA must issue that Subject Name only to
+Peer authentication verifies the JSON or CoRIM mapping signature and requires
+its signing chain to resolve to the peer's attested RTMR1 signer anchor. That
+anchor must match the local enrolled anchor, whether derived from a PEM chain
+or supplied directly as 48 raw bytes. Direct-anchor enrollment does not
+require a local PEM chain.
+
+The anchor binds the root certificate and the complete leaf Subject Name, not
+the full issuer-chain bytes. The CA must issue that Subject Name only to
 authorized mapping signers for the intended product and purpose.
 Intermediate certificates must be valid CAs, but are not part of the anchor;
 the CRL issuer constraints above still apply.
@@ -125,6 +128,12 @@ signature, profile, and number are checked, but its revocation entries never
 override or supplement the local revocation decision.
 The CRL itself remains in `servtdCollateral.servtdCrl`. `global.crl` accepts only
 `pckCrlNum` and `rootCaCrlNum`; placing `servtdCrlNum` there is rejected.
+
+Migration and rebinding always require the peer's attested TDINFO hash to resolve
+to an SVN in its authenticated mapping, even when the policy only checks CRL
+freshness or platform properties. Optional TD Identity controls date/status
+enrichment, not whether an endorsement is required. An attached CoRIM is the sole
+mapping authority: a lookup miss rejects the peer without falling back to JSON.
 
 ```sh
 cargo build -p migtd-policy-generator
@@ -182,7 +191,9 @@ cargo image --policy-v2 \
 ```
 
 During startup:
-- The signer anchor is measured, not the full issuer chain (see the measurement flow in [src/migtd/src/bin/migtd/main.rs](../src/migtd/src/bin/migtd/main.rs)).
+- The signer anchor is measured, not the full issuer chain. It is derived from
+  PEM or supplied directly as 48 raw bytes (see the measurement flow in
+  [src/migtd/src/bin/migtd/main.rs](../src/migtd/src/bin/migtd/main.rs)).
 - The authenticated RTMR1 event digest must match `SHA384(signer_anchor)`.
   The RTMR2 event digest must match the hash of canonical `policyData` before
   the mapping is used.
