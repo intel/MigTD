@@ -30,6 +30,9 @@ pub struct ServtdCollateral<'a> {
     #[serde(borrow)]
     pub servtd_identity: RawServtdIdentity<'a>,
     pub servtd_tcb_mapping: RawServtdTcbMapping<'a>,
+    /// PEM CRL signed by a CA present in both the policy and identity signer chains.
+    /// Required, with a CRL-number extension, even when no certificates are revoked.
+    pub servtd_crl: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
