@@ -20,10 +20,12 @@ from cryptography.x509.oid import NameOID
 
 START = datetime(2020, 1, 1, tzinfo=timezone.utc)
 END = datetime(2120, 1, 1, tzinfo=timezone.utc)
+SIGNER_EKU = x509.ObjectIdentifier("1.3.6.1.4.1.32473.1.1")
+SIGNER_EKU_DER = bytes.fromhex("060a2b0601040181fd590101")
 
 
 def certificate(subject, issuer, public_key, issuer_key, serial, is_ca):
-    return (
+    builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
         .issuer_name(issuer)
@@ -45,8 +47,10 @@ def certificate(subject, issuer, public_key, issuer_key, serial, is_ca):
             x509.AuthorityKeyIdentifier.from_issuer_public_key(issuer_key.public_key()),
             critical=False,
         )
-        .sign(issuer_key, hashes.SHA384())
     )
+    if not is_ca:
+        builder = builder.add_extension(x509.ExtendedKeyUsage([SIGNER_EKU]), critical=False)
+    return builder.sign(issuer_key, hashes.SHA384())
 
 
 def signed_json(name, value, key):
@@ -80,7 +84,7 @@ def generate(policy_path):
         b"MIGTD-RTMR1-ANCHOR-V1\0"
         + hashlib.sha384(root_der).digest()
         + b"\0"
-        + hashlib.sha384(leaf.subject.public_bytes()).digest()
+        + SIGNER_EKU_DER
     ).digest()
     (output / "issuer_chain.pem").write_bytes(chain_pem)
     (output / "signer_anchor.bin").write_bytes(anchor)
