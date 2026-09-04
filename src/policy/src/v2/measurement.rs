@@ -28,9 +28,16 @@
 //! `SHA384(TDINFO)` for direct lookup.
 
 use alloc::{string::String, vec::Vec};
+use crypto::{
+    extract_leaf_subject_der_from_chain_pem, hash::digest_sha384,
+    split_chain_pem_to_leaf_and_root_der, SHA384_DIGEST_SIZE,
+};
 use serde_json::Value;
 
 use crate::PolicyError;
+
+pub const SIGNER_ANCHOR_DOMAIN_TAG: &[u8] = b"MIGTD-RTMR1-ANCHOR-V1";
+const SIGNER_ANCHOR_SEPARATOR: u8 = 0x00;
 
 // Canonicalization
 
@@ -118,9 +125,70 @@ pub fn extract_canonical_policy_data_bytes(policy_input: &[u8]) -> Result<Vec<u8
     canonical_value_bytes(&policy_data)
 }
 
+pub fn compute_signer_anchor(
+    root_der: &[u8],
+    leaf_subject_der: &[u8],
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    let root_hash = digest_sha384(root_der).map_err(|_| PolicyError::HashCalculation)?;
+    let subject_hash = digest_sha384(leaf_subject_der).map_err(|_| PolicyError::HashCalculation)?;
+
+    let mut input = Vec::with_capacity(
+        SIGNER_ANCHOR_DOMAIN_TAG.len() + root_hash.len() + subject_hash.len() + 2,
+    );
+    input.extend_from_slice(SIGNER_ANCHOR_DOMAIN_TAG);
+    input.push(SIGNER_ANCHOR_SEPARATOR);
+    input.extend_from_slice(&root_hash);
+    input.push(SIGNER_ANCHOR_SEPARATOR);
+    input.extend_from_slice(&subject_hash);
+
+    let digest = digest_sha384(&input).map_err(|_| PolicyError::HashCalculation)?;
+    let mut anchor = [0u8; SHA384_DIGEST_SIZE];
+    anchor.copy_from_slice(&digest);
+    Ok(anchor)
+}
+
+pub fn compute_signer_anchor_from_chain_pem(
+    chain_pem: &[u8],
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    let (_, root_der) =
+        split_chain_pem_to_leaf_and_root_der(chain_pem).map_err(|_| PolicyError::InvalidPolicy)?;
+    let leaf_subject = extract_leaf_subject_der_from_chain_pem(chain_pem)
+        .map_err(|_| PolicyError::InvalidPolicy)?;
+    compute_signer_anchor(&root_der, &leaf_subject)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signer_anchor_matches_fixed_vector() {
+        let expected = [
+            0xd3, 0x2b, 0x27, 0xfd, 0xe6, 0x71, 0xe1, 0x76, 0x8e, 0x0e, 0xae, 0x05, 0xa9, 0x91,
+            0x88, 0x07, 0x94, 0x4f, 0xda, 0x04, 0x70, 0x76, 0x86, 0x17, 0x9e, 0x20, 0x41, 0x2c,
+            0x70, 0xc3, 0x24, 0x64, 0xac, 0xec, 0x97, 0x75, 0x71, 0x8f, 0xb8, 0x15, 0xe0, 0xf3,
+            0x66, 0xef, 0x33, 0x12, 0xea, 0x31,
+        ];
+        assert_eq!(
+            compute_signer_anchor(b"root DER", b"leaf Subject DER").unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn signer_anchor_from_pem_matches_fixed_vector() {
+        let chain = include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
+        let expected = [
+            0x38, 0xed, 0xbb, 0x53, 0x53, 0xc3, 0x19, 0xbb, 0xb1, 0x49, 0x8f, 0xec, 0x83, 0x4c,
+            0x77, 0x4c, 0x13, 0xc6, 0xe9, 0x8a, 0x0c, 0x11, 0x0f, 0x99, 0x78, 0x3d, 0xef, 0x6c,
+            0x55, 0x5b, 0x54, 0xbd, 0xee, 0xb3, 0x83, 0xb6, 0x27, 0xc2, 0x1e, 0xed, 0x1c, 0x60,
+            0x40, 0x7c, 0xd6, 0xbb, 0x89, 0x37,
+        ];
+        assert_eq!(
+            compute_signer_anchor_from_chain_pem(chain).unwrap(),
+            expected
+        );
+    }
 
     // Canonicalization
 

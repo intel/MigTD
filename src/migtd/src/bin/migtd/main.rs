@@ -352,24 +352,32 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
         }
     };
 
-    // Store only the chain digest as the tagged event body; see comment in
+    let signer_anchor = migtd::policy::compute_signer_anchor_from_chain_pem(policy_issuer_chain)
+        .unwrap_or_else(|e| {
+            log::error!("Failed to compute policy signer anchor: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Failed to compute policy signer anchor",
+            );
+        });
+
+    // Store only the signer-anchor digest as the tagged event body; see
     // get_policy_and_measure.
-    let event_data = match event_log::calculate_digest(policy_issuer_chain) {
+    let event_data = match event_log::calculate_digest(&signer_anchor) {
         Ok(d) => d,
         Err(e) => {
-            log::error!("Failed to digest policy issuer chain: {:?}\n", e);
+            log::error!("Failed to digest policy signer anchor: {:?}\n", e);
             panic_with_guest_crash_reg_report(
                 MigrationResult::InitializationError as u64,
-                b"Failed to digest policy issuer chain",
+                b"Failed to digest policy signer anchor",
             );
         }
     };
 
-    // Measure and extend the policy issuer chain to RTMR
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
-        policy_issuer_chain,
+        &signer_anchor,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
         &event_data,
     )
