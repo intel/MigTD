@@ -7,19 +7,13 @@ use crate::mig_policy;
 use crate::migration::pre_session_data::local_peer_data;
 #[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
 use crate::migration::rebinding::{write_rebinding_session_token, write_servtd_rebind_attr};
-#[cfg(not(feature = "policy_v2"))]
-use crate::migration::servtd_ext::verify_servtd_attr;
 #[cfg(feature = "policy_v2")]
-use crate::migration::servtd_ext::{verify_servtd_attr, write_approved_servtd_ext_hash, ServtdExt};
+use crate::migration::servtd_ext::{write_approved_servtd_ext_hash, ServtdExt};
 use crate::migration::MigrationResult;
 use crate::{
     event_log::get_event_log,
     migration::{
-        data::MigrationSessionKey,
-        session::{
-            cal_mig_version, exchange_info, set_mig_version, write_msk, ExchangeInformation,
-        },
-        MigtdMigrationInformation,
+        data::MigrationSessionKey, session::ExchangeInformation, MigtdMigrationInformation,
     },
 };
 use alloc::sync::Arc;
@@ -54,12 +48,16 @@ pub struct ResponderContextEx<'a> {
     pub peer_data: Vec<u8>,
     pub info: ResponderContextExInfo<'a>,
     pub mig_info_exchanged: bool,
+    pub remote_information: Option<ExchangeInformation>,
     #[cfg(feature = "policy_v2")]
     pub servtd_ext: Option<ServtdExt>,
 }
 
 pub enum ResponderContextExInfo<'a> {
-    MigrationInformation(&'a MigtdMigrationInformation),
+    MigrationInformation {
+        mig_info: &'a MigtdMigrationInformation,
+        exchange_information: &'a ExchangeInformation,
+    },
     #[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
     RebindInformation(&'a MigtdMigrationInformation),
     None,
@@ -142,6 +140,7 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
         peer_data: Vec::new(),
         info: ResponderContextExInfo::None,
         mig_info_exchanged: false,
+        remote_information: None,
         #[cfg(feature = "policy_v2")]
         servtd_ext: None,
     };
@@ -152,16 +151,19 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
 pub async fn spdm_responder_transfer_msk<'a>(
     spdm_responder_ex: &mut ResponderContextEx<'a>,
     mig_info: &'a MigtdMigrationInformation,
+    exchange_information: &'a ExchangeInformation,
     #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
     #[cfg(not(feature = "policy_v2"))]
     let peer_data = Vec::new();
 
     spdm_responder_ex.peer_data = peer_data;
-    // Mark this responder as operating in migration mode so the migration-mode
-    // handlers (mig-attest op 0x03, mig-info op 0x05) accept the request; their
-    // MigrationInformation variant guard rejects rebind-mode confusion.
-    spdm_responder_ex.info = ResponderContextExInfo::MigrationInformation(mig_info);
+    spdm_responder_ex.info = ResponderContextExInfo::MigrationInformation {
+        mig_info,
+        exchange_information,
+    };
+    spdm_responder_ex.mig_info_exchanged = false;
+    spdm_responder_ex.remote_information = None;
 
     // Zeroize the responder key buffer on every return path.
     let result = spdm_responder_transfer_msk_inner(spdm_responder_ex, mig_info).await;
@@ -373,7 +375,7 @@ pub fn handle_exchange_mig_attest_info_req(
     let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
     if !matches!(
         &spdm_responder_ex.info,
-        ResponderContextExInfo::MigrationInformation(_)
+        ResponderContextExInfo::MigrationInformation { .. }
     ) {
         error!("Migration info is not set in responder context.\n");
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
@@ -805,7 +807,7 @@ pub fn handle_exchange_mig_info_req(
     let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
     if !matches!(
         &spdm_responder_ex.info,
-        ResponderContextExInfo::MigrationInformation(_)
+        ResponderContextExInfo::MigrationInformation { .. }
     ) {
         error!("Migration info is not set in responder context.\n");
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
@@ -898,44 +900,24 @@ pub fn handle_exchange_mig_info_req(
         },
     };
 
-    let mut reader = Reader::init(responder_context.common.app_context_data_buffer.as_ref());
-    let responder_app_context =
-        SpdmAppContextData::read(&mut reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let exchange_information = exchange_info(&responder_app_context.migration_info, false)?;
-
-    verify_servtd_attr(
-        responder_app_context.migration_info.binding_handle,
-        &responder_app_context.migration_info.target_td_uuid,
-    )?;
-
-    let mig_ver = cal_mig_version(false, &exchange_information, &remote_information)?;
-    set_mig_version(&responder_app_context.migration_info, mig_ver)?;
-    write_msk(
-        &responder_app_context.migration_info,
-        &remote_information.key,
-    )?;
-
-    unsafe {
-        upcast_mut(responder_context).mig_info_exchanged = true;
-    }
-
-    // Write APPROVED_SERVTD_EXT_HASH if SERVTD_EXT was received during attestation
-    #[cfg(feature = "policy_v2")]
-    {
-        let servtd_ext = unsafe {
-            let spdm_responder_ex = upcast_mut(responder_context);
-            spdm_responder_ex.servtd_ext
-        };
-        if let Some(ext) = servtd_ext {
-            write_approved_servtd_ext_hash(&ext.calculate_approved_servtd_ext_hash()?)?;
+    let spdm_responder_ex = unsafe { upcast_mut(responder_context) };
+    let exchange_information = match &spdm_responder_ex.info {
+        ResponderContextExInfo::MigrationInformation {
+            exchange_information,
+            ..
+        } => *exchange_information,
+        _ => {
+            error!("Migration info is not set in responder context.\n");
+            return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
         }
-    }
-
-    log::info!("Set MSK and report status\n");
+    };
 
     let min_import_version = exchange_information.min_ver;
     let max_import_version = exchange_information.max_ver;
     let mig_session_key = exchange_information.key.as_bytes().to_vec();
+
+    spdm_responder_ex.remote_information = Some(remote_information);
+    spdm_responder_ex.mig_info_exchanged = true;
 
     let mut writer = Writer::init(vendor_defined_rsp_payload);
     let mut cnt = 0;
