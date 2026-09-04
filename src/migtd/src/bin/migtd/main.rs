@@ -292,19 +292,35 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
 
     let event_data = version.as_bytes();
 
-    // Measure and extend the migration policy to RTMR
+    // Hash the canonical policyData bytes while recording only the version in
+    // the bounded CCEL payload.
+    //
+    // The buffer hashed here MUST be byte-identical to what
+    // `policy::v2::policy::check_policy_integrity` and `migtd-hash` (offline
+    // RTMR2 simulator) compute, otherwise valid peers fail event-log
+    // integrity verification.
+    let policy_data_bytes = match migtd::policy::extract_canonical_policy_data_bytes(policy) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log::error!("Failed to extract canonical policyData bytes: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Failed to extract canonical policyData bytes",
+            );
+        }
+    };
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY,
-        policy,
-        TAGGED_EVENT_ID_POLICY,
+        &policy_data_bytes,
+        TAGGED_EVENT_ID_POLICY_DATA,
         event_data,
     )
     .map_err(|e| {
-        log::error!("Failed to log migration policy: {:?}\n", e);
+        log::error!("Failed to log policyData: {:?}\n", e);
         panic_with_guest_crash_reg_report(
             MigrationResult::InitializationError as u64,
-            b"Failed to log migration policy",
+            b"Failed to log policyData",
         );
     });
 }
@@ -323,11 +339,19 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
         }
     };
 
-    // Measure and extend the policy issuer chain to RTMR
+    let signer_anchor = migtd::policy::compute_signer_anchor_from_chain_pem(policy_issuer_chain)
+        .unwrap_or_else(|e| {
+            log::error!("Failed to compute policy signer anchor: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Failed to compute policy signer anchor",
+            );
+        });
+
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
-        policy_issuer_chain,
+        &signer_anchor,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
         policy_issuer_chain,
     )

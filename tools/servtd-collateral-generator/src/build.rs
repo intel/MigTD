@@ -15,14 +15,15 @@ struct ServtdCollateral<'a> {
     servtd_identity: &'a RawValue,
     servtd_identity_issuer_chain: String,
     servtd_tcb_mapping: &'a RawValue,
-    servtd_tcb_mapping_issuer_chain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    servtd_crl: Option<String>,
 }
 
 pub fn build_servtd_collateral(
     identity_path: &Path,
     identity_chain_path: &Path,
     mapping_path: &Path,
-    mapping_chain_path: &Path,
+    servtd_crl_path: Option<&Path>,
 ) -> Result<Vec<u8>> {
     let identity_bytes = read_file(identity_path)?;
     let mapping_bytes = read_file(mapping_path)?;
@@ -33,16 +34,16 @@ pub fn build_servtd_collateral(
 
     let identity_chain = String::from_utf8(read_file(identity_chain_path)?)
         .context("Identity issuer chain not UTF-8")?;
-    let mapping_chain = String::from_utf8(read_file(mapping_chain_path)?)
-        .context("Mapping issuer chain not UTF-8")?;
-
+    let servtd_crl = servtd_crl_path
+        .map(|path| String::from_utf8(read_file(path)?).context("servTD CRL not UTF-8"))
+        .transpose()?;
     let servtd_collateral = ServtdCollateral {
         major_version: 1,
         minor_version: 0,
         servtd_identity: identity_val,
         servtd_identity_issuer_chain: identity_chain,
         servtd_tcb_mapping: mapping_val,
-        servtd_tcb_mapping_issuer_chain: mapping_chain,
+        servtd_crl,
     };
 
     Ok(serde_json::to_vec(&servtd_collateral)?)

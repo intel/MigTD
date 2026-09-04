@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, value::RawValue};
 
 use crate::{
-    v2::{bytes_to_hex_string, hex_string_to_bytes, policy, verify_event_hash},
+    v2::{
+        bytes_to_hex_string, measurement::extract_canonical_policy_data_bytes, policy,
+        verify_event_hash,
+    },
     CcEvent, Collaterals, EventName, PolicyError, ServtdCollateral, TdIdentity, TdTcbMapping,
 };
 
@@ -166,6 +169,9 @@ pub struct PolicyEvaluationInfo {
 
     /// The minimal crl_num of root_ca_crl
     pub root_ca_crl_num: Option<u32>,
+
+    /// The minimal CRL number for the servTD signer chain.
+    pub servtd_crl_num: Option<u32>,
 }
 
 pub struct VerifiedPolicy<'a> {
@@ -173,7 +179,7 @@ pub struct VerifiedPolicy<'a> {
     pub servtd_identity: TdIdentity,
     pub servtd_identity_issuer_chain: String,
     pub servtd_tcb_mapping: TdTcbMapping,
-    pub servtd_tcb_mapping_issuer_chain: String,
+    pub servtd_crl: Option<String>,
     /// The policy signing certificate chain (PEM) used to verify this policy.
     pub policy_issuer_chain: String,
 }
@@ -192,7 +198,8 @@ pub fn check_policy_integrity(
     policy: &[u8],
     events: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
-    if !verify_event_hash(events, &EventName::MigTdPolicy, policy)? {
+    let policy_data_bytes = extract_canonical_policy_data_bytes(policy)?;
+    if !verify_event_hash(events, &EventName::MigTdPolicyData, &policy_data_bytes)? {
         return Err(PolicyError::PolicyHashMismatch);
     }
 
@@ -204,7 +211,10 @@ pub fn check_policy_integrity(
 pub struct RawPolicyData<'a> {
     #[serde(borrow)]
     pub policy_data: &'a RawValue,
-    pub signature: String,
+    /// Legacy outer signature, ignored because policyData integrity is
+    /// established by the RTMR2 measurement.
+    #[serde(default)]
+    pub signature: Option<String>,
 }
 
 impl<'a> RawPolicyData<'a> {
@@ -218,29 +228,36 @@ impl<'a> RawPolicyData<'a> {
         Ok(policy_data.collaterals)
     }
 
-    /// Verify the policy signature and servtd collateral using the given issuer chain.
+    /// Verify servTD collateral using the RTMR1-measured policy issuer chain.
     pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
         let policy_issuer_chain = core::str::from_utf8(issuer_chain)
             .map_err(|_| PolicyError::InvalidPolicy)?
             .to_string();
 
-        // Step 1: Verify signature over raw policy data
-        let policy_data = self.verify_policy_data_signature(issuer_chain)?;
+        let policy_data: PolicyData<'a> =
+            serde_json::from_str(self.policy_data.get()).map_err(|_| PolicyError::InvalidPolicy)?;
 
-        // Step 2: Verify servtd collateral signatures using their own embedded chains
         let servtd_collateral = &policy_data.servtd_collateral;
         let servtd_identity = servtd_collateral
             .servtd_identity
             .verify_signature(servtd_collateral.servtd_identity_issuer_chain.as_bytes())?;
         let servtd_tcb_mapping = servtd_collateral
             .servtd_tcb_mapping
-            .verify_signature(servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes())?;
+            .verify_signature(issuer_chain)?;
 
         let servtd_identity_issuer_chain = servtd_collateral.servtd_identity_issuer_chain.clone();
-        let servtd_tcb_mapping_issuer_chain =
-            servtd_collateral.servtd_tcb_mapping_issuer_chain.clone();
+        let servtd_crl = servtd_collateral.servtd_crl.clone();
 
-        // Step 3: Sanity checks
+        if let Some(crl) = servtd_crl.as_deref() {
+            crypto::verify_signer_chain_not_revoked(issuer_chain, crl.as_bytes())
+                .map_err(|_| PolicyError::SignerRevoked)?;
+            crypto::verify_signer_chain_not_revoked(
+                servtd_identity_issuer_chain.as_bytes(),
+                crl.as_bytes(),
+            )
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        }
+
         if !policy_data.validate() {
             return Err(PolicyError::InvalidParameter);
         }
@@ -250,26 +267,9 @@ impl<'a> RawPolicyData<'a> {
             servtd_identity,
             servtd_identity_issuer_chain,
             servtd_tcb_mapping,
-            servtd_tcb_mapping_issuer_chain,
+            servtd_crl,
             policy_issuer_chain,
         })
-    }
-
-    fn verify_policy_data_signature(
-        &self,
-        issuer_chain: &[u8],
-    ) -> Result<PolicyData<'a>, PolicyError> {
-        let signature = hex_string_to_bytes(&self.signature)?;
-
-        crypto::verify_cert_chain_and_signature(
-            issuer_chain,
-            self.policy_data.get().as_bytes(),
-            &signature,
-        )
-        .map_err(|_| PolicyError::SignatureVerificationFailed)?;
-
-        serde_json::from_str::<PolicyData>(self.policy_data.get())
-            .map_err(|_| PolicyError::InvalidPolicy)
     }
 }
 
@@ -527,6 +527,7 @@ impl PlatformPolicy {
 struct CrlPolicy {
     pck_crl_num: Option<PolicyProperty>,
     root_ca_crl_num: Option<PolicyProperty>,
+    servtd_crl_num: Option<PolicyProperty>,
 }
 
 impl CrlPolicy {
@@ -545,6 +546,13 @@ impl CrlPolicy {
         if let Some(property) = &self.root_ca_crl_num {
             let root_ca_crl_num = value.root_ca_crl_num.ok_or(PolicyError::CrlEvaluation)?;
             if !property.evaluate_integer(root_ca_crl_num, relative_reference.root_ca_crl_num)? {
+                return Err(PolicyError::CrlEvaluation);
+            }
+        }
+
+        if let Some(property) = &self.servtd_crl_num {
+            let servtd_crl_num = value.servtd_crl_num.ok_or(PolicyError::CrlEvaluation)?;
+            if !property.evaluate_integer(servtd_crl_num, relative_reference.servtd_crl_num)? {
                 return Err(PolicyError::CrlEvaluation);
             }
         }
@@ -927,6 +935,7 @@ mod test {
             migtd_isvsvn: None,
             pck_crl_num: None,
             root_ca_crl_num: None,
+            servtd_crl_num: None,
         };
         let relative_ref = PolicyEvaluationInfo::default();
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());

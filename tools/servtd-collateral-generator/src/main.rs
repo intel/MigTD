@@ -26,9 +26,9 @@ struct Cli {
     /// Signed ServTD TCB mapping JSON file (contains tcb mapping and signature)
     #[arg(long, value_name = "FILE")]
     mapping: PathBuf,
-    /// PEM issuer chain for mapping
+    /// Optional PEM CRL for the servTD signer chains
     #[arg(long, value_name = "FILE")]
-    mapping_chain: PathBuf,
+    servtd_crl: Option<PathBuf>,
     /// Where to write the generated file
     #[arg(long, short, value_name = "FILE")]
     output: PathBuf,
@@ -41,7 +41,7 @@ fn main() {
         &cli.identity,
         &cli.identity_chain,
         &cli.mapping,
-        &cli.mapping_chain,
+        cli.servtd_crl.as_deref(),
     )
     .unwrap_or_else(|e| {
         eprintln!("Failed to build ServTD collateral: {}", e);

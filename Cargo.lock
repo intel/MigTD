@@ -1432,6 +1432,7 @@ dependencies = [
  "clap",
  "crypto",
  "env_logger",
+ "hex",
  "igvm",
  "log",
  "migtd",
