@@ -28,9 +28,16 @@
 //! `SHA384(TDINFO)` for direct lookup.
 
 use alloc::{string::String, vec::Vec};
+use crypto::{
+    extract_leaf_subject_der_from_chain_pem, hash::digest_sha384,
+    split_chain_pem_to_leaf_and_root_der, SHA384_DIGEST_SIZE,
+};
 use serde_json::Value;
 
 use crate::PolicyError;
+
+pub const SIGNER_ANCHOR_DOMAIN_TAG: &[u8] = b"MIGTD-RTMR1-ANCHOR-V1";
+const SIGNER_ANCHOR_SEPARATOR: u8 = 0x00;
 
 // Canonicalization
 
@@ -116,6 +123,38 @@ pub fn extract_canonical_policy_data_bytes(policy_input: &[u8]) -> Result<Vec<u8
     }
 
     canonical_value_bytes(&policy_data)
+}
+
+pub fn compute_signer_anchor(
+    root_der: &[u8],
+    leaf_subject_der: &[u8],
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    let root_hash = digest_sha384(root_der).map_err(|_| PolicyError::HashCalculation)?;
+    let subject_hash = digest_sha384(leaf_subject_der).map_err(|_| PolicyError::HashCalculation)?;
+
+    let mut input = Vec::with_capacity(
+        SIGNER_ANCHOR_DOMAIN_TAG.len() + root_hash.len() + subject_hash.len() + 2,
+    );
+    input.extend_from_slice(SIGNER_ANCHOR_DOMAIN_TAG);
+    input.push(SIGNER_ANCHOR_SEPARATOR);
+    input.extend_from_slice(&root_hash);
+    input.push(SIGNER_ANCHOR_SEPARATOR);
+    input.extend_from_slice(&subject_hash);
+
+    let digest = digest_sha384(&input).map_err(|_| PolicyError::HashCalculation)?;
+    let mut anchor = [0u8; SHA384_DIGEST_SIZE];
+    anchor.copy_from_slice(&digest);
+    Ok(anchor)
+}
+
+pub fn compute_signer_anchor_from_chain_pem(
+    chain_pem: &[u8],
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    let (_, root_der) =
+        split_chain_pem_to_leaf_and_root_der(chain_pem).map_err(|_| PolicyError::InvalidPolicy)?;
+    let leaf_subject = extract_leaf_subject_der_from_chain_pem(chain_pem)
+        .map_err(|_| PolicyError::InvalidPolicy)?;
+    compute_signer_anchor(&root_der, &leaf_subject)
 }
 
 #[cfg(test)]

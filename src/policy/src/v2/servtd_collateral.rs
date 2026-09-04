@@ -30,6 +30,8 @@ pub struct ServtdCollateral<'a> {
     #[serde(borrow)]
     pub servtd_identity: RawServtdIdentity<'a>,
     pub servtd_tcb_mapping: RawServtdTcbMapping<'a>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub servtd_crl: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

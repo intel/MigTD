@@ -327,7 +327,9 @@ fn rtmr1(
         )
         .ok_or(anyhow!("Unable to get policy issuer chain from image"))?;
 
-        rtmr1.extend_with_raw_data(policy_issuer_chain)?;
+        let signer_anchor = policy::compute_signer_anchor_from_chain_pem(policy_issuer_chain)
+            .map_err(|_| anyhow!("Unable to compute policy signer anchor"))?;
+        rtmr1.extend_with_raw_data(&signer_anchor)?;
     }
 
     Ok(rtmr1.as_bytes().to_vec())

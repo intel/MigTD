@@ -169,6 +169,9 @@ pub struct PolicyEvaluationInfo {
 
     /// The minimal crl_num of root_ca_crl
     pub root_ca_crl_num: Option<u32>,
+
+    /// The minimal CRL number for the servTD signer chain.
+    pub servtd_crl_num: Option<u32>,
 }
 
 pub struct VerifiedPolicy<'a> {
@@ -176,6 +179,7 @@ pub struct VerifiedPolicy<'a> {
     pub servtd_identity: TdIdentity,
     pub servtd_identity_issuer_chain: String,
     pub servtd_tcb_mapping: TdTcbMapping,
+    pub servtd_crl: Option<String>,
     /// The policy signing certificate chain (PEM) used to verify this policy.
     pub policy_issuer_chain: String,
 }
@@ -242,6 +246,17 @@ impl<'a> RawPolicyData<'a> {
             .verify_signature(issuer_chain)?;
 
         let servtd_identity_issuer_chain = servtd_collateral.servtd_identity_issuer_chain.clone();
+        let servtd_crl = servtd_collateral.servtd_crl.clone();
+
+        if let Some(crl) = servtd_crl.as_deref() {
+            crypto::verify_signer_chain_not_revoked(issuer_chain, crl.as_bytes())
+                .map_err(|_| PolicyError::SignerRevoked)?;
+            crypto::verify_signer_chain_not_revoked(
+                servtd_identity_issuer_chain.as_bytes(),
+                crl.as_bytes(),
+            )
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        }
 
         if !policy_data.validate() {
             return Err(PolicyError::InvalidParameter);
@@ -252,6 +267,7 @@ impl<'a> RawPolicyData<'a> {
             servtd_identity,
             servtd_identity_issuer_chain,
             servtd_tcb_mapping,
+            servtd_crl,
             policy_issuer_chain,
         })
     }
@@ -511,6 +527,7 @@ impl PlatformPolicy {
 struct CrlPolicy {
     pck_crl_num: Option<PolicyProperty>,
     root_ca_crl_num: Option<PolicyProperty>,
+    servtd_crl_num: Option<PolicyProperty>,
 }
 
 impl CrlPolicy {
@@ -529,6 +546,13 @@ impl CrlPolicy {
         if let Some(property) = &self.root_ca_crl_num {
             let root_ca_crl_num = value.root_ca_crl_num.ok_or(PolicyError::CrlEvaluation)?;
             if !property.evaluate_integer(root_ca_crl_num, relative_reference.root_ca_crl_num)? {
+                return Err(PolicyError::CrlEvaluation);
+            }
+        }
+
+        if let Some(property) = &self.servtd_crl_num {
+            let servtd_crl_num = value.servtd_crl_num.ok_or(PolicyError::CrlEvaluation)?;
+            if !property.evaluate_integer(servtd_crl_num, relative_reference.servtd_crl_num)? {
                 return Err(PolicyError::CrlEvaluation);
             }
         }
@@ -911,6 +935,7 @@ mod test {
             migtd_isvsvn: None,
             pck_crl_num: None,
             root_ca_crl_num: None,
+            servtd_crl_num: None,
         };
         let relative_ref = PolicyEvaluationInfo::default();
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());
