@@ -5,9 +5,7 @@ use crate::mig_policy;
 use crate::migration::MigrationResult;
 use crate::{
     migration::{
-        data::MigrationSessionKey,
-        session::{cal_mig_version, exchange_info, set_mig_version, write_msk},
-        MigtdMigrationInformation,
+        data::MigrationSessionKey, session::ExchangeInformation, MigtdMigrationInformation,
     },
     spdm::{
         build_report_data, gen_quote_spdm, spdm_rsp::SECRET_ASYM_IMPL_INSTANCE, spdm_verify_quote,
@@ -29,9 +27,9 @@ use spdmlib::{
 use spin::Mutex;
 use zeroize::Zeroize;
 extern crate alloc;
+use crate::event_log::get_event_log;
 #[cfg(feature = "policy_v2")]
 use crate::migration::pre_session_data::local_peer_data;
-use crate::{event_log::get_event_log, migration::session::ExchangeInformation};
 use alloc::sync::Arc;
 use log::error;
 
@@ -91,8 +89,9 @@ pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>
 pub async fn spdm_requester_transfer_msk(
     spdm_requester: &mut RequesterContext,
     mig_info: &MigtdMigrationInformation,
+    exchange_information: &ExchangeInformation,
     #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
-) -> Result<(), SpdmStatus> {
+) -> Result<ExchangeInformation, SpdmStatus> {
     // `send_and_receive_pub_key` encodes the requester's ephemeral ECDSA
     // private key into `spdm_requester.common.app_context_data_buffer` so
     // libspdm's asymmetric signing callback can read it. The libspdm
@@ -101,6 +100,7 @@ pub async fn spdm_requester_transfer_msk(
     let result = spdm_requester_transfer_msk_inner(
         spdm_requester,
         mig_info,
+        exchange_information,
         #[cfg(feature = "policy_v2")]
         peer_data,
     )
@@ -112,8 +112,9 @@ pub async fn spdm_requester_transfer_msk(
 async fn spdm_requester_transfer_msk_inner(
     spdm_requester: &mut RequesterContext,
     mig_info: &MigtdMigrationInformation,
+    exchange_information: &ExchangeInformation,
     #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
-) -> Result<(), SpdmStatus> {
+) -> Result<ExchangeInformation, SpdmStatus> {
     Box::pin(spdm_requester.send_receive_spdm_version()).await?;
     Box::pin(spdm_requester.send_receive_spdm_capability()).await?;
     Box::pin(spdm_requester.send_receive_spdm_algorithm()).await?;
@@ -136,15 +137,15 @@ async fn spdm_requester_transfer_msk_inner(
         .await?;
 
         Box::pin(spdm_requester.send_receive_spdm_finish(Some(0xff), session_id)).await?;
-        Box::pin(send_and_receive_sdm_exchange_migration_info(
+        let remote_information = Box::pin(send_and_receive_sdm_exchange_migration_info(
             spdm_requester,
-            mig_info,
+            exchange_information,
             Some(session_id),
         ))
         .await?;
         Box::pin(spdm_requester.send_receive_spdm_end_session(session_id)).await?;
 
-        Ok(())
+        Ok(remote_information)
     }
     .await;
 
@@ -754,14 +755,12 @@ fn verify_peer_attestation_v2(
 
 async fn send_and_receive_sdm_exchange_migration_info(
     spdm_requester: &mut RequesterContext,
-    mig_info: &MigtdMigrationInformation,
+    exchange_information: &ExchangeInformation,
     session_id: Option<u32>,
-) -> SpdmResult {
+) -> SpdmResult<ExchangeInformation> {
     let mut vendor_id = [0u8; MAX_SPDM_VENDOR_DEFINED_VENDOR_ID_LEN];
     vendor_id[..VDM_MESSAGE_VENDOR_ID_LEN].copy_from_slice(&VDM_MESSAGE_VENDOR_ID);
     let vendor_id = VendorIDStruct { len: 4, vendor_id };
-
-    let exchange_information = exchange_info(mig_info, true)?;
 
     let mut payload = vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
     let mut writer = Writer::init(&mut payload);
@@ -924,12 +923,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         },
     };
 
-    let mig_ver = cal_mig_version(true, &exchange_information, &remote_information)?;
-    set_mig_version(mig_info, mig_ver)?;
-    write_msk(mig_info, &remote_information.key)?;
-    log::info!("Set MSK and report status\n");
-
-    Ok(())
+    Ok(remote_information)
 }
 
 #[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]

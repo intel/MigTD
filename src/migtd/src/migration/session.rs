@@ -4,8 +4,9 @@
 
 #[cfg(feature = "policy_v2")]
 use crate::migration::pre_session_data::pre_session_data_exchange;
-#[cfg(not(feature = "spdm_attestation"))]
 use crate::migration::servtd_ext::verify_servtd_attr;
+#[cfg(all(feature = "spdm_attestation", feature = "policy_v2"))]
+use crate::migration::servtd_ext::write_approved_servtd_ext_hash;
 use crate::migration::transport::setup_transport;
 use crate::migration::transport::shutdown_transport;
 use crate::migration::transport::TransportType;
@@ -966,11 +967,17 @@ async fn migration_src_exchange_msk(
         );
         MigrationResult::SecureSessionError
     })?;
+    let exchange_information = exchange_info(&info.mig_info, true).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: exchange_info error: {:?}\n", e);
+        e
+    })?;
+
     let session_result = with_timeout(
         SPDM_TIMEOUT,
         spdm::spdm_requester_transfer_msk(
             &mut spdm_requester,
             &info.mig_info,
+            &exchange_information,
             #[cfg(feature = "policy_v2")]
             peer_data,
         ),
@@ -996,12 +1003,29 @@ async fn migration_src_exchange_msk(
     let shutdown_result =
         shutdown_transport(&mut transport.transport, info.mig_info.mig_request_id).await;
 
-    if let Err(error) = session_result {
-        let _ = shutdown_result;
-        return Err(error);
-    }
+    let remote_information = match session_result {
+        Ok(remote_information) => remote_information,
+        Err(error) => {
+            let _ = shutdown_result;
+            return Err(error);
+        }
+    };
     shutdown_result?;
-    log::info!("MSK exchange completed\n");
+
+    let mig_ver = cal_mig_version(true, &exchange_information, &remote_information).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: cal_mig_version error: {:?}\n", e);
+        e
+    })?;
+    set_mig_version(&info.mig_info, mig_ver).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: set_mig_version error: {:?}\n", e);
+        e
+    })?;
+    write_msk(&info.mig_info, &remote_information.key).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: write_msk error: {:?}\n", e);
+        e
+    })?;
+
+    log::info!(migration_request_id = info.mig_info.mig_request_id; "Set MSK and report status\n");
     Ok(())
 }
 
@@ -1014,6 +1038,10 @@ async fn migration_dst_exchange_msk(
     use core::ops::DerefMut;
 
     const SPDM_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    let exchange_information = exchange_info(&info.mig_info, false).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: exchange_info error: {:?}\n", e);
+        e
+    })?;
     let (mut spdm_responder, device_io_ref) = spdm::spdm_responder(transport).map_err(|_e| {
         log::error!(
             "exchange_msk(): Failed in spdm_responder transport. Migration ID: {}\n",
@@ -1027,6 +1055,7 @@ async fn migration_dst_exchange_msk(
         spdm::spdm_responder_transfer_msk(
             &mut spdm_responder,
             &info.mig_info,
+            &exchange_information,
             #[cfg(feature = "policy_v2")]
             peer_data,
         ),
@@ -1057,7 +1086,39 @@ async fn migration_dst_exchange_msk(
         return Err(error);
     }
     shutdown_result?;
-    log::info!("MSK exchange completed\n");
+
+    let remote_information = spdm_responder.remote_information.take().ok_or_else(|| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: missing remote migration information\n");
+        MigrationResult::SecureSessionError
+    })?;
+    verify_servtd_attr(
+        info.mig_info.binding_handle,
+        &info.mig_info.target_td_uuid,
+    )
+    .map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: verify_servtd_attr error: {:?}\n", e);
+        e
+    })?;
+    let mig_ver =
+        cal_mig_version(false, &exchange_information, &remote_information).map_err(|e| {
+            log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: cal_mig_version error: {:?}\n", e);
+            e
+        })?;
+    set_mig_version(&info.mig_info, mig_ver).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: set_mig_version error: {:?}\n", e);
+        e
+    })?;
+    write_msk(&info.mig_info, &remote_information.key).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: write_msk error: {:?}\n", e);
+        e
+    })?;
+
+    #[cfg(feature = "policy_v2")]
+    if let Some(servtd_ext) = spdm_responder.servtd_ext {
+        write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
+    }
+
+    log::info!(migration_request_id = info.mig_info.mig_request_id; "Set MSK and report status\n");
     Ok(())
 }
 
