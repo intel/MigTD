@@ -35,25 +35,41 @@ cargo build -p json-signer
 ./target/debug/json-signer --sign  --name tdTcbMapping --private-key /path/to/pkcs8 --input /path/to/tcb_mapping.json --output tcb_mapping_signed.json
 ```
 
-Produce ServTD identity and TCB mapping collateral bundle:
+All v2 policies must include a CA-signed PEM CRL with a CRL-number extension
+in `servtdCollateral.servtdCrl`. If no certificates are revoked, provide a valid
+signed CRL with an empty revocation list, not an empty file or an omitted field.
+The CRL-issuing CA must be present in both the policy-signer chain (also used for
+the TCB mapping) and the identity-signer chain. An issuer mismatch fails closed.
+
+Produce the ServTD identity, TCB mapping, and CRL collateral bundle:
 
 ```sh
 cargo build -p servtd-collateral-generator
-./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json -o servtd_collateral.json
+./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json --servtd-crl /path/to/servtd_signers.crl.pem -o servtd_collateral.json
 ```
 
 Result: `servtd_collateral.json` contains the signed ServTD identity, its issuer
-chain, and the signed TCB mapping. The TCB mapping is verified with the policy
-issuer chain measured into RTMR1.
+chain, the signed TCB mapping, and the CRL. The TCB mapping is verified with the
+policy issuer chain whose signer anchor is measured into RTMR1.
+
+Missing, null, malformed, or unauthenticated CRLs are rejected during policy
+verification, as are CRLs without a CRL-number extension. MigTD checks peer
+signers against its local CRL; a peer-provided CRL cannot replace it. Existing
+v2 policies without `servtdCrl` must be regenerated with a signed CRL before
+use with this implementation. The CRL is part of the RTMR2-measured policy data,
+so adding or updating it requires rebuilding the image and updating its
+cumulative TCB mapping. Policy v1 is unchanged.
 
 ### Mapping signer authority
 
-Peer authentication verifies the mapping signature and binds its issuer chain
-to the peer's attested RTMR1. The peer chain must have the same root CA and
-complete leaf Subject Name as the local chain. The CA must issue that Subject
-Name only to authorized mapping signers for the intended product and purpose.
-Intermediate certificates must be valid CAs, but need not match the local
-intermediates.
+Peer authentication verifies the mapping signature and matches the signer
+anchor derived from its issuer chain to the peer's attested RTMR1 event. The
+anchor binds the root certificate and the complete leaf Subject Name, not the
+full issuer-chain bytes. Peer chain validation requires those same components
+as the local signer anchor. The CA must issue that Subject Name only to
+authorized mapping signers for the intended product and purpose.
+Intermediate certificates must be valid CAs, but are not part of the anchor;
+the CRL issuer constraints above still apply.
 
 The authenticated source mapping resolves the initial and current release SVNs,
 including releases absent from an older destination's local mapping. The
@@ -67,6 +83,27 @@ Generate a policy v2 JSON referencing:
 - Attestation collaterals (from step 1)
 - Signed ServTD collateral (from step 2)
 - Base Policy Data (without collaterals and ServTD collateral)
+
+An optional servTD signer CRL floor belongs in a `servtd` entry in the applicable
+`policy`, `forwardPolicy`, or `backwardPolicy` list:
+
+```json
+{
+  "servtd": {
+    "migtdIdentity": {},
+    "servtdCrlNum": {
+      "operation": "greater-or-equal",
+      "reference": "self"
+    }
+  }
+}
+```
+
+This constraint remains active in each evaluated servTD policy block when
+rebinding skips platform checks. The example requires the peer's CRL number to
+be at least the local CRL number; a missing peer or local number fails evaluation.
+The CRL itself remains in `servtdCollateral.servtdCrl`. `global.crl` accepts only
+`pckCrlNum` and `rootCaCrlNum`; placing `servtdCrlNum` there is rejected.
 
 ```sh
 cargo build -p migtd-policy-generator
@@ -124,9 +161,10 @@ cargo image --policy-v2 \
 ```
 
 During startup:
-- Policy issuer chain is measured (see measurement flow in [src/migtd/src/bin/migtd/main.rs](../src/migtd/src/bin/migtd/main.rs)).
-- The supplied policy issuer chain and canonical `policyData` are matched to
-  their authenticated RTMR1 and RTMR2 event digests before the mapping is used.
+- The signer anchor is measured, not the full issuer chain (see the measurement flow in [src/migtd/src/bin/migtd/main.rs](../src/migtd/src/bin/migtd/main.rs)).
+- The authenticated RTMR1 event digest must match `SHA384(signer_anchor)`.
+  The RTMR2 event digest must match the hash of canonical `policyData` before
+  the mapping is used.
 - Collaterals are used for quote verification and TCB evaluation.
 
 ## 5. Finalize the cumulative TCB mapping
@@ -134,7 +172,7 @@ During startup:
 Prepare the signing keys and complete steps 1-3 **before** measuring the release.
 Retain the exact signed identity as `config/templates/td_identity_signed.json`
 and use `key/migtd_issuer_chain.pem` consistently for this example. Freeze the
-identity, its signature and issuer chain, platform collaterals, policy settings,
+identity, its signature and issuer chain, signer CRL, platform collaterals, policy settings,
 image build options, and TDINFO manifest. Re-signing an unchanged identity can
 produce a different signature, changing RTMR2 and therefore `tdinfo_hash`.
 
@@ -167,7 +205,8 @@ cargo build -p migtd-hash
 ### Sign the cumulative mapping and rebuild the policy
 ```sh
 bash sh_script/build_policy_v2.sh preprod \
- config/templates/tcb_mapping.json config/templates/td_identity_signed.json
+ config/templates/tcb_mapping.json config/templates/td_identity_signed.json \
+ /path/to/servtd_signers.crl.pem
 ```
 ### Rebuild migtd with new policy
 ```sh
@@ -192,7 +231,7 @@ cmp --silent target/release/expected_tdinfo_hash.txt target/release/final_tdinfo
 1. Platform collaterals -> `collateral_*.json`
 2. Sign the ServTD identity and cumulative TCB mapping -> generate `servtd_collateral.json`
 3. Generate policy data -> package it as `policy_v2_signed.json` without an outer signature
-4. Build the image with measured policy data and issuer chain
+4. Build the image with measured policy data and signer anchor
 5. Record its `tdinfo_hash` and update the cumulative mapping
 6. Re-sign only the mapping, preserving every measured input
 7. Rebuild and require the final `tdinfo_hash` to equal the recorded value

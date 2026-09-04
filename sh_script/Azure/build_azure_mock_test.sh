@@ -196,6 +196,8 @@ generate_certificates() {
     # Create certificate chain (leaf + root)
     echo "7. Creating certificate chain..."
     cat "$output_dir/policy_signing.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain.pem"
+    bash "$PROJECT_ROOT/sh_script/test/generate_empty_servtd_crl.sh" \
+        "$output_dir/root_ca.pem" "$output_dir/root_ca.key" "$output_dir/servtd.crl.pem"
 
     # Clean up CSR
     rm -f "$output_dir/policy_signing.csr"
@@ -528,6 +530,7 @@ IDENTITY_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
     --identity "$TD_IDENTITY_SIGNED" \
     --identity-chain "$IDENTITY_CHAIN" \
     --mapping "$TCB_MAPPING_SIGNED" \
+    --servtd-crl "$CERT_DIR/servtd.crl.pem" \
     --output "$SERVTD_COLLATERAL"
 
 echo -e "${GREEN}✓ ServTD Collateral generated: $SERVTD_COLLATERAL${NC}"
