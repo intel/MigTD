@@ -97,9 +97,9 @@ anchor must match the local enrolled anchor, whether derived from a PEM chain
 or supplied directly as 48 raw bytes. Direct-anchor enrollment does not
 require a local PEM chain.
 
-The anchor binds the root certificate and the complete leaf Subject Name, not
-the full issuer-chain bytes. The CA must issue that Subject Name only to
-authorized mapping signers for the intended product and purpose.
+The anchor binds the root certificate and a dedicated signer-purpose EKU,
+not the full issuer-chain bytes. The CA must issue that EKU only to authorized
+mapping signers for the intended product and purpose.
 Intermediate certificates must be valid CAs, but are not part of the anchor;
 the CRL issuer constraints above still apply.
 
@@ -228,7 +228,8 @@ with the rest of TDINFO. Under this model, the former equality checks add
 no further authorization; they only impose legacy encodings on fields
 already covered by the endorsement.
 
-Signer identity is bound by the RTMR1 anchor (root certificate and leaf Subject),
+Signer authority and purpose are bound by the RTMR1 anchor (root certificate
+and dedicated EKU),
 while canonical policy data, including `policySvn`, is measured in RTMR2.
 Quote/TDREPORT, event-log, collateral-signature, and signer-anchor verification
 establish these bindings during authentication. The authenticated full-TDINFO mapping
