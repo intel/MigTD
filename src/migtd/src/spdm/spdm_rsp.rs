@@ -744,15 +744,14 @@ fn rsp_verify_peer_attestation_v2(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
-    // 2. Authenticate remote, verify init TDINFO integrity against ServtdExt,
-    //    and evaluate policy with init TDINFO as reference.
+    // 2. Authenticate remote and verify initial/current continuity against
+    //    the authenticated SERVTD_EXT.
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
         let verified_report_peer = match mig_policy::authenticate_migration_source_with_init_tdinfo(
             quote_peer,
             peer_data,
             event_log_peer,
-            peer_init_td_info,
             servtd_ext_peer,
         ) {
             Err(e) => {
@@ -1163,10 +1162,9 @@ pub fn handle_exchange_rebind_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_SIZE);
     }
-    let td_report_init = reader
+    let _td_report_init = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let td_report_init_vec = td_report_init.to_vec();
 
     // attestation verification
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
@@ -1186,7 +1184,6 @@ pub fn handle_exchange_rebind_attest_info_req(
             &td_report_src_vec,
             &event_log_src_vec,
             peer_data,
-            &td_report_init_vec,
             &servtd_ext_vec,
         );
         if let Err(e) = &policy_check_result {

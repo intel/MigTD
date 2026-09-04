@@ -116,6 +116,7 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChan
 pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     peer_data: Vec<u8>,
+    servtd_ext: &ServtdExt,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
@@ -124,7 +125,7 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
         );
         e
     })?;
-    let (certs, _quote) = create_certificate_for_client(&signing_key).map_err(|e| {
+    let (certs, _quote) = create_certificate_for_client(&signing_key, servtd_ext).map_err(|e| {
         log::error!("client policy_v2 gen_cert() failed with error {:?}\n", e);
         e
     })?;
@@ -325,7 +326,10 @@ fn create_certificate_for_server(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
     Ok((x509_cert_der, quote))
 }
 
-fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
+fn create_certificate_for_client(
+    signing_key: &EcdsaPk,
+    #[cfg(feature = "policy_v2")] servtd_ext: &ServtdExt,
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let pub_key = signing_key.public_key().map_err(|e| {
         log::error!(
             "gen_cert signing_key.public_key() failed with error {:?}\n",
@@ -395,6 +399,27 @@ fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
         .map_err(|e| {
             log::error!(
                 "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.\n",
+                e
+            );
+            e
+        })?
+        .add_extension(
+            Extension::new(
+                EXTNID_MIGTD_SERVTD_EXT,
+                Some(false),
+                Some(servtd_ext.as_bytes()),
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert client policy_v2 failed to add SERVTD_EXT: {:?}.\n",
+                    e
+                );
+                e
+            })?,
+        )
+        .map_err(|e| {
+            log::error!(
+                "gen_cert client policy_v2 SERVTD_EXT extension failed: {:?}.\n",
                 e
             );
             e
@@ -887,9 +912,23 @@ mod verify {
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ));
         }
-        // MigTD-src acts as TLS client
-        let policy_check_result =
-            mig_policy::authenticate_remote(is_client, quote_report, peer_data, event_log);
+        // MigTD-src acts as TLS client. Source authentication also validates
+        // initial/current TCB continuity using the authenticated SERVTD_EXT.
+        let policy_check_result = if is_client {
+            mig_policy::authenticate_remote(true, quote_report, peer_data, event_log)
+        } else {
+            let servtd_ext =
+                find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
+                    log::error!("Failed to find servtd ext extension.\n");
+                    CryptoError::ParseCertificate
+                })?;
+            mig_policy::authenticate_migration_source_with_init_tdinfo(
+                quote_report,
+                peer_data,
+                event_log,
+                servtd_ext,
+            )
+        };
 
         if let Err(e) = &policy_check_result {
             log::error!("Policy check failed, below is the detail information:\n");
@@ -944,7 +983,7 @@ mod verify {
                 CryptoError::ParseCertificate
             })?;
         // Per GHCI 1.5: init extension now carries TDINFO_STRUCT instead of full TDREPORT
-        let init_tdinfo =
+        let _init_tdinfo =
             find_extension(extensions, &EXTNID_MIGTD_TDREPORT_INIT).ok_or_else(|| {
                 log::error!("Failed to find init tdinfo extension.\n");
                 CryptoError::ParseCertificate
@@ -962,13 +1001,8 @@ mod verify {
             ));
         }
 
-        let policy_check_result = mig_policy::authenticate_rebinding_old(
-            td_report,
-            event_log,
-            peer_data,
-            init_tdinfo,
-            servtd_ext,
-        );
+        let policy_check_result =
+            mig_policy::authenticate_rebinding_old(td_report, event_log, peer_data, servtd_ext);
 
         if let Err(e) = &policy_check_result {
             log::error!("Policy check failed, below is the detail information:\n");

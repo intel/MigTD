@@ -76,16 +76,23 @@ mod v2 {
     use crate::migration::pre_session_data::LogErr;
     use crate::migration::servtd_ext::ServtdExt;
 
-    const SERVTD_ATTR_IGNORE_ATTRIBUTES: u64 = 0x1_0000_0000;
-    const SERVTD_ATTR_IGNORE_XFAM: u64 = 0x2_0000_0000;
-    const SERVTD_ATTR_IGNORE_MRTD: u64 = 0x4_0000_0000;
-    const SERVTD_ATTR_IGNORE_MRCONFIGID: u64 = 0x8_0000_0000;
-    const SERVTD_ATTR_IGNORE_MROWNER: u64 = 0x10_0000_0000;
-    const SERVTD_ATTR_IGNORE_MROWNERCONFIG: u64 = 0x20_0000_0000;
-    const SERVTD_ATTR_IGNORE_RTMR0: u64 = 0x40_0000_0000;
-    const SERVTD_ATTR_IGNORE_RTMR1: u64 = 0x80_0000_0000;
-    const SERVTD_ATTR_IGNORE_RTMR2: u64 = 0x100_0000_0000;
-    const SERVTD_ATTR_IGNORE_RTMR3: u64 = 0x200_0000_0000;
+    /// Compute the complete `tdinfo_hash` for the TD described by a `TdInfo`
+    /// returned by `TDG.MR.REPORT`. For `servtd_attr == 0`, this is the
+    /// canonical lookup key stored in `servtd_tcb_mapping`.
+    fn tdinfo_hash_from_td_info(td: &TdInfo) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+        policy::compute_tdinfo_hash_from_fields(
+            &td.attributes,
+            &td.xfam,
+            &td.mrtd,
+            &td.mrconfig_id,
+            &td.mrowner,
+            &td.mrownerconfig,
+            &td.rtmr0,
+            &td.rtmr1,
+            &td.rtmr2,
+            &td.rtmr3,
+        )
+    }
 
     lazy_static! {
         pub static ref VERIFIED_POLICY: Once<VerifiedPolicy<'static>> = Once::new();
@@ -213,7 +220,7 @@ mod v2 {
         Ok(suppl_data)
     }
 
-    // Authenticate the migtd-new from migtd-old side
+    // Authenticate the migtd-new from migtd-old side.
     pub fn authenticate_rebinding_new(
         tdreport_dst: &[u8],
         event_log_dst: &[u8],
@@ -250,47 +257,33 @@ mod v2 {
         Ok(tdx_report.as_bytes().to_vec())
     }
 
-    // Authenticate the migtd-old from migtd-new side
-    // Per GHCI 1.5: init_tdinfo is a TDINFO_STRUCT (not full TDREPORT),
-    // and there is no separate init_policy JSON blob.
+    // Authenticate the migtd-old from migtd-new side.
     pub fn authenticate_rebinding_old(
         tdreport_src: &[u8],
         event_log_src: &[u8],
         mig_policy_src: &[u8],
-        init_tdinfo: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
         let (mig_policy_src, peer_issuer_chain) =
             crate::migration::pre_session_data::decode_peer_data(mig_policy_src)
                 .ok_or(PolicyError::InvalidParameter)?;
         // Verify quote src / event log src / policy src
-        let (evaluation_data_src, _verified_policy_src, tdx_report) =
-            authenticate_rebinding_common(
-                tdreport_src,
-                event_log_src,
-                mig_policy_src,
-                peer_issuer_chain,
-            )?;
+        let (evaluation_data_src, verified_policy_src, tdx_report) = authenticate_rebinding_common(
+            tdreport_src,
+            event_log_src,
+            mig_policy_src,
+            peer_issuer_chain,
+        )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
-        // Per GHCI 1.5: cross-check the peer's wire-claimed init TDINFO against
-        // the peer's verified TDREPORT — init policy signer and init SVN must
-        // be consistent with the peer's current self-report.
-        verify_peer_init_tdinfo_against_owner(
-            init_tdinfo,
-            &tdx_report.td_info.mrowner,
-            &tdx_report.td_info.mrownerconfig,
-        )?;
-
-        // Verify the init tdinfo against servtd_ext hash
-        let servtd_ext_src_obj =
+        let servtd_ext =
             ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
-        let init_td_info = verify_init_tdinfo(init_tdinfo, &servtd_ext_src_obj)?;
-
-        // migtdengine check: enginesvnsrc >= enginesvninit
-        policy.servtd_tcb_mapping.check_engine_not_older(
-            &engine_measurements_of(&tdx_report.td_info),
-            &engine_measurements_of(&init_td_info),
+        verify_init_servtd_svn_order(
+            &verified_policy_src.servtd_tcb_mapping,
+            &servtd_ext.init_servtd_info_hash,
+            &servtd_ext.init_attr,
+            &servtd_ext.cur_servtd_info_hash,
+            &servtd_ext.cur_servtd_attr,
         )?;
 
         // If backward policy exists, evaluate the migration src based on it.
@@ -359,6 +352,38 @@ mod v2 {
         Ok((evaluation_data, verified_policy, tdreport_verified))
     }
 
+    /// Resolve both authenticated SERVTD_EXT hashes through the source's
+    /// verified JSON mapping so an older destination need not predict future
+    /// source releases.
+    fn verify_init_servtd_svn_order(
+        source_mapping: &TdTcbMapping,
+        init_servtd_info_hash: &[u8],
+        init_servtd_attr: &[u8; 8],
+        cur_servtd_info_hash: &[u8],
+        cur_servtd_attr: &[u8; 8],
+    ) -> Result<(), PolicyError> {
+        let init_attr = u64::from_le_bytes(*init_servtd_attr);
+        let cur_attr = u64::from_le_bytes(*cur_servtd_attr);
+        if init_attr != 0 || cur_attr != 0 {
+            log::error!(
+                "One-hash TCB mapping requires SERVTD_ATTR=0: init={init_attr:#x}, current={cur_attr:#x}"
+            );
+            return Err(PolicyError::UnqualifiedMigTdInfo);
+        }
+
+        let init_svn = source_mapping
+            .get_engine_svn_by_tdinfo_hash(init_servtd_info_hash)
+            .ok_or(PolicyError::UnqualifiedMigTdInfo)?;
+        let current_svn = source_mapping
+            .get_engine_svn_by_tdinfo_hash(cur_servtd_info_hash)
+            .ok_or(PolicyError::UnqualifiedMigTdInfo)?;
+
+        if init_svn > current_svn {
+            return Err(PolicyError::SvnMismatch);
+        }
+        Ok(())
+    }
+
     fn get_rtmrs_from_tdreport(
         td_report: &TdxReport,
     ) -> Result<[[u8; SHA384_DIGEST_SIZE]; 4], PolicyError> {
@@ -403,13 +428,6 @@ mod v2 {
         )
         .log_err("Peer identity cert chain validation")
         .map_err(|_| PolicyError::PeerCertChainValidation)?;
-        crypto::validate_peer_cert_chain(
-            local_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
-            verified_policy.servtd_tcb_mapping_issuer_chain.as_bytes(),
-        )
-        .log_err("Peer tcb mapping cert chain validation")
-        .map_err(|_| PolicyError::PeerCertChainValidation)?;
-
         // 4. Check the integrity of the policy with its event log
         let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
         check_policy_integrity(mig_policy, &events)?;
@@ -455,111 +473,6 @@ mod v2 {
         Ok(tdx_report)
     }
 
-    /// Per GHCI 1.5: verifies TDINFO_STRUCT integrity against ServtdExt info hash.
-    ///
-    /// Parses the TDINFO bytes, applies IGNORE masks from `servtd_attr`, computes
-    /// `SHA384(masked_tdinfo)`, and compares to `init_servtd_info_hash`.
-    /// Returns the parsed TdInfo on success.
-    ///
-    /// This function is only called when SERVTD_EXT is supported (the sender
-    /// gates on TDCS.ATTRIBUTES bit 17 before sending init_tdinfo).
-    fn verify_servtd_info_hash(
-        tdinfo_bytes: &[u8],
-        servtd_attr: u64,
-        init_servtd_info_hash: &[u8],
-    ) -> Result<TdInfo, PolicyError> {
-        if tdinfo_bytes.len() < size_of::<TdInfo>() {
-            return Err(PolicyError::InvalidParameter);
-        }
-
-        // Parse TdInfo directly from bytes
-        let mut td_info = {
-            let mut uninit = core::mem::MaybeUninit::<TdInfo>::uninit();
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    tdinfo_bytes.as_ptr(),
-                    uninit.as_mut_ptr() as *mut u8,
-                    size_of::<TdInfo>(),
-                );
-                uninit.assume_init()
-            }
-        };
-
-        if (servtd_attr & SERVTD_ATTR_IGNORE_ATTRIBUTES) != 0 {
-            td_info.attributes.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_XFAM) != 0 {
-            td_info.xfam.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_MRTD) != 0 {
-            td_info.mrtd.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_MRCONFIGID) != 0 {
-            td_info.mrconfig_id.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_MROWNER) != 0 {
-            td_info.mrowner.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_MROWNERCONFIG) != 0 {
-            td_info.mrownerconfig.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR0) != 0 {
-            td_info.rtmr0.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR1) != 0 {
-            td_info.rtmr1.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR2) != 0 {
-            td_info.rtmr2.fill(0);
-        }
-        if (servtd_attr & SERVTD_ATTR_IGNORE_RTMR3) != 0 {
-            td_info.rtmr3.fill(0);
-        }
-
-        let info_hash =
-            digest_sha384(td_info.as_bytes()).map_err(|_| PolicyError::HashCalculation)?;
-
-        if info_hash.as_slice() != init_servtd_info_hash {
-            log::error!("verify_servtd_info_hash: HASH MISMATCH\n");
-            return Err(PolicyError::InvalidTdReport);
-        }
-
-        Ok(td_info)
-    }
-
-    /// Per GHCI 1.5: verifies TDINFO_STRUCT against servtd_ext info hash
-    fn verify_init_tdinfo(
-        init_tdinfo: &[u8],
-        servtd_ext: &ServtdExt,
-    ) -> Result<TdInfo, PolicyError> {
-        verify_servtd_info_hash(
-            init_tdinfo,
-            u64::from_le_bytes(servtd_ext.init_attr),
-            &servtd_ext.init_servtd_info_hash,
-        )
-    }
-
-    /// `getengineinfo` measurement scope: the design guide classifies a MigTD
-    /// engine by `mrtd||rtmr[0-1]` only.
-    fn engine_measurements(mrtd: &[u8], rtmr0: &[u8], rtmr1: &[u8]) -> Measurements {
-        Measurements::new_from_bytes(mrtd, rtmr0, rtmr1, None, None)
-    }
-
-    fn engine_measurements_of(td_info: &TdInfo) -> Measurements {
-        engine_measurements(&td_info.mrtd, &td_info.rtmr0, &td_info.rtmr1)
-    }
-
-    fn get_rtmrs_from_tdinfo(
-        td_info: &TdInfo,
-    ) -> Result<[[u8; SHA384_DIGEST_SIZE]; 4], PolicyError> {
-        let mut rtmrs = [[0u8; SHA384_DIGEST_SIZE]; 4];
-        rtmrs[0].copy_from_slice(&td_info.rtmr0);
-        rtmrs[1].copy_from_slice(&td_info.rtmr1);
-        rtmrs[2].copy_from_slice(&td_info.rtmr2);
-        rtmrs[3].copy_from_slice(&td_info.rtmr3);
-        Ok(rtmrs)
-    }
-
     fn setup_evaluation_data(
         fmspc: [u8; 6],
         suppl_data: &[u8],
@@ -599,15 +512,10 @@ mod v2 {
         tdreport: &TdxReport,
         policy: &VerifiedPolicy,
     ) -> Result<PolicyEvaluationInfo, PolicyError> {
-        let migtd_svn = policy.servtd_tcb_mapping.get_engine_svn_by_measurements(
-            &Measurements::new_from_bytes(
-                &tdreport.td_info.mrtd,
-                &tdreport.td_info.rtmr0,
-                &tdreport.td_info.rtmr1,
-                None,
-                None,
-            ),
-        );
+        let tdinfo_hash = tdinfo_hash_from_td_info(&tdreport.td_info)?;
+        let migtd_svn = policy
+            .servtd_tcb_mapping
+            .get_engine_svn_by_tdinfo_hash(&tdinfo_hash);
 
         let migtd_tcb = migtd_svn.and_then(|svn| policy.servtd_identity.get_tcb_level_by_svn(svn));
 
@@ -711,136 +619,9 @@ mod v2 {
         Ok(())
     }
 
-    /// Per GHCI 1.5: Verify initMigtdData.MROWNER matches own policy signer key hash
-    /// and initMigtdData.MROWNERCONFIG <= own policy SVN.
-    pub fn verify_init_migtd_data_policy_binding(
-        init_td_info: &[u8; crate::migration::TD_INFO_SIZE],
-    ) -> Result<(), PolicyError> {
-        use crate::config::get_policy_issuer_chain;
-        use crate::migration::{td_info_mrowner, td_info_mrownerconfig};
-
-        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-        let my_policy_svn = policy.policy_data.get_policy_svn();
-
-        // Check MROWNER == own policy signer key hash
-        let policy_issuer_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
-        let policy_key_hash = crypto::get_policy_signer_key_hash(policy_issuer_chain)
-            .map_err(|_| PolicyError::InvalidCollateral)?;
-        if td_info_mrowner(init_td_info) != &policy_key_hash {
-            return Err(PolicyError::PolicyHashMismatch);
-        }
-
-        // Check MROWNERCONFIG (init policy_svn) <= my policy_svn
-        let init_mrownerconfig = td_info_mrownerconfig(init_td_info);
-        let mut init_svn_bytes = [0u8; 4];
-        init_svn_bytes.copy_from_slice(&init_mrownerconfig[..4]);
-        let init_policy_svn = u32::from_le_bytes(init_svn_bytes);
-        // Remaining 44 bytes should be zero
-        if init_mrownerconfig[4..] != [0u8; SHA384_DIGEST_SIZE - 4] {
-            return Err(PolicyError::InvalidParameter);
-        }
-        if init_policy_svn > my_policy_svn {
-            return Err(PolicyError::SvnMismatch);
-        }
-
-        Ok(())
-    }
-
-    /// Per GHCI 1.5: Cross-check a peer's wire-supplied init TDINFO_STRUCT against
-    /// the peer's authenticated TDREPORT (or equivalent verified report data).
-    ///
-    /// The peer's `init.MROWNER` must equal the peer's report MROWNER (policy
-    /// signer hash). The peer's `init.MROWNERCONFIG` first 4 bytes encode the
-    /// init policy SVN as little-endian u32 with the remaining 44 bytes zero;
-    /// that init SVN must be less than or equal to the SVN encoded the same way
-    /// in the peer's report MROWNERCONFIG.
-    ///
-    /// `peer_mrowner` and `peer_mrownerconfig` are the peer's authentic values,
-    /// taken from a verified TDREPORT (`TdInfo::mrowner` / `mrownerconfig`) or
-    /// from quote-verification supplemental data
-    /// (`Report::R_MIGTD_MROWNER` / `R_MIGTD_MROWNERCONFIG`).
-    pub fn verify_peer_init_tdinfo_against_owner(
-        peer_init_td_info: &[u8],
-        peer_mrowner: &[u8],
-        peer_mrownerconfig: &[u8],
-    ) -> Result<(), PolicyError> {
-        use crate::migration::{td_info_mrowner, td_info_mrownerconfig, TD_INFO_SIZE};
-
-        if peer_init_td_info.len() != TD_INFO_SIZE
-            || peer_mrowner.len() != SHA384_DIGEST_SIZE
-            || peer_mrownerconfig.len() != SHA384_DIGEST_SIZE
-        {
-            return Err(PolicyError::InvalidParameter);
-        }
-
-        let init: &[u8; TD_INFO_SIZE] = peer_init_td_info
-            .try_into()
-            .map_err(|_| PolicyError::InvalidParameter)?;
-        let init_mrowner = td_info_mrowner(init);
-        let init_mrownerconfig = td_info_mrownerconfig(init);
-
-        // 1. MROWNER (policy signer key hash) must match peer's current report
-        if init_mrowner.as_slice() != peer_mrowner {
-            return Err(PolicyError::PolicyHashMismatch);
-        }
-
-        // 2. init MROWNERCONFIG must be well-formed: first 4 bytes encode SVN,
-        //    remaining 44 bytes must be zero.
-        if init_mrownerconfig[4..] != [0u8; SHA384_DIGEST_SIZE - 4] {
-            return Err(PolicyError::InvalidParameter);
-        }
-
-        // 3. Peer report MROWNERCONFIG must also be well-formed: a genuine
-        //    MigTD enforces this at startup, but we verify it locally instead
-        //    of relying on the peer's self-check.
-        if peer_mrownerconfig[4..] != [0u8; SHA384_DIGEST_SIZE - 4] {
-            return Err(PolicyError::InvalidParameter);
-        }
-
-        // 4. init policy SVN must be ≤ peer report policy SVN.
-        let mut buf = [0u8; 4];
-        buf.copy_from_slice(&init_mrownerconfig[..4]);
-        let init_svn = u32::from_le_bytes(buf);
-        buf.copy_from_slice(&peer_mrownerconfig[..4]);
-        let peer_svn = u32::from_le_bytes(buf);
-        if init_svn > peer_svn {
-            return Err(PolicyError::SvnMismatch);
-        }
-
-        Ok(())
-    }
-
-    /// Cross-check a peer's wire-supplied init `TDINFO_STRUCT` against the
-    /// MROWNER/MROWNERCONFIG bytes carried in the peer's verified quote
-    /// supplemental data (see `Report::R_MIGTD_MROWNER` /
-    /// `Report::R_MIGTD_MROWNERCONFIG`).
-    ///
-    /// This is a pure function: it length-checks `verified_suppl_data` before
-    /// slicing so it cannot panic on a too-short buffer, and it does not
-    /// invoke quote verification. Callers that want the combined attestation
-    /// + cross-check should use `authenticate_migration_source_with_init_tdinfo`.
-    pub fn verify_peer_init_tdinfo_against_suppl_data(
-        peer_init_td_info: &[u8],
-        verified_suppl_data: &[u8],
-    ) -> Result<(), PolicyError> {
-        if verified_suppl_data.len() < REPORT_DATA_SIZE {
-            return Err(PolicyError::InvalidParameter);
-        }
-        verify_peer_init_tdinfo_against_owner(
-            peer_init_td_info,
-            &verified_suppl_data[Report::R_MIGTD_MROWNER],
-            &verified_suppl_data[Report::R_MIGTD_MROWNERCONFIG],
-        )
-    }
-
-    /// Destination-side migration helper: verify the source MigTD's
-    /// quote/event log, cross-check init TDINFO against the quote's
-    /// supplemental data, verify init TDINFO integrity against ServtdExt,
-    /// and allowlist-gate init measurements against servtd_tcb_mapping.
-    ///
-    /// This mirrors the checks that `authenticate_rebinding_old` performs
-    /// for the rebinding path, ensuring parity between migration and
-    /// rebinding attestation.
+    /// Authenticate the source MigTD and require its initial mapped SVN to be
+    /// no newer than its current mapped SVN. The legacy init TDINFO argument
+    /// is ignored after request framing validation.
     ///
     /// Returns the verified supplemental data on success so the caller can
     /// reuse it for SPDM-level bindings (e.g., REPORTDATA / TH1).
@@ -848,14 +629,13 @@ mod v2 {
         quote_src: &[u8],
         peer_data: &[u8],
         event_log_src: &[u8],
-        init_tdinfo: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
         let (mig_policy_src, peer_issuer_chain) =
             crate::migration::pre_session_data::decode_peer_data(peer_data)
                 .ok_or(PolicyError::InvalidParameter)?;
 
-        let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
+        let (evaluation_data_src, verified_policy_src, suppl_data) = authenticate_remote_common(
             quote_src,
             event_log_src,
             mig_policy_src,
@@ -877,39 +657,15 @@ mod v2 {
             false,
         )?;
 
-        // Cross-check init TDINFO against MROWNER/MROWNERCONFIG from
-        // verified quote supplemental data, verify init TDINFO integrity
-        // against ServtdExt hash, and allowlist-gate init measurements.
-        //
-        // Skipped when running with mock quotes/reports that carry static
-        // test data — the mock init TDINFO does not have measurements
-        // that match the policy servtd_tcb_mapping.
-        #[cfg(not(any(
-            feature = "AzCVMEmu",
-            feature = "test_mock_report",
-            feature = "use-mock-quote"
-        )))]
-        {
-            verify_peer_init_tdinfo_against_suppl_data(init_tdinfo, &suppl_data)?;
-
-            // Verify init TDINFO integrity against ServtdExt hash
-            let servtd_ext_obj =
-                ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
-            let init_td_info = verify_init_tdinfo(init_tdinfo, &servtd_ext_obj)?;
-
-            let slice = |range: core::ops::Range<usize>| {
-                suppl_data.get(range).ok_or(PolicyError::InvalidParameter)
-            };
-            let peer = engine_measurements(
-                slice(Report::R_MIGTD_MRTD)?,
-                slice(Report::R_MIGTD_RTMR0)?,
-                slice(Report::R_MIGTD_RTMR1)?,
-            );
-            // migtdengine check: enginesvnsrc >= enginesvninit
-            policy
-                .servtd_tcb_mapping
-                .check_engine_not_older(&peer, &engine_measurements_of(&init_td_info))?;
-        }
+        let servtd_ext =
+            ServtdExt::read_from_bytes(servtd_ext_src).ok_or(PolicyError::InvalidParameter)?;
+        verify_init_servtd_svn_order(
+            &verified_policy_src.servtd_tcb_mapping,
+            &servtd_ext.init_servtd_info_hash,
+            &servtd_ext.init_attr,
+            &servtd_ext.cur_servtd_info_hash,
+            &servtd_ext.cur_servtd_attr,
+        )?;
 
         Ok(suppl_data)
     }
@@ -921,285 +677,108 @@ mod v2 {
         assert_eq!(iso_date, "2024-01-01T00:00:00Z");
     }
 
-    #[test]
-    fn test_verify_servtd_info_hash_valid() {
-        // Build a 512-byte TDINFO_STRUCT with known content
-        let mut tdinfo_bytes = [0u8; 512];
-        tdinfo_bytes[0..8].copy_from_slice(&[0x01; 8]); // attributes
-        tdinfo_bytes[8..16].copy_from_slice(&[0x02; 8]); // xfam
-
-        // Compute expected hash: SHA384(tdinfo)
-        let servtd_attr: u64 = 0;
-        let expected_hash = digest_sha384(&tdinfo_bytes).unwrap();
-
-        let result = verify_servtd_info_hash(&tdinfo_bytes, servtd_attr, &expected_hash);
-        assert!(result.is_ok());
-        let td_info = result.unwrap();
-        assert_eq!(td_info.attributes, [0x01; 8]);
-        assert_eq!(td_info.xfam, [0x02; 8]);
+    #[cfg(test)]
+    fn continuity_mapping() -> TdTcbMapping {
+        TdTcbMapping {
+            id: String::from("TEST"),
+            version: 1,
+            issue_date: String::new(),
+            next_update: String::new(),
+            svn_mappings: [(0x11u8, 1u16), (0x22, 2)]
+                .iter()
+                .map(|(tag, isvsvn)| SvnMapping {
+                    td_measurements: Measurements::new_from_bytes(&[*tag; SHA384_DIGEST_SIZE]),
+                    isvsvn: *isvsvn,
+                })
+                .collect(),
+        }
     }
 
     #[test]
-    fn test_verify_servtd_info_hash_wrong_hash() {
-        let tdinfo_bytes = [0u8; 512];
-        let wrong_hash = [0xFFu8; 48];
-        let result = verify_servtd_info_hash(&tdinfo_bytes, 0, &wrong_hash);
-        assert!(result.is_err());
+    fn init_servtd_svn_must_not_exceed_current_svn() {
+        let mapping = continuity_mapping();
+        assert!(
+            verify_init_servtd_svn_order(&mapping, &[0x11; 48], &[0; 8], &[0x22; 48], &[0; 8],)
+                .is_ok()
+        );
+        assert!(matches!(
+            verify_init_servtd_svn_order(&mapping, &[0x22; 48], &[0; 8], &[0x11; 48], &[0; 8],),
+            Err(PolicyError::SvnMismatch)
+        ));
     }
 
     #[test]
-    fn test_verify_servtd_info_hash_short_input() {
-        let short = [0u8; 256]; // too small for TdInfo (512 bytes)
-        let result = verify_servtd_info_hash(&short, 0, &[0u8; 48]);
-        assert!(matches!(result, Err(PolicyError::InvalidParameter)));
+    fn init_servtd_svn_lookup_misses_fail_closed() {
+        let mapping = continuity_mapping();
+        assert!(matches!(
+            verify_init_servtd_svn_order(&mapping, &[0x33; 48], &[0; 8], &[0x22; 48], &[0; 8],),
+            Err(PolicyError::UnqualifiedMigTdInfo)
+        ));
+        assert!(matches!(
+            verify_init_servtd_svn_order(&mapping, &[0x11; 48], &[0; 8], &[0x33; 48], &[0; 8],),
+            Err(PolicyError::UnqualifiedMigTdInfo)
+        ));
     }
 
     #[test]
-    fn test_verify_servtd_info_hash_with_ignore_attributes() {
-        // Build TdInfo with non-zero attributes
-        let mut tdinfo_bytes = [0u8; 512];
-        tdinfo_bytes[0..8].copy_from_slice(&[0xFF; 8]); // attributes
-
-        // Compute hash with attributes zeroed (IGNORE_ATTRIBUTES flag)
-        let servtd_attr = SERVTD_ATTR_IGNORE_ATTRIBUTES;
-        let mut zeroed = tdinfo_bytes;
-        zeroed[0..8].fill(0); // zero attributes for hash computation
-        let expected_hash = digest_sha384(&zeroed).unwrap();
-
-        let result = verify_servtd_info_hash(&tdinfo_bytes, servtd_attr, &expected_hash);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_verify_servtd_info_hash_with_ignore_mrowner() {
-        // Build TdInfo with non-zero mrowner at offset 112..160
-        let mut tdinfo_bytes = [0u8; 512];
-        tdinfo_bytes[112..160].copy_from_slice(&[0xAA; 48]); // mrowner
-
-        // Compute hash with mrowner zeroed (IGNORE_MROWNER flag)
-        let servtd_attr = SERVTD_ATTR_IGNORE_MROWNER;
-        let mut zeroed = tdinfo_bytes;
-        zeroed[112..160].fill(0);
-        let expected_hash = digest_sha384(&zeroed).unwrap();
-
-        let result = verify_servtd_info_hash(&tdinfo_bytes, servtd_attr, &expected_hash);
-        assert!(result.is_ok());
-        // mrowner should be zeroed in the returned TdInfo
-        assert_eq!(result.unwrap().mrowner, [0u8; 48]);
-    }
-
-    #[test]
-    fn test_verify_servtd_info_hash_with_combined_ignore_flags() {
-        // Build TdInfo with non-zero content in multiple fields
-        let mut tdinfo_bytes = [0u8; 512];
-        tdinfo_bytes[0..8].copy_from_slice(&[0xFF; 8]); // attributes (masked)
-        tdinfo_bytes[8..16].copy_from_slice(&[0xEE; 8]); // xfam (masked)
-        tdinfo_bytes[16..64].copy_from_slice(&[0xBB; 48]); // mrtd (not masked)
-        tdinfo_bytes[112..160].copy_from_slice(&[0xCC; 48]); // mrowner (not masked)
-
-        // Compute hash with attributes and xfam zeroed, mrtd and mrowner intact
-        let servtd_attr = SERVTD_ATTR_IGNORE_ATTRIBUTES | SERVTD_ATTR_IGNORE_XFAM;
-        let mut zeroed = tdinfo_bytes;
-        zeroed[0..8].fill(0);
-        zeroed[8..16].fill(0);
-        let expected_hash = digest_sha384(&zeroed).unwrap();
-
-        let result = verify_servtd_info_hash(&tdinfo_bytes, servtd_attr, &expected_hash);
-        assert!(result.is_ok());
-        let td_info = result.unwrap();
-        assert_eq!(td_info.attributes, [0u8; 8]);
-        assert_eq!(td_info.xfam, [0u8; 8]);
-        assert_eq!(td_info.mrtd, [0xBB; 48]);
-        assert_eq!(td_info.mrowner, [0xCC; 48]);
-    }
-
-    #[test]
-    fn test_get_rtmrs_from_tdinfo() {
-        use tdx_tdcall::tdreport::TdInfo;
-        let mut tdinfo_bytes = [0u8; 512];
-        // RTMR offsets in TdInfo: rtmr0 at 208, rtmr1 at 256, rtmr2 at 304, rtmr3 at 352
-        tdinfo_bytes[208..256].copy_from_slice(&[0x01; 48]); // rtmr0
-        tdinfo_bytes[256..304].copy_from_slice(&[0x02; 48]); // rtmr1
-        tdinfo_bytes[304..352].copy_from_slice(&[0x03; 48]); // rtmr2
-        tdinfo_bytes[352..400].copy_from_slice(&[0x04; 48]); // rtmr3
-
-        let td_info = unsafe {
-            let mut uninit = core::mem::MaybeUninit::<TdInfo>::uninit();
-            core::ptr::copy_nonoverlapping(
-                tdinfo_bytes.as_ptr(),
-                uninit.as_mut_ptr() as *mut u8,
-                size_of::<TdInfo>(),
-            );
-            uninit.assume_init()
+    fn source_mapping_can_authorize_release_unknown_to_destination() {
+        let source_mapping = continuity_mapping();
+        let destination_mapping = TdTcbMapping {
+            id: String::from("DESTINATION"),
+            version: 1,
+            issue_date: String::new(),
+            next_update: String::new(),
+            svn_mappings: [(0x11u8, 1u16), (0x33, 2)]
+                .iter()
+                .map(|(tag, isvsvn)| SvnMapping {
+                    td_measurements: Measurements::new_from_bytes(&[*tag; SHA384_DIGEST_SIZE]),
+                    isvsvn: *isvsvn,
+                })
+                .collect(),
         };
 
-        let rtmrs = get_rtmrs_from_tdinfo(&td_info).unwrap();
-        assert_eq!(rtmrs[0], [0x01; 48]);
-        assert_eq!(rtmrs[1], [0x02; 48]);
-        assert_eq!(rtmrs[2], [0x03; 48]);
-        assert_eq!(rtmrs[3], [0x04; 48]);
-    }
-
-    // Build a 512-byte TDINFO_STRUCT with the supplied MROWNER bytes and an
-    // MROWNERCONFIG whose first 4 LE bytes encode `svn` and trailing 44 are
-    // zero (the well-formed shape defined by GHCI 1.5).
-    fn make_init_tdinfo(mrowner: &[u8; 48], svn: u32) -> [u8; 512] {
-        let mut bytes = [0u8; 512];
-        bytes[112..160].copy_from_slice(mrowner); // mrowner
-        let svn_le = svn.to_le_bytes();
-        bytes[160..164].copy_from_slice(&svn_le);
-        // bytes[164..208] already zero (trailing of mrownerconfig)
-        bytes
-    }
-
-    fn make_peer_mrownerconfig(svn: u32) -> [u8; 48] {
-        let mut buf = [0u8; 48];
-        buf[..4].copy_from_slice(&svn.to_le_bytes());
-        buf
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_match_equal_svn() {
-        let mrowner = [0xAAu8; 48];
-        let init = make_init_tdinfo(&mrowner, 5);
-        let peer_mrownerconfig = make_peer_mrownerconfig(5);
-
-        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_init_svn_less_than_peer() {
-        let mrowner = [0xAAu8; 48];
-        let init = make_init_tdinfo(&mrowner, 3);
-        let peer_mrownerconfig = make_peer_mrownerconfig(7);
-
-        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_init_svn_greater_rejected() {
-        let mrowner = [0xAAu8; 48];
-        let init = make_init_tdinfo(&mrowner, 10);
-        let peer_mrownerconfig = make_peer_mrownerconfig(5);
-
-        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
-        assert!(matches!(result, Err(PolicyError::SvnMismatch)));
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_mrowner_mismatch_rejected() {
-        let init_mrowner = [0xAAu8; 48];
-        let peer_mrowner = [0xBBu8; 48];
-        let init = make_init_tdinfo(&init_mrowner, 5);
-        let peer_mrownerconfig = make_peer_mrownerconfig(5);
-
-        let result =
-            verify_peer_init_tdinfo_against_owner(&init, &peer_mrowner, &peer_mrownerconfig);
-        assert!(matches!(result, Err(PolicyError::PolicyHashMismatch)));
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_malformed_mrownerconfig_rejected() {
-        let mrowner = [0xAAu8; 48];
-        let mut init = make_init_tdinfo(&mrowner, 5);
-        // Corrupt the trailing-zero portion of MROWNERCONFIG (bytes 164..208).
-        init[200] = 0x01;
-        let peer_mrownerconfig = make_peer_mrownerconfig(5);
-
-        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
-        assert!(matches!(result, Err(PolicyError::InvalidParameter)));
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_malformed_peer_mrownerconfig_rejected() {
-        let mrowner = [0xAAu8; 48];
-        let init = make_init_tdinfo(&mrowner, 5);
-        let mut peer_mrownerconfig = make_peer_mrownerconfig(5);
-        // Corrupt the trailing-zero portion of the peer's MROWNERCONFIG.
-        peer_mrownerconfig[20] = 0x01;
-
-        let result = verify_peer_init_tdinfo_against_owner(&init, &mrowner, &peer_mrownerconfig);
-        assert!(matches!(result, Err(PolicyError::InvalidParameter)));
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_wrong_lengths_rejected() {
-        let mrowner = [0xAAu8; 48];
-        let init = make_init_tdinfo(&mrowner, 5);
-        let peer_mrownerconfig = make_peer_mrownerconfig(5);
-
-        // Short init buffer
-        let short_init = &init[..256];
+        assert!(verify_init_servtd_svn_order(
+            &source_mapping,
+            &[0x11; 48],
+            &[0; 8],
+            &[0x22; 48],
+            &[0; 8],
+        )
+        .is_ok());
         assert!(matches!(
-            verify_peer_init_tdinfo_against_owner(short_init, &mrowner, &peer_mrownerconfig),
-            Err(PolicyError::InvalidParameter)
-        ));
-
-        // Wrong mrowner length
-        let short_mrowner = &mrowner[..32];
-        assert!(matches!(
-            verify_peer_init_tdinfo_against_owner(&init, short_mrowner, &peer_mrownerconfig),
-            Err(PolicyError::InvalidParameter)
-        ));
-
-        // Wrong mrownerconfig length
-        let short_mrownerconfig = &peer_mrownerconfig[..32];
-        assert!(matches!(
-            verify_peer_init_tdinfo_against_owner(&init, &mrowner, short_mrownerconfig),
-            Err(PolicyError::InvalidParameter)
-        ));
-    }
-
-    fn make_suppl_data(mrowner: &[u8; 48], svn: u32) -> Vec<u8> {
-        let mut suppl = alloc::vec![0u8; REPORT_DATA_SIZE];
-        suppl[Report::R_MIGTD_MROWNER].copy_from_slice(mrowner);
-        suppl[Report::R_MIGTD_MROWNERCONFIG][..4].copy_from_slice(&svn.to_le_bytes());
-        suppl
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_against_suppl_data_ok() {
-        let mrowner = [0xCDu8; 48];
-        let init = make_init_tdinfo(&mrowner, 3);
-        let suppl = make_suppl_data(&mrowner, 5);
-        assert!(verify_peer_init_tdinfo_against_suppl_data(&init, &suppl).is_ok());
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_against_suppl_data_short_buffer() {
-        let mrowner = [0xCDu8; 48];
-        let init = make_init_tdinfo(&mrowner, 3);
-        let short = alloc::vec![0u8; REPORT_DATA_SIZE - 1];
-        // Must return InvalidParameter, not panic, even though
-        // R_MIGTD_MROWNERCONFIG = 280..328 would otherwise slice OOB.
-        assert!(matches!(
-            verify_peer_init_tdinfo_against_suppl_data(&init, &short),
-            Err(PolicyError::InvalidParameter)
+            verify_init_servtd_svn_order(
+                &destination_mapping,
+                &[0x11; 48],
+                &[0; 8],
+                &[0x22; 48],
+                &[0; 8],
+            ),
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
     }
 
     #[test]
-    fn test_verify_peer_init_tdinfo_against_suppl_data_mrowner_mismatch() {
-        let init_mrowner = [0xCDu8; 48];
-        let peer_mrowner = [0xEEu8; 48];
-        let init = make_init_tdinfo(&init_mrowner, 3);
-        let suppl = make_suppl_data(&peer_mrowner, 5);
+    fn one_hash_mapping_rejects_masked_servtd_info_hashes() {
+        let mapping = continuity_mapping();
         assert!(matches!(
-            verify_peer_init_tdinfo_against_suppl_data(&init, &suppl),
-            Err(PolicyError::PolicyHashMismatch)
+            verify_init_servtd_svn_order(
+                &mapping,
+                &[0x11; 48],
+                &1u64.to_le_bytes(),
+                &[0x22; 48],
+                &[0; 8],
+            ),
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
-    }
-
-    #[test]
-    fn test_verify_peer_init_tdinfo_against_suppl_data_svn_greater_rejected() {
-        let mrowner = [0xCDu8; 48];
-        let init = make_init_tdinfo(&mrowner, 7);
-        let suppl = make_suppl_data(&mrowner, 5);
         assert!(matches!(
-            verify_peer_init_tdinfo_against_suppl_data(&init, &suppl),
-            Err(PolicyError::SvnMismatch)
+            verify_init_servtd_svn_order(
+                &mapping,
+                &[0x11; 48],
+                &[0; 8],
+                &[0x22; 48],
+                &1u64.to_le_bytes(),
+            ),
+            Err(PolicyError::UnqualifiedMigTdInfo)
         ));
     }
 }
