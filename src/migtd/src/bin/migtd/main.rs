@@ -339,11 +339,19 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
         }
     };
 
-    // Measure and extend the policy issuer chain to RTMR
+    let signer_anchor = migtd::policy::compute_signer_anchor_from_chain_pem(policy_issuer_chain)
+        .unwrap_or_else(|e| {
+            log::error!("Failed to compute policy signer anchor: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Failed to compute policy signer anchor",
+            );
+        });
+
     let _ = event_log::write_tagged_event_log(
         event_log,
         MR_INDEX_POLICY_ISSUER_CHAIN,
-        policy_issuer_chain,
+        &signer_anchor,
         TAGGED_EVENT_ID_POLICY_ISSUER_CHAIN,
         policy_issuer_chain,
     )

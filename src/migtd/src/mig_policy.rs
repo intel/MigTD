@@ -426,6 +426,20 @@ mod v2 {
         )
         .log_err("Peer identity cert chain validation")
         .map_err(|_| PolicyError::PeerCertChainValidation)?;
+
+        crypto::verify_signer_chain_not_revoked(
+            verified_policy.policy_issuer_chain.as_bytes(),
+            local_policy.servtd_crl.as_bytes(),
+        )
+        .log_err("Peer policy signer revocation check")
+        .map_err(|_| PolicyError::SignerRevoked)?;
+        crypto::verify_signer_chain_not_revoked(
+            verified_policy.servtd_identity_issuer_chain.as_bytes(),
+            local_policy.servtd_crl.as_bytes(),
+        )
+        .log_err("Peer identity signer revocation check")
+        .map_err(|_| PolicyError::SignerRevoked)?;
+
         // 4. Check the integrity of the policy with its event log
         check_policy_integrity(mig_policy, &events)?;
 
@@ -495,6 +509,7 @@ mod v2 {
             .map_err(|_| PolicyError::InvalidCollateral)?;
         let root_ca_crl_num = get_crl_number(collaterals.root_ca_crl.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
+        let servtd_crl_num = servtd_crl_num_from_policy(policy)?;
 
         Ok(PolicyEvaluationInfo {
             tee_tcb_svn: None,
@@ -507,6 +522,7 @@ mod v2 {
             migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
             pck_crl_num: Some(pck_crl_num),
             root_ca_crl_num: Some(root_ca_crl_num),
+            servtd_crl_num: Some(servtd_crl_num),
         })
     }
 
@@ -532,7 +548,12 @@ mod v2 {
             migtd_tcb_status: migtd_tcb.map(|tcb| tcb.tcb_status.clone()),
             pck_crl_num: None,
             root_ca_crl_num: None,
+            servtd_crl_num: Some(servtd_crl_num_from_policy(policy)?),
         })
+    }
+
+    fn servtd_crl_num_from_policy(policy: &VerifiedPolicy) -> Result<u32, PolicyError> {
+        get_crl_number(policy.servtd_crl.as_bytes()).map_err(|_| PolicyError::InvalidCollateral)
     }
 
     fn get_tcb_date_and_status_from_suppl_data(

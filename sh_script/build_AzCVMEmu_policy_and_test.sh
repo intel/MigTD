@@ -339,6 +339,8 @@ generate_certificates() {
     # Keep backward-compatible aliases (default to "a")
     cp "$output_dir/policy_signing_a_pkcs8.key" "$output_dir/policy_signing_pkcs8.key"
     cp "$output_dir/policy_issuer_chain_a.pem" "$output_dir/policy_issuer_chain.pem"
+    bash "$PROJECT_ROOT/sh_script/test/generate_empty_servtd_crl.sh" \
+        "$output_dir/root_ca.pem" "$output_dir/root_ca.key" "$output_dir/servtd.crl.pem"
 }
 
 # Parse command line arguments
@@ -665,7 +667,7 @@ echo
 #
 echo -e "${BLUE}=== Step 3: Updating TD Identity Template ===${NC}"
 jq -c ".xfam = \"$XFAM\" | .attributes = \"$ATTRIBUTES\" | .mrConfigId = \"$MR_CONFIG_ID\" | \
-.mrOwner = \"$MR_OWNER\" | .mrOwnerConfig = \"$MR_OWNER_CONFIG\" | .mrsigner = \"$MRSIGNER\" | \
+.mrOwner = \"$MR_OWNER\" | .mrOwnerConfig = \"$MR_OWNER_CONFIG\" | \
 .isvProdId = $ISV_PROD_ID | .tcbLevels[0].tcb.isvsvn = $ISVSVN" \
 "$TD_IDENTITY_TEMPLATE" | tr -d '\n' > "$TD_IDENTITY_UPDATED"
 
@@ -765,6 +767,7 @@ build_signed_policy_variant() {
         --identity "$td_identity_signed" \
         --identity-chain "$identity_chain" \
         --mapping "$tcb_mapping_signed" \
+        --servtd-crl "$CERT_DIR/servtd.crl.pem" \
         --output "$servtd_collateral"
 
     "$TOOLS_DIR/migtd-policy-generator" v2 \

@@ -2,19 +2,20 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use crate::x509::{Extension, Time};
+use crate::x509::{AlgorithmIdentifier, Extension, Time};
 use crate::Error;
 use alloc::vec::Vec;
-use der::asn1::{AnyRef, BitStringRef, ObjectIdentifier};
+use der::asn1::{AnyRef, BitStringRef, ObjectIdentifier, UintRef};
 use der::{Choice, Decode, Encode, ErrorKind, Header, Sequence, Tag, TagMode, TagNumber, Tagged};
 use pki_types::{pem::PemObject, CertificateRevocationListDer};
 
 const CRL_NUMBER_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.20");
+const ECDSA_WITH_SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
 
 #[derive(Sequence)]
 pub struct Crl<'a> {
     tbs_cert_list: TbsCertList<'a>,
-    signature_algorithm: AnyRef<'a>,
+    signature_algorithm: AlgorithmIdentifier<'a>,
     signature_value: BitStringRef<'a>,
 }
 
@@ -31,7 +32,7 @@ struct TbsCertList<'a> {
 
 #[derive(Sequence)]
 struct RevokedCertificate<'a> {
-    user_certificate: AnyRef<'a>,
+    user_certificate: UintRef<'a>,
     revocation_date: AnyRef<'a>,
     crl_entry_extensions: Option<AnyRef<'a>>,
 }
@@ -118,6 +119,59 @@ pub fn get_crl_number(crl: &[u8]) -> Result<u32, Error> {
     }
 
     Err(Error::CrlNumberNotFound)
+}
+
+fn crl_pem_to_der(crl: &[u8]) -> Result<Vec<u8>, Error> {
+    CertificateRevocationListDer::from_pem_slice(crl)
+        .map(|der| der.as_ref().to_vec())
+        .map_err(|_| Error::DecodePemCert)
+}
+
+pub fn get_crl_issuer_der(crl: &[u8]) -> Result<Vec<u8>, Error> {
+    let der = crl_pem_to_der(crl)?;
+    let crl = Crl::from_der(&der).map_err(|_| Error::ParseCertificate)?;
+    crl.tbs_cert_list
+        .issuer
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)
+}
+
+pub fn verify_crl_signature(crl: &[u8], issuer_public_key: &[u8]) -> Result<(), Error> {
+    let der = crl_pem_to_der(crl)?;
+    let crl = Crl::from_der(&der).map_err(|_| Error::ParseCertificate)?;
+
+    if crl.signature_algorithm.algorithm != ECDSA_WITH_SHA384_OID {
+        return Err(Error::UnsupportedAlgorithm);
+    }
+
+    let tbs = crl
+        .tbs_cert_list
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)?;
+    let signature = crl
+        .signature_value
+        .as_bytes()
+        .ok_or(Error::ParseCertificate)?;
+
+    crate::ecdsa::ecdsa_verify_with_algorithm(
+        issuer_public_key,
+        &tbs,
+        signature,
+        &crate::ecdsa::ECDSA_P384_SHA384_ASN1,
+    )
+    .map_err(|_| Error::EcdsaVerify)
+}
+
+pub fn is_serial_revoked(crl: &[u8], serial: &[u8]) -> Result<bool, Error> {
+    let der = crl_pem_to_der(crl)?;
+    let crl = Crl::from_der(&der).map_err(|_| Error::ParseCertificate)?;
+
+    Ok(crl
+        .tbs_cert_list
+        .revoked_certificates
+        .iter()
+        .flatten()
+        .any(|entry| entry.user_certificate.as_bytes() == serial))
 }
 
 #[cfg(test)]
