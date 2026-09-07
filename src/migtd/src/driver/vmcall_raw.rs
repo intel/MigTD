@@ -16,8 +16,6 @@ pub fn vmcall_raw_device_init() {
 
 #[track_caller]
 pub fn panic_with_guest_crash_reg_report(errorcode: u64, msg: &[u8]) -> ! {
-    #[cfg(not(feature = "vmcall-raw"))]
-    let _ = errorcode;
     let location = core::panic::Location::caller();
     let file = location.file();
     let line = location.line();
@@ -26,6 +24,16 @@ pub fn panic_with_guest_crash_reg_report(errorcode: u64, msg: &[u8]) -> ! {
     } else {
         " non-UTF8 message".to_string()
     };
+
+    // Always surface the fatal condition on the serial port via td-logger,
+    // independent of any surrounding logging that the caller may have done.
+    log::error!(
+        "MigTD fatal (code=0x{:x}): {} at {}:{}\n",
+        errorcode,
+        panic_message,
+        file,
+        line
+    );
 
     #[cfg(feature = "vmcall-raw")]
     {
