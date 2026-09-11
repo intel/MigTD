@@ -1381,6 +1381,7 @@ dependencies = [
  "ring",
  "rust_std_stub",
  "scroll",
+ "serde_json",
  "sha2 0.10.8",
  "spdmlib",
  "spin 0.9.9",
