@@ -7,7 +7,7 @@ use async_io::{AsyncRead, AsyncWrite};
 use crypto::{
     ecdsa::EcdsaPk,
     hash::digest_sha384,
-    tls::{SecureChannel, TlsConfig},
+    tls::{SecureChannel, TlsConfig, TLS_BUFFER_SIZE},
     x509::{
         AlgorithmIdentifier, AnyRef, BitStringRef, Certificate, CertificateBuilder, Decode, Encode,
         ExtendedKeyUsage, Extension, Extensions, Tag,
@@ -762,6 +762,25 @@ fn verify_client_cert(cert: &[u8], quote: &[u8]) -> core::result::Result<(), Cry
     verify_peer_cert(false, cert, quote)
 }
 
+// A certificate larger than the whole TLS input buffer can never be received.
+const MAX_PEER_CERTIFICATE_SIZE: usize = TLS_BUFFER_SIZE;
+
+fn parse_peer_certificate(cert: &[u8]) -> core::result::Result<Certificate, CryptoError> {
+    if cert.len() > MAX_PEER_CERTIFICATE_SIZE {
+        log::error!(
+            "Certificate too large: {} bytes (max {})\n",
+            cert.len(),
+            MAX_PEER_CERTIFICATE_SIZE
+        );
+        return Err(CryptoError::ParseCertificate);
+    }
+
+    Certificate::from_der(cert).map_err(|e| {
+        log::error!("Failed to parse certificate from DER. Error: {:?}\n", e);
+        CryptoError::ParseCertificate
+    })
+}
+
 #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
 mod verify {
     use super::*;
@@ -782,10 +801,7 @@ mod verify {
             log::error!("Mutual attestation error {:?}.\n", e);
             CryptoError::TlsVerifyPeerCert(MUTUAL_ATTESTATION_ERROR.to_string())
         })?;
-        let cert = Certificate::from_der(cert).map_err(|e| {
-            log::error!("Failed to parse certificate from DER. Error: {:?}\n", e);
-            CryptoError::ParseCertificate
-        })?;
+        let cert = parse_peer_certificate(cert)?;
         let extensions = cert.tbs_certificate.extensions.as_ref().ok_or_else(|| {
             log::error!("Failed to get certificate extensions.\n");
             CryptoError::ParseCertificate
@@ -850,10 +866,7 @@ mod verify {
         cert: &[u8],
         peer_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
-        let cert = Certificate::from_der(cert).map_err(|_| {
-            log::error!("Failed to parse certificate from DER.\n");
-            CryptoError::ParseCertificate
-        })?;
+        let cert = parse_peer_certificate(cert)?;
 
         let extensions = cert.tbs_certificate.extensions.as_ref().ok_or_else(|| {
             log::error!("Failed to get certificate extensions.\n");
@@ -915,10 +928,7 @@ mod verify {
         cert: &[u8],
         peer_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
-        let cert = Certificate::from_der(cert).map_err(|_| {
-            log::error!("Failed to parse certificate from DER.\n");
-            CryptoError::ParseCertificate
-        })?;
+        let cert = parse_peer_certificate(cert)?;
 
         let extensions = cert.tbs_certificate.extensions.as_ref().ok_or_else(|| {
             log::error!("Failed to get certificate extensions.\n");
@@ -994,10 +1004,7 @@ mod verify {
         cert: &[u8],
         peer_data: &[u8],
     ) -> core::result::Result<(), CryptoError> {
-        let cert = Certificate::from_der(cert).map_err(|_| {
-            log::error!("Failed to parse certificate from DER.\n");
-            CryptoError::ParseCertificate
-        })?;
+        let cert = parse_peer_certificate(cert)?;
 
         let extensions = cert.tbs_certificate.extensions.as_ref().ok_or_else(|| {
             log::error!("Failed to get certificate extensions.\n");
@@ -1192,7 +1199,7 @@ mod verify {
         cert: &[u8],
         _quote_local: &[u8],
     ) -> core::result::Result<(), CryptoError> {
-        let cert = Certificate::from_der(cert).map_err(|_| CryptoError::ParseCertificate)?;
+        let cert = parse_peer_certificate(cert)?;
 
         let extensions = cert
             .tbs_certificate
