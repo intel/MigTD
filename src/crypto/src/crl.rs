@@ -177,6 +177,84 @@ pub fn is_serial_revoked(crl: &[u8], serial: &[u8]) -> Result<bool, Error> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::crl_test_data as fixtures;
+
+    fn public_key(chain_pem: &[u8]) -> Vec<u8> {
+        let chain = crate::extract_cert_chain_from_pem(chain_pem).unwrap();
+        let certificate = crate::x509::Certificate::from_der(chain[0].as_ref()).unwrap();
+        crate::extract_public_key_from_cert(&certificate).unwrap()
+    }
+
+    #[test]
+    fn test_servtd_crl_signature() {
+        let issuer_key = public_key(fixtures::ISSUER_CERT);
+        for crl in [
+            fixtures::EMPTY_CRL,
+            fixtures::REVOKED_POLICY_CRL,
+            fixtures::REVOKED_IDENTITY_CRL,
+            fixtures::NO_NUMBER_CRL,
+        ] {
+            verify_crl_signature(crl, &issuer_key).unwrap();
+        }
+        verify_crl_signature(
+            fixtures::REVOKED_ISSUER_CRL,
+            &public_key(fixtures::ROOT_CERT),
+        )
+        .unwrap();
+        verify_crl_signature(fixtures::ROOT_EMPTY_CRL, &public_key(fixtures::ROOT_CERT)).unwrap();
+        verify_crl_signature(fixtures::NON_CA_CRL, &public_key(fixtures::POLICY_CHAIN)).unwrap();
+
+        assert!(matches!(
+            verify_crl_signature(fixtures::TAMPERED_CRL, &issuer_key),
+            Err(Error::EcdsaVerify)
+        ));
+        assert!(matches!(
+            verify_crl_signature(fixtures::EMPTY_CRL, &public_key(fixtures::ROOT_CERT)),
+            Err(Error::EcdsaVerify)
+        ));
+    }
+
+    #[test]
+    fn test_servtd_crl_issuer() {
+        let issuer_der = crate::pem_cert_to_der(fixtures::ISSUER_CERT).unwrap();
+        let issuer = crate::x509::Certificate::from_der(issuer_der.as_ref()).unwrap();
+        let subject = issuer.tbs_certificate.subject.to_der().unwrap();
+
+        assert_eq!(get_crl_issuer_der(fixtures::EMPTY_CRL).unwrap(), subject);
+        assert_ne!(
+            get_crl_issuer_der(fixtures::UNRELATED_CRL).unwrap(),
+            subject
+        );
+    }
+
+    #[test]
+    fn test_servtd_crl_serials() {
+        assert!(is_serial_revoked(fixtures::REVOKED_POLICY_CRL, &[0x80]).unwrap());
+        assert!(!is_serial_revoked(fixtures::REVOKED_POLICY_CRL, &[0x81]).unwrap());
+        assert!(is_serial_revoked(fixtures::REVOKED_IDENTITY_CRL, &[0x81]).unwrap());
+        assert!(is_serial_revoked(fixtures::REVOKED_ISSUER_CRL, &[2]).unwrap());
+        assert!(!is_serial_revoked(fixtures::EMPTY_CRL, &[0x80]).unwrap());
+
+        assert_eq!(get_crl_number(fixtures::EMPTY_CRL).unwrap(), 7);
+        assert_eq!(get_crl_number(fixtures::REVOKED_POLICY_CRL).unwrap(), 8);
+        assert!(matches!(
+            get_crl_number(fixtures::NO_NUMBER_CRL),
+            Err(Error::CrlNumberNotFound)
+        ));
+    }
+
+    #[test]
+    fn test_servtd_crl_rejects_empty_input() {
+        assert!(matches!(get_crl_issuer_der(b""), Err(Error::DecodePemCert)));
+        assert!(matches!(
+            verify_crl_signature(b"", &public_key(fixtures::ISSUER_CERT)),
+            Err(Error::DecodePemCert)
+        ));
+        assert!(matches!(
+            is_serial_revoked(b"", &[0x80]),
+            Err(Error::DecodePemCert)
+        ));
+    }
 
     #[test]
     fn test_get_crl_number() {
