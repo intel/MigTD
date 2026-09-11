@@ -313,8 +313,8 @@ fn get_policy_and_measure(event_log: &mut [u8]) {
 
 #[cfg(feature = "policy_v2")]
 fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
-    // Signer-anchor source from CFV: the 48-byte anchor slot (CoRIM-only
-    // enrollment) when present, else the legacy policy issuer chain PEM.
+    // Signer-anchor source from CFV: the direct 48-byte anchor when present,
+    // else the policy issuer chain PEM.
     let anchor_source = match config::get_signer_anchor_source() {
         Some(anchor_source) => anchor_source,
         None => {
@@ -326,9 +326,9 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
         }
     };
 
-    // RTMR1 is extended with the signer anchor, not the full PEM chain. The
-    // anchor is derived from the root certificate and leaf subject, or read
-    // directly from the 48-byte CoRIM-only enrollment slot.
+    // RTMR1 measures the signer anchor, not the full PEM chain. Derive the
+    // anchor from the root certificate hash and dedicated leaf EKU OID, or
+    // load it directly from the 48-byte signer-anchor slot.
     let signer_anchor = match migtd::policy::resolve_signer_anchor(anchor_source) {
         Ok(a) => a,
         Err(e) => {

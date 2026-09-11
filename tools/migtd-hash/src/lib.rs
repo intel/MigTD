@@ -348,7 +348,7 @@ fn rtmr1(
         ))?;
 
         // v2: extend with SHA384(signer_anchor), resolving either the direct
-        // 48-byte CoRIM-only enrollment or the root+leaf-subject PEM form.
+        // 48-byte CoRIM-only enrollment or the root+dedicated-leaf-EKU PEM form.
         let anchor = policy::resolve_signer_anchor(anchor_source)
             .map_err(|e| anyhow!("Failed to resolve signer anchor: {:?}", e))?;
         rtmr1.extend_with_raw_data(&anchor)?;

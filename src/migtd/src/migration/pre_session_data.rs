@@ -378,12 +378,12 @@ pub(crate) type PeerData<'a> = (&'a [u8], &'a [u8], Option<&'a [u8]>);
 /// Encode `(policy, issuer_chain, servtd_corim)` into the peer-data blob.
 ///
 /// Format: `[u32 LE policy_len][policy][u32 LE chain_len][issuer_chain]
-/// [u32 LE corim_len][servtd_corim]`. The trailing CoRIM field is a
-/// wire-compatible *addition*: `servtd_corim` may be empty (no CoRIM
-/// enrolled locally), in which case `corim_len` is sent as `0` so the
-/// decoder can distinguish "peer build understands the field but has
-/// nothing to send" from "peer build predates the field". Returns `None` if
-/// any length exceeds `u32::MAX`.
+/// [u32 LE corim_len][servtd_corim]`. The encoder always includes `corim_len`,
+/// using `0` when no CoRIM is enrolled. [`decode_peer_data`] also accepts
+/// legacy two-field blobs without this trailing length. Both forms yield
+/// `None` for the decoded CoRIM element; no format/capability marker is returned.
+///
+/// Returns `None` if any length exceeds `u32::MAX`.
 pub(crate) fn encode_peer_data(
     policy: &[u8],
     issuer_chain: &[u8],
