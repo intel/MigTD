@@ -914,6 +914,14 @@ mod test {
     use super::*;
     use alloc::{string::ToString, vec};
 
+    #[allow(dead_code)]
+    mod revocation_fixtures {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/test/policy_v2/revocation.rs"
+        ));
+    }
+
     #[test]
     fn test_parse_policy_data() {
         let policy = include_str!("../../test/policy_v2/policy_data.json");
@@ -952,6 +960,82 @@ mod test {
                 policy.verify(issuer_chain),
                 Err(PolicyError::InvalidPolicy)
             ));
+        }
+    }
+
+    #[test]
+    fn test_policy_accepts_empty_servtd_crl() {
+        use revocation_fixtures as fixtures;
+
+        let input = serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
+        let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+        let verified = policy.verify(fixtures::POLICY_CHAIN).unwrap();
+        assert_eq!(verified.servtd_crl.as_bytes(), fixtures::EMPTY_CRL);
+    }
+
+    #[test]
+    fn test_policy_requires_servtd_crl_number() {
+        use revocation_fixtures as fixtures;
+
+        let input = serde_json::to_vec(&fixtures::policy_json(fixtures::NO_NUMBER_CRL)).unwrap();
+        let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+        let result = policy.verify(fixtures::POLICY_CHAIN).map(|_| ());
+        assert!(
+            matches!(result, Err(PolicyError::InvalidCollateral)),
+            "{:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_policy_rejects_revoked_or_invalid_servtd_signers() {
+        use revocation_fixtures as fixtures;
+
+        for crl in [
+            fixtures::REVOKED_POLICY_CRL,
+            fixtures::REVOKED_IDENTITY_CRL,
+            fixtures::REVOKED_ISSUER_CRL,
+            fixtures::UNRELATED_CRL,
+            fixtures::TAMPERED_CRL,
+            fixtures::NON_CA_CRL,
+            b"",
+        ] {
+            let input = serde_json::to_vec(&fixtures::policy_json(crl)).unwrap();
+            let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+            assert!(matches!(
+                policy.verify(fixtures::POLICY_CHAIN),
+                Err(PolicyError::SignerRevoked)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_policy_requires_common_crl_issuer() {
+        use revocation_fixtures as fixtures;
+
+        for (crl, allowed) in [
+            (fixtures::EMPTY_CRL, false),
+            (fixtures::ROOT_EMPTY_CRL, true),
+        ] {
+            let mut policy = fixtures::policy_json(crl);
+            let collateral = &mut policy["policyData"]["servtdCollateral"];
+            collateral["servtdIdentityIssuerChain"] =
+                core::str::from_utf8(fixtures::IDENTITY_OTHER_ISSUER_CHAIN)
+                    .unwrap()
+                    .into();
+            collateral["servtdIdentity"] =
+                serde_json::from_slice(fixtures::SIGNED_IDENTITY_OTHER_ISSUER).unwrap();
+            let input = serde_json::to_vec(&policy).unwrap();
+            let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+
+            if allowed {
+                policy.verify(fixtures::POLICY_CHAIN).unwrap();
+            } else {
+                assert!(matches!(
+                    policy.verify(fixtures::POLICY_CHAIN),
+                    Err(PolicyError::SignerRevoked)
+                ));
+            }
         }
     }
 
