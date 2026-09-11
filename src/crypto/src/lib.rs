@@ -452,8 +452,14 @@ fn check_root_ca_match(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
+#[path = "../test/crl/fixtures.rs"]
+mod crl_test_data;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crl_test_data as fixtures;
 
     // Full 3-cert chain from key_gen.sh (leaf-to-root).
     // - Leaf:         CN=MigTD Info Issuer (NOT a CA — KeyUsage=digitalSignature only).
@@ -633,6 +639,76 @@ m07Y31+o+LpsZuEnlIETx/zemHA=
     fn test_cert_chain_verification() {
         let cert_chain = extract_cert_chain_from_pem(test_chain()).unwrap();
         assert!(verify_certificate_chain(&cert_chain).is_ok());
+    }
+
+    #[test]
+    fn test_signer_crl_accepts_unrevoked_chains() {
+        for (chain, crl) in [
+            (fixtures::POLICY_CHAIN, fixtures::EMPTY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::EMPTY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_POLICY_CRL),
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_IDENTITY_CRL),
+        ] {
+            verify_signer_chain_not_revoked(chain, crl).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_signer_crl_rejects_revoked_leaf_or_issuer() {
+        for (chain, crl) in [
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_POLICY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_IDENTITY_CRL),
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_ISSUER_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_ISSUER_CRL),
+        ] {
+            let result = verify_signer_chain_not_revoked(chain, crl);
+            assert!(
+                matches!(&result, Err(Error::CertChainVerification(message))
+                    if message.contains("is revoked")),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_signer_crl_rejects_untrusted_crls() {
+        for crl in [fixtures::UNRELATED_CRL, fixtures::NON_CA_CRL] {
+            let result = verify_signer_chain_not_revoked(fixtures::POLICY_CHAIN, crl);
+            assert!(
+                matches!(&result, Err(Error::CertChainVerification(message))
+                    if message.contains("CRL issuer does not match any CA")),
+                "{result:?}"
+            );
+        }
+        assert!(matches!(
+            verify_signer_chain_not_revoked(fixtures::POLICY_CHAIN, fixtures::TAMPERED_CRL,),
+            Err(Error::EcdsaVerify)
+        ));
+        assert!(matches!(
+            verify_signer_chain_not_revoked(
+                fixtures::IDENTITY_OTHER_ISSUER_CHAIN,
+                fixtures::EMPTY_CRL,
+            ),
+            Err(Error::CertChainVerification(message))
+                if message.contains("CRL issuer does not match any CA")
+        ));
+    }
+
+    #[test]
+    fn test_signer_verification_rejects_non_ca_issuers() {
+        let valid = extract_cert_chain_from_pem(test_chain()).unwrap();
+        verify_issuer_ca_constraints(&valid).unwrap();
+
+        let invalid = extract_cert_chain_from_pem(attacker_chain()).unwrap();
+        verify_certificate_chain(&invalid).unwrap();
+        assert!(matches!(
+            verify_issuer_ca_constraints(&invalid),
+            Err(Error::CertChainVerification(message)) if message.contains("non-CA issuer")
+        ));
+        assert!(matches!(
+            verify_cert_chain_and_signature(attacker_chain(), b"test", b""),
+            Err(Error::CertChainVerification(message)) if message.contains("non-CA issuer")
+        ));
     }
 
     #[test]

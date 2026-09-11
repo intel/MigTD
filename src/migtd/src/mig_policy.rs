@@ -427,23 +427,32 @@ mod v2 {
         .log_err("Peer identity cert chain validation")
         .map_err(|_| PolicyError::PeerCertChainValidation)?;
 
-        crypto::verify_signer_chain_not_revoked(
-            verified_policy.policy_issuer_chain.as_bytes(),
-            local_policy.servtd_crl.as_bytes(),
-        )
-        .log_err("Peer policy signer revocation check")
-        .map_err(|_| PolicyError::SignerRevoked)?;
-        crypto::verify_signer_chain_not_revoked(
-            verified_policy.servtd_identity_issuer_chain.as_bytes(),
-            local_policy.servtd_crl.as_bytes(),
-        )
-        .log_err("Peer identity signer revocation check")
-        .map_err(|_| PolicyError::SignerRevoked)?;
+        verify_peer_signer_revocation(&verified_policy, local_policy)?;
 
         // 4. Check the integrity of the policy with its event log
         check_policy_integrity(mig_policy, &events)?;
 
         Ok(verified_policy)
+    }
+
+    fn verify_peer_signer_revocation(
+        peer_policy: &VerifiedPolicy,
+        local_policy: &VerifiedPolicy,
+    ) -> Result<(), PolicyError> {
+        crypto::verify_signer_chain_not_revoked(
+            peer_policy.policy_issuer_chain.as_bytes(),
+            local_policy.servtd_crl.as_bytes(),
+        )
+        .log_err("Peer policy signer revocation check")
+        .map_err(|_| PolicyError::SignerRevoked)?;
+        crypto::verify_signer_chain_not_revoked(
+            peer_policy.servtd_identity_issuer_chain.as_bytes(),
+            local_policy.servtd_crl.as_bytes(),
+        )
+        .log_err("Peer identity signer revocation check")
+        .map_err(|_| PolicyError::SignerRevoked)?;
+
+        Ok(())
     }
 
     fn verify_quote(
@@ -697,6 +706,111 @@ mod v2 {
         let timestamp = 1704067200; // Corresponds to 2024-01-01T00:00:00Z
         let iso_date = unix_to_iso8601(timestamp).unwrap();
         assert_eq!(iso_date, "2024-01-01T00:00:00Z");
+    }
+
+    #[cfg(test)]
+    mod revocation_tests {
+        use super::*;
+
+        #[allow(dead_code)]
+        mod fixtures {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../policy/test/policy_v2/revocation.rs"
+            ));
+        }
+
+        fn load_policy<'a>(input: &'a [u8], chain: &[u8]) -> VerifiedPolicy<'a> {
+            RawPolicyData::deserialize_from_json(input)
+                .unwrap()
+                .verify(chain)
+                .unwrap()
+        }
+
+        #[test]
+        fn peer_crl_number_is_not_replaced_by_local_crl_number() {
+            let policy_input = |crl: &[u8]| {
+                let mut policy = fixtures::policy_json(crl);
+                policy["policyData"]["servtdCollateral"]["servtdTcbMapping"] =
+                    serde_json::from_slice(fixtures::SIGNED_MAPPING_ROTATED).unwrap();
+                serde_json::to_vec(&policy).unwrap()
+            };
+            let local_input = policy_input(fixtures::REVOKED_POLICY_CRL);
+            let peer_input = policy_input(fixtures::EMPTY_CRL);
+            let local = load_policy(&local_input, fixtures::ROTATED_POLICY_CHAIN);
+            let peer = load_policy(&peer_input, fixtures::ROTATED_POLICY_CHAIN);
+            verify_peer_signer_revocation(&peer, &local).unwrap();
+
+            let tdreport =
+                TdxReport::read_from_bytes(&[0; core::mem::size_of::<TdxReport>()]).unwrap();
+            let peer_data = setup_evaluation_data_with_tdreport(&tdreport, &peer).unwrap();
+            let local_data = setup_evaluation_data_with_tdreport(&tdreport, &local).unwrap();
+            assert_eq!(peer_data.servtd_crl_num, Some(7));
+            assert_eq!(local_data.servtd_crl_num, Some(8));
+        }
+
+        #[test]
+        fn peer_cannot_replace_local_revocations_with_its_own_crl() {
+            let mut local_json = fixtures::policy_json(fixtures::REVOKED_POLICY_CRL);
+            local_json["policyData"]["servtdCollateral"]["servtdTcbMapping"] =
+                serde_json::from_slice(fixtures::SIGNED_MAPPING_ROTATED).unwrap();
+            let local_input = serde_json::to_vec(&local_json).unwrap();
+            let local = load_policy(&local_input, fixtures::ROTATED_POLICY_CHAIN);
+
+            let peer_input =
+                serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
+            let peer = load_policy(&peer_input, fixtures::POLICY_CHAIN);
+            crypto::validate_peer_cert_chain(
+                local.policy_issuer_chain.as_bytes(),
+                peer.policy_issuer_chain.as_bytes(),
+            )
+            .unwrap();
+
+            assert!(matches!(
+                verify_peer_signer_revocation(&peer, &local),
+                Err(PolicyError::SignerRevoked)
+            ));
+        }
+
+        #[test]
+        fn peer_revocation_accepts_empty_local_crl() {
+            let peer_input =
+                serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
+            let peer = load_policy(&peer_input, fixtures::POLICY_CHAIN);
+
+            let local_input =
+                serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
+            let local = load_policy(&local_input, fixtures::POLICY_CHAIN);
+            verify_peer_signer_revocation(&peer, &local).unwrap();
+        }
+
+        #[test]
+        fn peer_identity_must_contain_the_local_crl_issuer() {
+            let local_input =
+                serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
+            let local = load_policy(&local_input, fixtures::POLICY_CHAIN);
+
+            let mut peer_json = fixtures::policy_json(fixtures::ROOT_EMPTY_CRL);
+            let collateral = &mut peer_json["policyData"]["servtdCollateral"];
+            collateral["servtdIdentityIssuerChain"] =
+                core::str::from_utf8(fixtures::IDENTITY_OTHER_ISSUER_CHAIN)
+                    .unwrap()
+                    .into();
+            collateral["servtdIdentity"] =
+                serde_json::from_slice(fixtures::SIGNED_IDENTITY_OTHER_ISSUER).unwrap();
+            let peer_input = serde_json::to_vec(&peer_json).unwrap();
+            let peer = load_policy(&peer_input, fixtures::POLICY_CHAIN);
+            crypto::validate_peer_cert_chain(
+                local.servtd_identity_issuer_chain.as_bytes(),
+                peer.servtd_identity_issuer_chain.as_bytes(),
+            )
+            .unwrap();
+
+            assert!(matches!(
+                verify_peer_signer_revocation(&peer, &local),
+                Err(PolicyError::SignerRevoked)
+            ));
+        }
     }
 
     #[cfg(test)]
