@@ -201,8 +201,8 @@ pub struct VerifiedPolicy<'a> {
     pub servtd_identity_issuer_chain: Option<String>,
     /// Authoritative signer CRL from top-level or legacy JSON collateral.
     pub servtd_crl: String,
-    /// The RTMR1 root-certificate plus leaf-subject signer anchor used to
-    /// authenticate peer collateral.
+    /// RTMR1 signer anchor binding the root certificate hash to the DER-encoded
+    /// dedicated leaf EKU OID, used to authenticate peer collateral.
     pub signer_anchor: [u8; SHA384_DIGEST_SIZE],
     /// Authenticated CoRIM; when set, it is the sole hash-to-SVN authority.
     #[cfg(feature = "servtd_corim")]
