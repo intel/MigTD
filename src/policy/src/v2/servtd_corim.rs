@@ -344,6 +344,72 @@ pub(super) mod test {
     /// Producer's (mislabeled) digest alg id — see the SHA-256/SHA-384 gap.
     const SHA256_ALG: i64 = 1;
 
+    const EMULATION_COSE: &[u8] = include_bytes!("../../test/policy_v2/corim/tcb_mapping.corim");
+    const EMULATION_ANCHOR: &[u8; SHA384_DIGEST_SIZE] =
+        include_bytes!("../../test/policy_v2/corim/signer_anchor.bin");
+    const EMULATION_CRL: &[u8] = include_bytes!("../../test/policy_v2/corim/servtd.crl.pem");
+    const EMULATION_HASH: &str =
+        "1ADC25055B5188A615FF0A2B4781C0E1F38D4369CA688C775EE321E142FBE4534C14EDE61D9C570967996F6C8E8F5F76";
+
+    #[test]
+    fn emulation_fixture_authenticates_the_chain_anchor_and_svn() {
+        let chain = include_bytes!("../../test/policy_v2/corim/issuer_chain.pem");
+        assert_eq!(
+            crate::v2::compute_signer_anchor_from_chain_pem(chain).unwrap(),
+            *EMULATION_ANCHOR
+        );
+        let corim = ServtdCorim::decode_signed(EMULATION_COSE, 0, EMULATION_ANCHOR).unwrap();
+        corim
+            .verify_signer_chain_not_revoked(EMULATION_CRL)
+            .unwrap();
+        let hash = crate::v2::hex_string_to_bytes(EMULATION_HASH).unwrap();
+        assert_eq!(corim.lookup_by_tdinfo_hash(&hash).unwrap().isvsvn, 1);
+    }
+
+    #[test]
+    fn emulation_fixture_rejects_wrong_anchors_and_tampered_signatures() {
+        let mut wrong_anchor = *EMULATION_ANCHOR;
+        wrong_anchor[0] ^= 1;
+        assert!(ServtdCorim::decode_signed(EMULATION_COSE, 0, &wrong_anchor).is_err());
+        let mut tampered = EMULATION_COSE.to_vec();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(ServtdCorim::decode_signed(&tampered, 0, EMULATION_ANCHOR).is_err());
+    }
+
+    #[test]
+    fn emulation_fixture_corim_uses_the_local_revocation_list() {
+        let corim = ServtdCorim::decode_signed(EMULATION_COSE, 0, EMULATION_ANCHOR).unwrap();
+        let revoked = include_bytes!("../../test/policy_v2/corim/revoked.crl.pem");
+        assert!(matches!(
+            corim.verify_signer_chain_not_revoked(revoked),
+            Err(PolicyError::SignerRevoked)
+        ));
+    }
+
+    #[test]
+    fn emulation_fixture_supports_direct_anchor_and_optional_json_identity() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../test/policy_v2/policy_v2.json")).unwrap();
+        value["policyData"]["servtdCollateral"] = serde_json::from_slice(include_bytes!(
+            "../../test/policy_v2/corim/servtd_collateral.json"
+        ))
+        .unwrap();
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let raw = crate::v2::RawPolicyData::deserialize_from_json(&bytes).unwrap();
+        let mut policy = raw.verify(EMULATION_ANCHOR).unwrap();
+        policy
+            .attach_verified_peer_servtd_corim(EMULATION_COSE)
+            .unwrap();
+        policy
+            .verify_signer_chains_not_revoked(EMULATION_CRL)
+            .unwrap();
+        let hash = crate::v2::hex_string_to_bytes(EMULATION_HASH).unwrap();
+        let lookup = policy.servtd_lookup_by_tdinfo_hash(&hash).unwrap();
+        assert_eq!(lookup.isvsvn, 1);
+        assert_eq!(lookup.tcb_status.as_deref(), Some("UpToDate"));
+        assert_eq!(lookup.tcb_date.as_deref(), Some("2024-01-01T00:00:00Z"));
+    }
+
     fn class() -> ClassMap {
         ClassMap {
             class_id: None,

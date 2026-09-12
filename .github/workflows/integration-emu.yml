@@ -78,6 +78,20 @@ jobs:
             test-command: "./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-policy-v2-test-logs"
 
+          - test-name: "CoRIM with Direct Signer Anchor"
+            test-type: "policy-v2-corim"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --policy-file ./target/emu-corim-policy.json --signer-anchor-file ./src/policy/test/policy_v2/corim/signer_anchor.bin --servtd-corim-file ./src/policy/test/policy_v2/corim/tcb_mapping.corim --mock-report --both --no-sudo --log-level info"
+            artifact-name: "policy-v2-corim-test-logs"
+
+          - test-name: "SPDM CoRIM with Optional JSON Identity"
+            test-type: "spdm-policy-v2-corim-identity"
+            install-jq: 'true'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --policy-v2 --policy-file ./target/emu-corim-policy.json --signer-anchor-file ./src/policy/test/policy_v2/corim/signer_anchor.bin --servtd-corim-file ./src/policy/test/policy_v2/corim/tcb_mapping.corim --mock-report --features spdm_attestation --both --no-sudo --log-level info"
+            artifact-name: "spdm-policy-v2-corim-identity-test-logs"
+
           - test-name: "SPDM Rebind Prepare (Skip RA)"
             test-type: "spdm-rebind-skip-ra"
             install-jq: 'true'
@@ -150,6 +164,13 @@ jobs:
           echo "Building MigTD with AzCVMEmu and test features for emulation testing..."
           cargo build --features "AzCVMEmu,test_disable_ra_and_accept_all" --no-default-features
 
+      - name: Test emulation artifact handling
+        if: matrix.test-type == 'policy-v2'
+        run: |
+          python3 sh_script/test_migtdemu_artifacts.py
+          cargo test --locked -p migtd -p td-shim-interface-emu --no-default-features --features migtd/AzCVMEmu,migtd/policy_v2,migtd/test_disable_ra_and_accept_all --lib servtd_files_are_loaded_by_guid
+          cargo test --locked -p policy --features policy_v2,servtd_corim emulation_fixture
+
       - name: Build MigTD for rebind skip-ra test
         if: matrix.test-type == 'rebind-skip-ra'
         run: |
@@ -197,6 +218,18 @@ jobs:
           echo "Policy files generated:"
           ls -la config/AzCVMEmu/policy_v2_signed*.json config/AzCVMEmu/policy_issuer_chain*.pem
 
+      - name: Prepare signed CoRIM policy
+        if: matrix.test-type == 'policy-v2-corim' || matrix.test-type == 'spdm-policy-v2-corim-identity'
+        run: |
+          identity_args=()
+          if [[ "${{ matrix.test-type }}" == "spdm-policy-v2-corim-identity" ]]; then
+            identity_args+=(--with-identity)
+          fi
+          python3 sh_script/prepare_AzCVMEmu_corim_policy.py \
+            --base config/AzCVMEmu/policy_v2_signed.json \
+            --output target/emu-corim-policy.json \
+            "${identity_args[@]}"
+
       - name: Run test
         id: test_run
         run: |
@@ -222,6 +255,11 @@ jobs:
             echo "test_status=failed" >> $GITHUB_OUTPUT
             exit $EXIT_CODE
           fi
+
+      - name: Check native artifact startup errors
+        if: matrix.test-type == 'policy-v2-corim'
+        run: |
+          MIGTD_EMU_BINARY="$PWD/target/release/migtd" python3 sh_script/test_migtdemu_artifacts.py
 
       - name: Check test outputs
         if: always()

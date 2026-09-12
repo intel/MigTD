@@ -999,6 +999,86 @@ mod v2 {
                     .unwrap();
             }
         }
+
+        #[cfg(feature = "servtd_corim")]
+        mod corim {
+            use super::*;
+
+            mod quote_fixture {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../deps/td-shim-AzCVMEmu/tdx-mock-data/src/mock_quote_data.rs"
+                ));
+            }
+
+            const COSE: &[u8] =
+                include_bytes!("../../policy/test/policy_v2/corim/tcb_mapping.corim");
+            const ANCHOR: &[u8] =
+                include_bytes!("../../policy/test/policy_v2/corim/signer_anchor.bin");
+            const CRL: &[u8] = include_bytes!("../../policy/test/policy_v2/corim/servtd.crl.pem");
+
+            fn corim_policy_input() -> Vec<u8> {
+                let mut value = policy_json();
+                let data = value["policyData"].as_object_mut().unwrap();
+                data.remove("servtdCollateral");
+                data.insert(
+                    "servtdCrl".into(),
+                    core::str::from_utf8(CRL).unwrap().into(),
+                );
+                serde_json::to_vec(&value).unwrap()
+            }
+
+            fn load_corim_policy(input: &[u8]) -> VerifiedPolicy<'_> {
+                let mut policy = load_policy(input, ANCHOR);
+                policy.attach_verified_peer_servtd_corim(COSE).unwrap();
+                policy.verify_signer_chains_not_revoked(CRL).unwrap();
+                policy
+            }
+
+            fn endorsed_tdreport() -> TdxReport {
+                assert_eq!(&quote_fixture::QUOTE[..2], &[4, 0]);
+                // The fixed v4 quote body shares the supplemental-data field offsets.
+                let quote_body = &quote_fixture::QUOTE[48..];
+                let td_info_range = Report::R_MIGTD_ATTR_TD.start..Report::R_MIGTD_RTMR3.end;
+                let mut bytes = [0; core::mem::size_of::<TdxReport>()];
+                let offset = core::mem::offset_of!(TdxReport, td_info);
+                bytes[offset..offset + td_info_range.len()]
+                    .copy_from_slice(&quote_body[td_info_range]);
+                TdxReport::read_from_bytes(&bytes).unwrap()
+            }
+
+            #[test]
+            fn signed_corim_miss_cannot_bypass_crl_only_policy() {
+                let input = corim_policy_input();
+                let policy = load_corim_policy(&input);
+                let mut tdreport = endorsed_tdreport();
+                let endorsed_hash = tdinfo_hash_from_td_info(&tdreport.td_info).unwrap();
+                assert!(policy
+                    .servtd_lookup_by_tdinfo_hash(&endorsed_hash)
+                    .is_some());
+
+                tdreport.td_info.mrtd[0] ^= 1;
+                assert_unendorsed(&policy, &tdreport);
+            }
+
+            #[test]
+            fn signed_corim_hit_keeps_svn_without_identity() {
+                let input = corim_policy_input();
+                let policy = load_corim_policy(&input);
+                assert!(!policy.requires_servtd_tcb_status());
+                let tdreport = endorsed_tdreport();
+                for result in evaluation_results(&policy, &tdreport) {
+                    let evaluation = result.unwrap();
+                    assert_eq!(evaluation.migtd_isvsvn, Some(1));
+                    assert!(evaluation.migtd_tcb_date.is_none());
+                    assert!(evaluation.migtd_tcb_status.is_none());
+                    policy
+                        .policy_data
+                        .evaluate_policy_common(&evaluation, &evaluation, false)
+                        .unwrap();
+                }
+            }
+        }
     }
 
     #[cfg(test)]
