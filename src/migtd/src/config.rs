@@ -40,12 +40,11 @@ pub const MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID: Guid = Guid::from_fields(
 //
 // FFS GUID of the 48-byte RTMR1 signer anchor
 // `A = SHA384(tag || 0x00 || H(rootDER) || 0x00 || H(leafSubjectDER))`.
-// This is the CoRIM-only
-// enrollment form: instead of enrolling the full policy issuer chain PEM (whose
-// only runtime role was to derive this anchor), the pipeline enrolls the
-// precomputed anchor directly. Measured into RTMR1 exactly like the PEM-derived
-// anchor, so the two forms are measurement-equivalent. When present it takes
-// precedence over `MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID`.
+// The pipeline can enroll this directly instead of the policy issuer chain PEM.
+// Retained JSON TCB mappings then need an explicit embedded mapping issuer chain.
+// Measured into RTMR1 exactly like the PEM-derived anchor, so the two forms are
+// measurement-equivalent. When present it takes precedence over
+// `MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID`.
 pub const MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID: Guid = Guid::from_fields(
     0x2B9D5A84,
     0x6F3C,
@@ -95,8 +94,8 @@ pub fn get_policy_issuer_chain() -> Option<&'static [u8]> {
     )
 }
 
-/// Read the 48-byte RTMR1 signer anchor from the CFV, if enrolled (the
-/// CoRIM-only enrollment form). Returns `None` when only the legacy policy
+/// Read the directly enrolled 48-byte RTMR1 signer anchor from the CFV.
+/// Returns `None` when only the legacy policy
 /// issuer chain PEM is enrolled; callers then fall back to
 /// [`get_policy_issuer_chain`] and derive the anchor from the PEM.
 pub fn get_signer_anchor() -> Option<&'static [u8]> {
