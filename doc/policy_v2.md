@@ -36,7 +36,8 @@ cargo build -p json-signer
 ```
 
 All v2 policies must include a CA-signed PEM CRL with a CRL-number extension
-in `servtdCollateral.servtdCrl`. If no certificates are revoked, provide a valid
+in `policyData.servtdCrl` or `policyData.servtdCollateral.servtdCrl`.
+If no certificates are revoked, provide a valid
 signed CRL with an empty revocation list, not an empty file or an omitted field.
 The CRL-issuing CA must be present in both the policy-signer chain (also used for
 the TCB mapping) and the identity-signer chain. An issuer mismatch fails closed.
@@ -85,7 +86,8 @@ An optional servTD signer CRL floor belongs in a `servtd` entry in the applicabl
 This constraint remains active in each evaluated servTD policy block when
 rebinding skips platform checks. The example requires the peer's CRL number to
 be at least the local CRL number; a missing peer or local number fails evaluation.
-The CRL itself remains in `servtdCollateral.servtdCrl`. `global.crl` accepts only
+The CRL itself remains in `servtdCrl` or `servtdCollateral.servtdCrl` within
+`policyData`. `global.crl` accepts only
 `pckCrlNum` and `rootCaCrlNum`; placing `servtdCrlNum` there is rejected.
 
 Migration and rebinding always require the peer's attested TDINFO hash to resolve
@@ -136,6 +138,32 @@ During startup:
 - The supplied policy issuer chain and canonical `policyData` are matched to
   their authenticated RTMR1 and RTMR2 event digests before the mapping is used.
 - Collaterals are used for quote verification and TCB evaluation.
+
+### Direct signer-anchor enrollment
+
+`--signer-anchor FILE` accepts exactly 48 raw bytes, not a hexadecimal string
+or a PEM chain. If both it and `--policy-issuer-chain` are supplied, only the
+anchor is enrolled; the unused PEM argument does not provide a runtime fallback.
+
+A policy retaining JSON `servtdCollateral` must contain a signed
+`servtdTcbMapping` and an explicit nonempty `servtdTcbMappingIssuerChain`.
+This remains required when a CoRIM is also enrolled, because JSON collateral
+is verified before the CoRIM is attached. JSON-only policies with that explicit
+chain do not require a CoRIM.
+
+Without JSON collateral, supply the signed CoRIM and retain the mandatory CRL
+at `policyData.servtdCrl`:
+
+```sh
+cargo image --policy-v2 \
+  --policy corim_policy.json \
+  --signer-anchor signer-anchor.bin \
+  --servtd-corim servtd_tcb_mapping.corim
+```
+
+The image builder checks these enrollment combinations and required artifact
+presence before building. MigTD still authenticates signatures, signer-anchor
+bindings, and the numbered CRL at runtime.
 
 ## 5. Build Final MigTD Image with policy which contain updated TCD mapping
 ### Generate new key pair for policy signing
