@@ -25,6 +25,7 @@ SKIP_RA=false
 USE_MOCK_REPORT=false
 EXTRA_FEATURES=""
 USE_POLICY_V2=false
+USE_SERVTD_CORIM=false
 MOCK_QUOTE_FILE=""  # Optional mock quote file path
 EXPLICIT_POLICY_FILE=false
 EXPLICIT_POLICY_ISSUER_CHAIN=false
@@ -55,14 +56,20 @@ show_usage() {
     echo "  -p, --dest-port PORT         Set destination port (default: 8001)"
     echo "  --policy-file FILE           Set policy file path (default: config/policy.json)"
     echo "  --root-ca-file FILE          Set root CA file path (default: config/Intel_SGX_Provisioning_Certification_RootCA.cer)"
-    echo "  --policy-issuer-chain-file FILE Set policy issuer chain file path (required when using --policy-v2)"
+    echo "  --policy-issuer-chain-file FILE Policy issuer chain (policy v2, unless an anchor is supplied)"
+    echo "  --signer-anchor-file FILE    Raw 48-byte signer anchor (policy v2; takes precedence over the chain)"
+    echo "  --servtd-corim-file FILE     Signed servTD CoRIM (policy v2; enables servtd_corim)"
     echo "  --src-policy-file FILE       Set source-specific policy file (overrides --policy-file for source)"
     echo "  --src-policy-issuer-chain-file FILE Set source-specific policy issuer chain file"
+    echo "  --src-signer-anchor-file FILE Set source-specific signer anchor"
+    echo "  --src-servtd-corim-file FILE Set source-specific signed CoRIM"
     echo "  --dst-policy-file FILE       Set destination-specific policy file (overrides --policy-file for destination)"
     echo "  --dst-policy-issuer-chain-file FILE Set destination-specific policy issuer chain file"
+    echo "  --dst-signer-anchor-file FILE Set destination-specific signer anchor"
+    echo "  --dst-servtd-corim-file FILE Set destination-specific signed CoRIM"
     echo "  --debug                      Build in debug mode (default: release)"
     echo "  --release                    Build in release mode (default)"
-    echo "  --policy-v2                  Enable policy v2 support (requires --policy-file and --policy-issuer-chain-file to be specified)"
+    echo "  --policy-v2                  Enable policy v2 (requires a policy and an issuer chain or signer anchor)"
     echo "  --skip-ra                    Skip remote attestation (uses mock TD reports/quotes for non-TDX environments)"
     echo "  --mock-report                Use mock report data for RA and policy v2 (non-TDX, but full attestation flow)"
     echo "  --mock-quote-file FILE       Path to mock quote file (used with --mock-report, defaults to output_data_v4.bin)"
@@ -87,7 +94,7 @@ show_usage() {
     echo "    TD reports/quotes but still performs the full attestation flow. This is useful for"
     echo "    testing attestation logic without requiring real TDX hardware."
     echo "  - When using --policy-v2, you must explicitly specify a policy file with --policy-file and"
-    echo "    a policy issuer chain file with --policy-issuer-chain-file. You can use the provided"
+    echo "    a signer with --policy-issuer-chain-file or --signer-anchor-file. You can use the provided"
     echo "    example files in config/AzCVMEmu. Some reference values in those files for the ServTD may become"
     echo "    outdated over time. Use ./sh_script/build_AzCVMEmu_policy_and_test.sh to generate updated policy"
     echo "    and issuer chain files."
@@ -96,7 +103,10 @@ show_usage() {
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
     echo "  - Rebinding operations (rebind-prepare, rebind-finalize) always require policy_v2, which"
-    echo "    is enabled automatically. You must explicitly specify --policy-file and --policy-issuer-chain-file."
+    echo "    is enabled automatically. Specify a policy and an issuer chain or signer anchor."
+    echo "  - Anchor-only JSON policies need an embedded servtdTcbMappingIssuerChain. CoRIM-only"
+    echo "    policies need --servtd-corim-file and a numbered servtdCrl in policyData."
+    echo "    Explicit per-side policies or endorsement files disable automatic policy generation."
     echo "  - The 'rebind-prepare' operation performs the actual rebinding handshake (TLS,"
     echo "    token exchange, and approval). 'rebind-finalize' clears the session token."
     echo
@@ -121,7 +131,7 @@ show_usage() {
     echo "  $0 --num-cpus 4 --both               # Run with 4 CPUs (0-3)"
     echo "  $0 --num-cpus 3 --both               # Run with 3 CPUs (0-2)"
     echo
-    echo "  # Rebinding examples (--policy-file and --policy-issuer-chain-file are always required):"
+    echo "  # Rebinding examples (a policy and an issuer chain or signer anchor are required):"
     echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
     echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
     echo "  $0 --operation rebind-finalize --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
@@ -137,6 +147,13 @@ check_file() {
     if [[ ! -f "$file" ]]; then
         echo -e "${RED}Error: $description file not found: $file${NC}" >&2
         echo -e "${YELLOW}Please ensure the file exists or specify a different path.${NC}" >&2
+        exit 1
+    fi
+}
+
+require_file_argument() {
+    if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+        echo -e "${RED}Error: $1 requires a file path${NC}" >&2
         exit 1
     fi
 }
@@ -221,11 +238,17 @@ DEST_IP="$DEFAULT_DEST_IP"
 DEST_PORT="$DEFAULT_DEST_PORT"
 POLICY_FILE="$DEFAULT_POLICY_FILE"
 ROOT_CA_FILE="$DEFAULT_ROOT_CA_FILE"
-POLICY_ISSUER_CHAIN_FILE=""  # No default - mandatory when using --policy-v2
+POLICY_ISSUER_CHAIN_FILE=""  # Policy v2 signer, unless an anchor is provided
+SIGNER_ANCHOR_FILE=""
+SERVTD_CORIM_FILE=""
 SRC_POLICY_FILE=""          # Per-side overrides (optional)
 SRC_POLICY_ISSUER_CHAIN_FILE=""
+SRC_SIGNER_ANCHOR_FILE=""
+SRC_SERVTD_CORIM_FILE=""
 DST_POLICY_FILE=""
 DST_POLICY_ISSUER_CHAIN_FILE=""
+DST_SIGNER_ANCHOR_FILE=""
+DST_SERVTD_CORIM_FILE=""
 BUILD_MODE="$DEFAULT_BUILD_MODE"
 NUM_CPUS="$DEFAULT_NUM_CPUS"
 OPERATION="$DEFAULT_OPERATION"
@@ -267,6 +290,16 @@ while [[ $# -gt 0 ]]; do
             EXPLICIT_POLICY_ISSUER_CHAIN=true
             shift 2
             ;;
+        --signer-anchor-file)
+            require_file_argument "$@"
+            SIGNER_ANCHOR_FILE="$2"
+            shift 2
+            ;;
+        --servtd-corim-file)
+            require_file_argument "$@"
+            SERVTD_CORIM_FILE="$2"
+            shift 2
+            ;;
         --src-policy-file)
             SRC_POLICY_FILE="$2"
             shift 2
@@ -275,12 +308,32 @@ while [[ $# -gt 0 ]]; do
             SRC_POLICY_ISSUER_CHAIN_FILE="$2"
             shift 2
             ;;
+        --src-signer-anchor-file)
+            require_file_argument "$@"
+            SRC_SIGNER_ANCHOR_FILE="$2"
+            shift 2
+            ;;
+        --src-servtd-corim-file)
+            require_file_argument "$@"
+            SRC_SERVTD_CORIM_FILE="$2"
+            shift 2
+            ;;
         --dst-policy-file)
             DST_POLICY_FILE="$2"
             shift 2
             ;;
         --dst-policy-issuer-chain-file)
             DST_POLICY_ISSUER_CHAIN_FILE="$2"
+            shift 2
+            ;;
+        --dst-signer-anchor-file)
+            require_file_argument "$@"
+            DST_SIGNER_ANCHOR_FILE="$2"
+            shift 2
+            ;;
+        --dst-servtd-corim-file)
+            require_file_argument "$@"
+            DST_SERVTD_CORIM_FILE="$2"
             shift 2
             ;;
         --debug)
@@ -365,6 +418,17 @@ if [[ "$OPERATION" == "rebind-prepare" || "$OPERATION" == "rebind-finalize" ]]; 
     USE_POLICY_V2=true
 fi
 
+if [[ -n "$SERVTD_CORIM_FILE$SRC_SERVTD_CORIM_FILE$DST_SERVTD_CORIM_FILE" ||
+      ",${EXTRA_FEATURES//[[:space:]]/}," == *",servtd_corim,"* ]]; then
+    USE_SERVTD_CORIM=true
+fi
+if [[ "$USE_POLICY_V2" != true &&
+      ( "$USE_SERVTD_CORIM" == true ||
+        -n "$SIGNER_ANCHOR_FILE$SRC_SIGNER_ANCHOR_FILE$DST_SIGNER_ANCHOR_FILE" ) ]]; then
+    echo -e "${RED}Error: Signer anchors and servTD CoRIM require --policy-v2${NC}" >&2
+    exit 1
+fi
+
 # Automatically enable mock-report mode when mock-quote-file is specified
 if [[ -n "$MOCK_QUOTE_FILE" && "$USE_MOCK_REPORT" != true ]]; then
     echo -e "${YELLOW}Note: --mock-quote-file specified, automatically enabling --mock-report${NC}"
@@ -420,7 +484,7 @@ cd "$(dirname "$0")"
 
 # Generate policy from mock report data so measurements match the hardcoded mock
 # TD report used at runtime. Used when policy_v2 is active with --mock-report
-# and no explicit policy/chain files were provided.
+# and no explicit policy or endorsement files were provided.
 generate_policy_from_mock_report() {
     local policy_script="./sh_script/build_AzCVMEmu_policy_and_test.sh"
     if [[ ! -x "$policy_script" ]]; then
@@ -446,10 +510,15 @@ generate_policy_from_mock_report() {
 }
 
 # Auto-generate policy when using policy_v2 with mock-report and no explicit
-# policy/chain files were provided. Skipped when --skip-policy-generation is
+# policy or endorsement files were provided. Skipped when --skip-policy-generation is
 # passed (e.g. when invoked from build_AzCVMEmu_policy_and_test.sh, which has
 # already generated the policy).
-if [[ "$USE_POLICY_V2" == true && "$USE_MOCK_REPORT" == true && "$EXPLICIT_POLICY_FILE" != true && "$SKIP_POLICY_GENERATION" != true ]]; then
+if [[ "$USE_POLICY_V2" == true && "$USE_MOCK_REPORT" == true &&
+      "$EXPLICIT_POLICY_FILE" != true && "$EXPLICIT_POLICY_ISSUER_CHAIN" != true &&
+      -z "$SRC_POLICY_FILE$DST_POLICY_FILE$SRC_POLICY_ISSUER_CHAIN_FILE$DST_POLICY_ISSUER_CHAIN_FILE" &&
+      -z "$SIGNER_ANCHOR_FILE$SRC_SIGNER_ANCHOR_FILE$DST_SIGNER_ANCHOR_FILE" &&
+      -z "$SERVTD_CORIM_FILE$SRC_SERVTD_CORIM_FILE$DST_SERVTD_CORIM_FILE" &&
+      "$SKIP_POLICY_GENERATION" != true ]]; then
     generate_policy_from_mock_report
     # Use the generated output paths
     POLICY_FILE="./config/AzCVMEmu/policy_v2_signed.json"
@@ -463,8 +532,9 @@ if [[ "$USE_POLICY_V2" == true ]]; then
         echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
         exit 1
     fi
-    if [[ -z "$POLICY_ISSUER_CHAIN_FILE" && -z "$SRC_POLICY_ISSUER_CHAIN_FILE" && -z "$DST_POLICY_ISSUER_CHAIN_FILE" ]]; then
-        echo -e "${RED}Error: When using --policy-v2, you must specify a policy issuer chain file with --policy-issuer-chain-file${NC}" >&2
+    if [[ -z "$POLICY_ISSUER_CHAIN_FILE$SRC_POLICY_ISSUER_CHAIN_FILE$DST_POLICY_ISSUER_CHAIN_FILE" &&
+          -z "$SIGNER_ANCHOR_FILE$SRC_SIGNER_ANCHOR_FILE$DST_SIGNER_ANCHOR_FILE" ]]; then
+        echo -e "${RED}Error: Policy v2 requires a policy issuer chain or signer anchor for each started peer${NC}" >&2
         echo -e "${YELLOW}Example: $0 --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --both${NC}" >&2
         exit 1
     fi
@@ -473,8 +543,45 @@ fi
 # Resolve per-side policy files (fall back to shared values)
 EFFECTIVE_SRC_POLICY_FILE="${SRC_POLICY_FILE:-$POLICY_FILE}"
 EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE="${SRC_POLICY_ISSUER_CHAIN_FILE:-$POLICY_ISSUER_CHAIN_FILE}"
+EFFECTIVE_SRC_SIGNER_ANCHOR_FILE="${SRC_SIGNER_ANCHOR_FILE:-$SIGNER_ANCHOR_FILE}"
+EFFECTIVE_SRC_SERVTD_CORIM_FILE="${SRC_SERVTD_CORIM_FILE:-$SERVTD_CORIM_FILE}"
 EFFECTIVE_DST_POLICY_FILE="${DST_POLICY_FILE:-$POLICY_FILE}"
 EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE="${DST_POLICY_ISSUER_CHAIN_FILE:-$POLICY_ISSUER_CHAIN_FILE}"
+EFFECTIVE_DST_SIGNER_ANCHOR_FILE="${DST_SIGNER_ANCHOR_FILE:-$SIGNER_ANCHOR_FILE}"
+EFFECTIVE_DST_SERVTD_CORIM_FILE="${DST_SERVTD_CORIM_FILE:-$SERVTD_CORIM_FILE}"
+
+check_peer_files() {
+    local peer="$1" policy="$2" chain="$3" anchor="$4" corim="$5"
+    check_file "$policy" "$peer Policy"
+    if [[ "$USE_POLICY_V2" == true ]]; then
+        if [[ -n "$anchor" ]]; then
+            check_file "$anchor" "$peer Signer Anchor"
+            if [[ $(wc -c < "$anchor") -ne 48 ]]; then
+                echo -e "${RED}Error: $peer signer anchor must contain exactly 48 raw bytes${NC}" >&2
+                exit 1
+            fi
+        else
+            check_file "$chain" "$peer Policy Issuer Chain (or supply a signer anchor)"
+        fi
+        if [[ -n "$corim" ]]; then
+            check_file "$corim" "$peer ServTD CoRIM"
+            if [[ ! -s "$corim" ]]; then
+                echo -e "${RED}Error: $peer servTD CoRIM must not be empty${NC}" >&2
+                exit 1
+            fi
+        fi
+    fi
+}
+
+if [[ "$RUN_BOTH" == true || "$ROLE" == "source" ]]; then
+    check_peer_files "Source" "$EFFECTIVE_SRC_POLICY_FILE" "$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "$EFFECTIVE_SRC_SIGNER_ANCHOR_FILE" "$EFFECTIVE_SRC_SERVTD_CORIM_FILE"
+fi
+if [[ "$RUN_BOTH" == true || "$ROLE" == "destination" ]]; then
+    check_peer_files "Destination" "$EFFECTIVE_DST_POLICY_FILE" "$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "$EFFECTIVE_DST_SIGNER_ANCHOR_FILE" "$EFFECTIVE_DST_SERVTD_CORIM_FILE"
+fi
+if [[ "$USE_POLICY_V2" != true ]]; then
+    check_file "$ROOT_CA_FILE" "Root CA"
+fi
 
 # Build features string based on configuration
 build_features_string() {
@@ -482,6 +589,9 @@ build_features_string() {
 
     if [[ "$USE_POLICY_V2" == true ]]; then
         features="$features,policy_v2"
+    fi
+    if [[ "$USE_SERVTD_CORIM" == true ]]; then
+        features="$features,servtd_corim"
     fi
 
     if [[ "$SKIP_RA" == true ]]; then
@@ -514,15 +624,6 @@ else
     MIGTD_BINARY="./target/release/migtd"
 fi
 
-# Check if configuration files exist
-check_file "$EFFECTIVE_SRC_POLICY_FILE" "Source Policy"
-check_file "$EFFECTIVE_DST_POLICY_FILE" "Destination Policy"
-if [[ "$USE_POLICY_V2" == true ]]; then
-    check_file "$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "Source Policy Issuer Chain"
-    check_file "$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "Destination Policy Issuer Chain"
-else
-    check_file "$ROOT_CA_FILE" "Root CA"
-fi
 # Evaluate TPM access and elevate if necessary
 maybe_force_sudo_due_to_tpm
 
@@ -625,13 +726,15 @@ echo "  CPU affinity: $NUM_CPUS (using: $TASKSET_CMD)"
 echo "  Policy file: $POLICY_FILE"
 if [[ "$USE_POLICY_V2" != true ]]; then
     echo "  Root CA file: $ROOT_CA_FILE"
-elif [[ -n "$SRC_POLICY_FILE" || -n "$DST_POLICY_FILE" ]]; then
+else
     echo "  Source policy file: $EFFECTIVE_SRC_POLICY_FILE"
     echo "  Source issuer chain: $EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE"
+    echo "  Source signer anchor: $EFFECTIVE_SRC_SIGNER_ANCHOR_FILE"
+    echo "  Source servTD CoRIM: $EFFECTIVE_SRC_SERVTD_CORIM_FILE"
     echo "  Dest policy file: $EFFECTIVE_DST_POLICY_FILE"
     echo "  Dest issuer chain: $EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE"
-else
-    echo "  Policy issuer chain file: $POLICY_ISSUER_CHAIN_FILE"
+    echo "  Dest signer anchor: $EFFECTIVE_DST_SIGNER_ANCHOR_FILE"
+    echo "  Dest servTD CoRIM: $EFFECTIVE_DST_SERVTD_CORIM_FILE"
 fi
 
 if [[ -n "$MOCK_QUOTE_FILE" ]]; then
@@ -672,7 +775,13 @@ if [[ "$RUN_BOTH" == true ]]; then
     DEST_OUT_LOG="dest_${OPERATION}_out.log"
 
     # Build environment variable list for destination
-    DEST_ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$DEST_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    DEST_ENV_VARS=(
+        "MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE"
+        "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE"
+        "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_DST_SIGNER_ANCHOR_FILE"
+        "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_DST_SERVTD_CORIM_FILE"
+        "MIGTD_LOG_FILE=$DEST_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
+    )
     if [[ "$USE_POLICY_V2" != true ]]; then
         DEST_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
     fi
@@ -714,7 +823,13 @@ if [[ "$RUN_BOTH" == true ]]; then
     SRC_LOG_FILE="migtd_${OPERATION}_source.log"
 
     # Build environment variable list for source
-    SRC_ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "MIGTD_LOG_FILE=$SRC_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+    SRC_ENV_VARS=(
+        "MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE"
+        "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE"
+        "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_SRC_SIGNER_ANCHOR_FILE"
+        "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_SRC_SERVTD_CORIM_FILE"
+        "MIGTD_LOG_FILE=$SRC_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
+    )
     if [[ "$USE_POLICY_V2" != true ]]; then
         SRC_ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
     fi
@@ -774,9 +889,21 @@ else
 
     # Build environment variable list (use per-side values based on role)
     if [[ "$ROLE" == "source" ]]; then
-        ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+        ENV_VARS=(
+            "MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE"
+            "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE"
+            "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_SRC_SIGNER_ANCHOR_FILE"
+            "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_SRC_SERVTD_CORIM_FILE"
+            "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
+        )
     else
-        ENV_VARS=("MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE" "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG")
+        ENV_VARS=(
+            "MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE"
+            "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE"
+            "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_DST_SIGNER_ANCHOR_FILE"
+            "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_DST_SERVTD_CORIM_FILE"
+            "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
+        )
     fi
     if [[ "$USE_POLICY_V2" != true ]]; then
         ENV_VARS+=("MIGTD_ROOT_CA_FILE=$ROOT_CA_FILE")
