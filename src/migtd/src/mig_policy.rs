@@ -317,15 +317,23 @@ mod v2 {
             &servtd_ext_src_obj,
         )?;
 
-        // If backward policy exists, evaluate the migration src based on it.
         let relative_reference = get_local_tcb_evaluation_info()?;
-        policy.policy_data.evaluate_policy_backward(
-            &evaluation_data_src,
-            &relative_reference,
-            true,
-        )?;
+        evaluate_rebinding_old_policy(policy, &evaluation_data_src, &relative_reference)?;
 
         Ok(tdx_report.as_bytes().to_vec())
+    }
+
+    fn evaluate_rebinding_old_policy(
+        policy: &VerifiedPolicy,
+        value: &PolicyEvaluationInfo,
+        relative_reference: &PolicyEvaluationInfo,
+    ) -> Result<(), PolicyError> {
+        policy
+            .policy_data
+            .evaluate_policy_common(value, relative_reference, true)?;
+        policy
+            .policy_data
+            .evaluate_policy_backward(value, relative_reference, true)
     }
 
     fn authenticate_remote_common<'p>(
@@ -905,6 +913,31 @@ mod v2 {
             value
         }
 
+        fn rebinding_policy_input(
+            common: serde_json::Value,
+            backward: Option<serde_json::Value>,
+        ) -> Vec<u8> {
+            let mut value = policy_json();
+            value["policyData"]["policy"] = common;
+            if let Some(backward) = backward {
+                value["policyData"]["backwardPolicy"] = backward;
+            }
+            serde_json::to_vec(&value).unwrap()
+        }
+
+        fn svn_policy(reference: serde_json::Value) -> serde_json::Value {
+            serde_json::json!([{
+                "servtd": {
+                    "migtdIdentity": {
+                        "isvsvn": {
+                            "operation": "greater-or-equal",
+                            "reference": reference
+                        }
+                    }
+                }
+            }])
+        }
+
         fn evaluation_results(
             policy: &VerifiedPolicy,
             tdreport: &TdxReport,
@@ -999,6 +1032,149 @@ mod v2 {
                     .evaluate_policy_common(&evaluation, &evaluation, false)
                     .unwrap();
             }
+        }
+
+        #[test]
+        fn rebinding_old_enforces_common_svn_without_stricter_backward_policy() {
+            for backward in [
+                None,
+                Some(serde_json::Value::Null),
+                Some(serde_json::json!([])),
+                Some(svn_policy(serde_json::json!(2))),
+            ] {
+                let input = rebinding_policy_input(svn_policy(serde_json::json!(4)), backward);
+                let policy = load_policy(&input, ISSUER_CHAIN);
+                let local = PolicyEvaluationInfo {
+                    migtd_isvsvn: Some(5),
+                    ..Default::default()
+                };
+                for svn in [3, 4, 5] {
+                    let peer = PolicyEvaluationInfo {
+                        migtd_isvsvn: Some(svn),
+                        ..Default::default()
+                    };
+                    let result = evaluate_rebinding_old_policy(&policy, &peer, &local);
+                    if svn < 4 {
+                        assert!(
+                            matches!(result, Err(PolicyError::SvnMismatch)),
+                            "{result:?}"
+                        );
+                    } else {
+                        result.unwrap();
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn rebinding_old_common_svn_uses_current_local_reference() {
+            let input = rebinding_policy_input(svn_policy(serde_json::json!("self")), None);
+            let policy = load_policy(&input, ISSUER_CHAIN);
+            let local = PolicyEvaluationInfo {
+                migtd_isvsvn: Some(5),
+                ..Default::default()
+            };
+            for svn in [4, 5, 6] {
+                let peer = PolicyEvaluationInfo {
+                    migtd_isvsvn: Some(svn),
+                    ..Default::default()
+                };
+                let result = evaluate_rebinding_old_policy(&policy, &peer, &local);
+                if svn < 5 {
+                    assert!(
+                        matches!(result, Err(PolicyError::SvnMismatch)),
+                        "{result:?}"
+                    );
+                } else {
+                    result.unwrap();
+                }
+            }
+        }
+
+        #[test]
+        fn rebinding_old_preserves_stricter_backward_svn_floor() {
+            let input = rebinding_policy_input(
+                svn_policy(serde_json::json!(4)),
+                Some(svn_policy(serde_json::json!("self"))),
+            );
+            let policy = load_policy(&input, ISSUER_CHAIN);
+            let local = PolicyEvaluationInfo {
+                migtd_isvsvn: Some(5),
+                ..Default::default()
+            };
+            for svn in [4, 5] {
+                let peer = PolicyEvaluationInfo {
+                    migtd_isvsvn: Some(svn),
+                    ..Default::default()
+                };
+                let result = evaluate_rebinding_old_policy(&policy, &peer, &local);
+                if svn < 5 {
+                    assert!(
+                        matches!(result, Err(PolicyError::SvnMismatch)),
+                        "{result:?}"
+                    );
+                } else {
+                    result.unwrap();
+                }
+            }
+        }
+
+        #[test]
+        fn rebinding_old_enforces_common_crl_floor_without_backward_policy() {
+            let input = rebinding_policy_input(
+                serde_json::json!([{
+                    "servtd": {
+                        "migtdIdentity": {},
+                        "servtdCrlNum": {
+                            "operation": "greater-or-equal",
+                            "reference": "self"
+                        }
+                    }
+                }]),
+                None,
+            );
+            let policy = load_policy(&input, ISSUER_CHAIN);
+            let local = PolicyEvaluationInfo {
+                servtd_crl_num: Some(7),
+                ..Default::default()
+            };
+            for number in [None, Some(6), Some(7), Some(8)] {
+                let peer = PolicyEvaluationInfo {
+                    servtd_crl_num: number,
+                    ..Default::default()
+                };
+                let result = evaluate_rebinding_old_policy(&policy, &peer, &local);
+                if matches!(number, Some(number) if number >= 7) {
+                    result.unwrap();
+                } else {
+                    assert!(
+                        matches!(result, Err(PolicyError::CrlEvaluation)),
+                        "{result:?}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn rebinding_old_keeps_global_checks_skipped() {
+            let mut common = svn_policy(serde_json::json!(4));
+            common.as_array_mut().unwrap().push(serde_json::json!({
+                "global": {
+                    "crl": {
+                        "pckCrlNum": {
+                            "operation": "greater-or-equal",
+                            "reference": 1
+                        }
+                    }
+                }
+            }));
+            let input = rebinding_policy_input(common, None);
+            let policy = load_policy(&input, ISSUER_CHAIN);
+            let peer = PolicyEvaluationInfo {
+                migtd_isvsvn: Some(4),
+                ..Default::default()
+            };
+            evaluate_rebinding_old_policy(&policy, &peer, &peer).unwrap();
         }
 
         #[cfg(feature = "servtd_corim")]

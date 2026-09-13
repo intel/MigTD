@@ -122,6 +122,15 @@ The CRL itself remains in `servtdCrl` or `servtdCollateral.servtdCrl` within
 `policyData`. `global.crl` accepts only
 `pckCrlNum` and `rootCaCrlNum`; placing `servtdCrlNum` there is rejected.
 
+When the new MigTD authenticates the old MigTD during rebinding, it evaluates
+common `policy` servTD constraints followed by `backwardPolicy`. An absent or
+empty backward block does not disable a common SVN or CRL-number floor, and
+backward rules cannot relax that floor. Both blocks use the current local (new)
+MigTD as their relative reference and skip `global` checks. Consequently, a
+common `isvsvn >= self` rule rejects an older source even if a backward rule
+would otherwise allow the upgrade. Initial-to-current source SVN ordering is
+enforced separately.
+
 Migration and rebinding always require the peer's attested TDINFO hash to resolve
 to an SVN in its authenticated mapping, even when the policy only checks CRL
 freshness or platform properties. Optional TD Identity controls date/status
