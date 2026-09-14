@@ -160,6 +160,33 @@ During startup:
   their authenticated RTMR1 and RTMR2 event digests before the mapping is used.
 - Collaterals are used for quote verification and TCB evaluation.
 
+### TDINFO self-checks and policy binding
+
+The former `verify_own_tdinfo()` startup check required `MROWNER` to equal the
+SHA-384 hash of the policy issuer's leaf public key and `MROWNERCONFIG` to contain
+`policySvn` as a little-endian u32 followed by 44 zero bytes. Those equalities
+are intentionally no longer required for policy v2.
+
+The full, unmasked `tdinfo_hash` includes `MROWNER` and `MROWNERCONFIG`.
+Authentication requires this hash to match an authenticated JSON or CoRIM
+TCB mapping, whose signer is bound to the RTMR1-measured trust anchor.
+That endorsement already authorizes the exact owner-field values together
+with the rest of TDINFO. Under this model, the former equality checks add
+no further authorization; they only impose legacy encodings on fields
+already covered by the endorsement.
+
+Signer identity is bound by the RTMR1 anchor (root certificate and leaf Subject),
+while canonical policy data, including `policySvn`, is measured in RTMR2.
+Quote/TDREPORT, event-log, collateral-signature, and signer-anchor verification
+establish these bindings during authentication. The authenticated full-TDINFO mapping
+supplies the MigTD release `isvsvn`, which is distinct from `policySvn`.
+This model applies equally to PEM and direct-anchor/CoRIM enrollment, without
+requiring a rotating leaf key's fingerprint in a TD-creation field.
+
+Changing either owner field changes the hash that must be endorsed.
+The endorsement binds the actual values; it does not assert the former
+owner-field equalities.
+
 ### Direct signer-anchor enrollment
 
 `--signer-anchor FILE` accepts exactly 48 raw bytes, not a hexadecimal string
