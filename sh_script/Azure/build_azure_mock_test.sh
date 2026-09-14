@@ -134,7 +134,7 @@ get_hash_algorithm() {
 #   $2 - key_type: Key type (only P384 is currently supported)
 #   $3 - cert_validity_days: Certificate validity in days (uses default 365 if not provided)
 #   $4 - root_ca_subject: Root CA subject string (uses default "/CN=MigTD Root CA/O=Intel Corporation" if not provided)
-#   $5 - leaf_subject: Leaf certificate subject string (uses default "/CN=MigTD Policy Issuer/O=Intel Corporation" if not provided)
+#   $5 - leaf_subject: Leaf certificate Subject DN (uses default "/CN=MigTD Policy Issuer/O=Intel Corporation" if not provided)
 generate_certificates() {
     local output_dir="$1"
     local key_type="$2"

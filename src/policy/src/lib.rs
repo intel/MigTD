@@ -61,8 +61,8 @@ pub enum PolicyError {
     /// The `servtdTcbMappingIssuerChain` does not resolve to the RTMR1 signer
     /// anchor enrolled directly or derived from the CFV policy issuer chain.
     /// Because the chain bytes are redacted from RTMR2, this binding of the
-    /// root certificate hash and dedicated leaf EKU OID ensures the mapping
-    /// signer matches the measured root of trust.
+    /// root certificate, leaf Subject DN/SAN, and dedicated EKU ensures the
+    /// mapping signer matches the measured identity and purpose.
     SignerAnchorMismatch,
     /// A certificate in the servtd signer chain (TCB mapping or identity) is
     /// listed in the authoritative signer CRL (`servtdCrl`), or that CRL

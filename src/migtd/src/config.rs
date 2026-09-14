@@ -38,9 +38,10 @@ pub const MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID: Guid = Guid::from_fields(
 
 // {2B9D5A84-6F3C-4E71-8A2D-0C7E1F4B6A93}
 //
-// FFS GUID of the 48-byte RTMR1 signer anchor
-// `A = SHA384(tag || 0x00 || SHA384(rootDER) || 0x00 || DER(signerEKUOID))`,
-// where `tag = "MIGTD-RTMR1-ANCHOR-V1"`.
+// FFS GUID of the 48-byte RTMR1 signer anchor produced by
+// `policy::compute_signer_anchor` with domain tag "MIGTD-RTMR1-ANCHOR-V2".
+// It binds the root certificate, leaf Subject DN, SAN presence/value, and
+// dedicated signer EKU. See doc/policy_v2.md for the DER encoding formula.
 // The pipeline can enroll this directly instead of the policy issuer chain PEM.
 // Retained JSON TCB mappings then need an explicit embedded mapping issuer chain.
 // Measured into RTMR1 exactly like the PEM-derived anchor, so the two forms are

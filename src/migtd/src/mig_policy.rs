@@ -110,8 +110,8 @@ mod v2 {
 
         // Attach the optional CoRIM hash endorsement enrolled in the CFV. Its
         // COSE signer chain is bound to the SAME RTMR1 signer anchor as the CFV
-        // policy issuer chain, so a CoRIM signed under a different root cert or
-        // signer EKU fails closed. The CoRIM is NOT measured
+        // policy issuer chain. A different root, leaf Subject DN/SAN, or signer
+        // EKU fails closed. The CoRIM is NOT measured
         // (`config::get_servtd_corim` is never read by `do_measurements`), so
         // enrolling it does not change the ServTD/`tdinfo_hash`.
         // MigTD has no trusted wall clock. `decode_signed` rejects CWT
@@ -455,8 +455,8 @@ mod v2 {
         let mut verified_policy = unverified_policy
             .verify_with_authoritative_servtd_crl(policy_issuer_chain, local_servtd_crl)?;
 
-        // 3. Compare the peer's RTMR1 signer anchor (root certificate hash +
-        //    dedicated leaf EKU OID), not the full policy issuer chain PEM.
+        // 3. Compare the peer's RTMR1 signer anchor (root certificate,
+        //    leaf Subject DN/SAN, and dedicated EKU), not the full chain PEM.
         //    This supports direct-anchor enrollment without a PEM chain.
         //    Policy verification has already bound the peer's embedded mapping
         //    chain to `signer_anchor`.
@@ -464,9 +464,9 @@ mod v2 {
             return Err(PolicyError::PeerCertChainValidation);
         }
 
-        // Separately preserve Subject DN/SAN continuity for JSON mapping
-        // signers when both sides ship a chain; the anchor does not bind these
-        // identities. Absent on both sides (CoRIM-only) is fine; one-sided fails.
+        // Cross-check JSON mapping chains as defense in depth; the anchor
+        // already binds Subject DN/SAN and purpose. Absent on both sides
+        // (CoRIM-only) is fine; one-sided fails.
         match (
             local_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
             verified_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
