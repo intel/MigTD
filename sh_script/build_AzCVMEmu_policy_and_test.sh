@@ -251,7 +251,7 @@ get_hash_algorithm() {
 #   $2 - key_type: Key type (only P384 is currently supported)
 #   $3 - cert_validity_days: Certificate validity in days (uses default 365 if not provided)
 #   $4 - root_ca_subject: Root CA subject string (uses default "/CN=MigTD Root CA/O=Intel Corporation" if not provided)
-#   $5 - leaf_subject: Leaf certificate subject string (uses default "/CN=MigTD Policy Issuer/O=Intel Corporation" if not provided)
+#   $5 - leaf_subject: Leaf certificate Subject DN (uses default "/CN=MigTD Policy Issuer/O=Intel Corporation" if not provided)
 generate_certificates() {
     local output_dir="$1"
     local key_type="$2"
@@ -294,8 +294,8 @@ generate_certificates() {
         -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n')
     rm -f "$output_dir/intermediate_ca.csr"
 
-    # Generate two leaf certs (a and b) from the same intermediate CA with the same CN
-    # This exercises the peer cert chain validation / key rotation path.
+    # Rotate keys within each family while preserving full Subject DN DER and
+    # dedicated EKU under the same root, as required by the signer identity.
     # Two leaf families share one intermediate-issued servTD CRL:
     #   - policy_signing_{a,b}    : signs tcb_mapping
     #   - identity_signing_{a,b}  : signs td_identity  (embedded in servtd_collateral)
@@ -304,8 +304,7 @@ generate_certificates() {
         "identity_signing:/CN=MigTD TD Identity Issuer/O=Intel Corporation"; do
         local family="${family_subject%%:*}"
         local subject="${family_subject#*:}"
-        # Default to the script's leaf_subject for the policy family to preserve
-        # backward-compatible certificate subjects.
+        # Use the configured full Subject DN for both policy-signing leaves.
         if [ "$family" = "policy_signing" ]; then
             subject="$leaf_subject"
         fi
@@ -736,7 +735,8 @@ echo
 #   4. Merging policy data with collaterals + servtd_collateral
 #   5. Wrapping policyData without an outer signature
 #
-# All leaves chain to the same root CA so cert-chain validation succeeds.
+# Each family's a/b leaves share root DER, full Subject DN DER, and dedicated
+# EKU, so key rotation preserves that family's signer identity.
 #
 # Variants emitted:
 #   _a       : (identity_a, policy_a) -- baseline

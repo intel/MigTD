@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Generate the "designated MigTD signer purpose" EKU fixtures used to cover
-# `crypto::extract_single_leaf_eku_oid_der` selecting the dedicated OID
+# `crypto::extract_leaf_eku_oids_der` exposing the dedicated OID
 #   1.3.6.1.4.1.311.76.59.1.43
 # from a leaf that may co-assert other purposes.
 #
-# Both leaves are ECDSA P-384 / SHA-384 signed by a single self-signed root
+# Leaves are ECDSA P-384 / SHA-384 signed by a single self-signed root
 # (CA:TRUE), matching the algorithms accepted by the crypto crate. Each fixture
 # is a leaf-first PEM chain (leaf + root). These are additive to the pre-existing
 # signer_*.pem fixtures and share their own root.
@@ -58,7 +58,7 @@ EOF
 
 # Designated OID co-asserted with an unrelated code-signing purpose.
 gen_leaf signer_designated_multi.pem "MigTD Designated Multi" "$CODESIGN_OID,$SIGNER_OID"
-# Designated OID only (different subject, same root).
+# Designated OID only (different Subject DN, so not the same signer identity).
 gen_leaf signer_designated_only.pem  "MigTD Designated Only"  "$SIGNER_OID"
 
 # Peer-identity continuity fixtures. All use distinct leaf keys under one root.

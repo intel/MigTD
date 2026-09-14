@@ -42,10 +42,11 @@ const SERVTD_ATTR_IGNORE_RTMR3: u64 = 0x200_0000_0000;
 /// Build the unmasked TDINFO_STRUCT from the MigTD image and its manifest.
 ///
 /// MRTD/RTMR0 are derived from the IGVM image's measured pages alone.
-/// RTMR1/RTMR2 are derived from the CFV contents (policy issuer chain +
-/// signed policyData fields). The build pipeline produces a base IGVM with
-/// dummy CFV contents; the release pipeline injects the production policy +
-/// chain into the same base IGVM via `td-shim-enroll` (no Rust rebuild) and
+/// For policy v2, RTMR1 uses the CFV's direct or PEM-derived signer anchor;
+/// RTMR2 uses canonical policyData, not the outer policy signature.
+/// The build pipeline produces a base IGVM with dummy CFV contents; the release
+/// pipeline injects production policy and signer-anchor source bytes into the
+/// same base IGVM via `td-shim-enroll` (no Rust rebuild for enrollment alone) and
 /// then calls this function on the re-enrolled binary to get the production
 /// `tdinfo_hash`. There is therefore no projection / override path here:
 /// what the IGVM contains is what we measure.
@@ -328,9 +329,9 @@ fn rtmr1(
 ) -> Result<Vec<u8>, Error> {
     let mut rtmr1 = Rtmr::new_with_value(rtmr1);
     if is_policy_v2 {
-        // Prefer the 48-byte signer-anchor slot (CoRIM-only enrollment); fall
-        // back to the policy issuer chain PEM (legacy JSON enrollment). Both
-        // resolve to the same RTMR1 anchor via `resolve_signer_anchor`.
+        // Prefer the direct 48-byte anchor; use PEM only if that slot is absent.
+        // Both enrollment forms use the same signer-anchor formula.
+        // Measuring a supplied digest does not authenticate its signer.
         let anchor_source = fv::get_file_from_fv(
             cfv,
             pi::fv::FV_FILETYPE_RAW,
@@ -347,8 +348,8 @@ fn rtmr1(
             "Unable to get signer anchor / policy issuer chain from image"
         ))?;
 
-        // v2: extend with SHA384(signer_anchor), resolving either the direct
-        // 48-byte CoRIM-only enrollment or the root+dedicated-leaf-EKU PEM form.
+        // Policy v2: extend with SHA384(signer anchor), binding root DER,
+        // full Subject DN DER, and dedicated EKU.
         let anchor = policy::resolve_signer_anchor(anchor_source)
             .map_err(|e| anyhow!("Failed to resolve signer anchor: {:?}", e))?;
         rtmr1.extend_with_raw_data(&anchor)?;

@@ -114,7 +114,7 @@ Supported options:
 - `--policy-file FILE`             policy file path (default: config/policy.json)
 - `--root-ca-file FILE`            root CA file path (default: config/Intel_SGX_Provisioning_Certification_RootCA.cer)
 - `--policy-issuer-chain-file FILE` policy v2 issuer chain, unless a signer anchor is supplied
-- `--signer-anchor-file FILE`       raw 48-byte policy v2 signer anchor (takes precedence over the chain)
+- `--signer-anchor-file FILE`       raw 48-byte signer anchor for policy v2 (takes precedence over the chain)
 - `--servtd-corim-file FILE`        signed servTD CoRIM; requires policy v2 and enables `servtd_corim`
 - `--src-signer-anchor-file FILE`, `--dst-signer-anchor-file FILE` override the shared anchor for one peer
 - `--src-servtd-corim-file FILE`, `--dst-servtd-corim-file FILE` override the shared CoRIM for one peer
@@ -172,6 +172,10 @@ generation. A CoRIM-only policy still requires a numbered signer CRL at
 it must include `servtdTcbMappingIssuerChain`; an unused outer PEM path does
 not provide the fallback. See [direct enrollment](policy_v2.md#direct-signer-anchor-enrollment).
 Enabling `servtd_corim` without supplying a CoRIM remains valid for JSON policies.
+
+Both PEM and direct enrollment use the root-certificate/full Subject DN/EKU
+anchor. Endorsement authentication must reproduce the enrolled anchor from
+the signer chain.
 Per-peer file overrides do not relax the existing peer-chain and identity-presence
 compatibility requirements.
 

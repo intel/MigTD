@@ -452,9 +452,8 @@ pub(crate) fn decode_peer_data(data: &[u8]) -> Option<PeerData<'_>> {
 #[cfg(feature = "policy_v2")]
 pub(crate) fn local_peer_data() -> Option<Vec<u8>> {
     let policy = crate::config::get_policy()?;
-    // Send the signer-anchor source: the 48-byte anchor when enrolled
-    // (CoRIM-only), else the policy issuer chain PEM. The peer resolves either
-    // form via `policy::resolve_signer_anchor`.
+    // Send the signer-anchor source: the enrolled 48-byte digest, else
+    // the policy issuer chain PEM. Both use `policy::resolve_signer_anchor`.
     let issuer_chain = crate::config::get_signer_anchor_source()?;
     // Send our own signed CoRIM (if enrolled) so the peer resolves *our*
     // current/init hashes through *our* authenticated mapping instead of

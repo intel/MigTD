@@ -97,9 +97,11 @@ anchor must match the local enrolled anchor, whether derived from a PEM chain
 or supplied directly as 48 raw bytes. Direct-anchor enrollment does not
 require a local PEM chain.
 
-The anchor binds the root certificate and a dedicated signer-purpose EKU,
-not the full issuer-chain bytes. The CA must issue that EKU only to authorized
-mapping signers for the intended product and purpose.
+The signer anchor binds the root certificate, complete leaf Subject DN,
+and selected dedicated signer-purpose EKU, not the full issuer-chain bytes.
+EKU supplements the identity binding; it does not replace it. The CA must
+issue that identity and purpose only to authorized mapping
+signers for the intended product.
 Intermediate certificates must be valid CAs, but are not part of the anchor;
 the CRL issuer constraints above still apply.
 
@@ -237,8 +239,8 @@ with the rest of TDINFO. Under this model, the former equality checks add
 no further authorization; they only impose legacy encodings on fields
 already covered by the endorsement.
 
-Signer authority and purpose are bound by the RTMR1 anchor (root certificate
-and dedicated EKU),
+Signer identity and purpose are bound by the RTMR1 anchor (root certificate,
+leaf Subject DN, and dedicated EKU),
 while canonical policy data, including `policySvn`, is measured in RTMR2.
 Quote/TDREPORT, event-log, collateral-signature, and signer-anchor verification
 establish these bindings during authentication. The authenticated full-TDINFO mapping
@@ -252,8 +254,47 @@ owner-field equalities.
 
 ### Direct signer-anchor enrollment
 
+The signer anchor binds the root certificate, the leaf's full Subject
+Distinguished Name (the certificate's Subject), and its dedicated signer
+purpose. EKU supplements the Subject DN binding; it does not replace it.
+
+```text
+tag = "MIGTD-RTMR1-ANCHOR"
+R   = SHA384(DER(root certificate))
+DN  = SHA384(DER(leaf Subject Distinguished Name))
+A   = SHA384(tag || 0x00 || R || 0x00 || DN || 0x00 || DER(EKU OID))
+```
+
+The full Subject DN is bound byte-for-byte in DER form, without textual name
+normalization. The event-log writer hashes `A` and extends RTMR1 with `SHA384(A)`.
+
+The signing authority must keep the Subject DN DER stable and reserve that
+Subject DN and selected dedicated EKU under the enrolled root for the intended
+signer.
+
+Key and intermediate-CA rotation preserve the anchor only when the root, leaf
+Subject DN, and selected dedicated EKU remain unchanged. PEM enrollment
+requires a single dedicated leaf EKU. CoRIM anchor-first verification can select
+the matching purpose among multiple dedicated EKUs, while preserving the same
+Subject DN binding. JSON peer-chain checks use the same root, Subject DN,
+and dedicated EKU identity. Certificate-chain, revocation, and SVN-policy checks
+remain separate and are not replaced by the anchor.
+
+Anchor producers, enrollment tools, firmware, and offline hash calculation
+use this same formula. Generate the anchor before building the image, then
+endorse the image's complete TDINFO hash.
+
+Earlier anchor profiles, including the root/EKU-only formula and the
+`MIGTD-RTMR1-ANCHOR-V2` formula, produce different anchors,
+RTMR1 values, and complete TDINFO hashes. Regenerate enrolled anchors
+and TDINFO endorsements together when upgrading; there is no fallback
+to an earlier formula.
+
 `--signer-anchor FILE` accepts exactly 48 raw bytes, not a hexadecimal string
-or a PEM chain. If both it and `--policy-issuer-chain` are supplied, only the
+or a PEM chain. Checking its length is not authentication. JSON/CoRIM
+verification must reproduce the enrolled value from the endorsement signer.
+PEM enrollment derives the same anchor from the supplied chain.
+If both `--signer-anchor` and `--policy-issuer-chain` are supplied, only the
 anchor is enrolled; the unused PEM argument does not provide a runtime fallback.
 
 A policy retaining JSON `servtdCollateral` must contain a signed

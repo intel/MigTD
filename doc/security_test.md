@@ -31,4 +31,11 @@ Refer to https://github.com/confidential-containers/td-shim/blob/main/doc/fuzzin
 | Virtio Devices               | Virtio devices are external input for MigTD, so it should have sanity check before using it. Data should be copied to privated memory before it been accessed |
 | GHCI - VmcallServiceResponse | VMCALL result is from VMM is not trusted, so it should be copied to privated memory before it been accessed and should have sanity check before using it .    |
 | Migration Policy             | Migration policy is external input for MigTD, so it should be measured and have sanity check before using it.                                                 |
-| X509 Certificate             | X509 certificate is external input for peer MigTD, so it should be measured have sanity check before using it.                                                |
+| X509 Certificate             | Parse and validate untrusted certificate chains before use. Policy-v2 mapping signers must match the measured signer anchor; the complete chain is not measured. |
+
+For the [signer-anchor contract](policy_v2.md#direct-signer-anchor-enrollment),
+cover unchanged anchors and successful authentication after leaf-key or unbound
+certificate metadata changes. Changes to root certificate DER, full Subject DN
+DER, or dedicated EKU must not retain the same authority. Reject anchors with
+missing or extra identity components. Chain signatures, issuer-CA constraints,
+and authoritative CRL checks remain mandatory.

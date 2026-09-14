@@ -37,6 +37,15 @@
 5. Create branch `v<major>.<minor>`.
 6. Upload the release content to branch `v<major>.<minor>`.
 
+### Policy v2 signer-anchor contract
+
+Policy v2 releases use the root-certificate/full Subject DN/dedicated-EKU
+anchor. Align firmware, anchor producers, enrollment, and the
+offline hash calculator with that contract before building release artifacts.
+Generate the anchor before building each image, then endorse its complete
+TDINFO hash. See the
+[anchor contract](policy_v2.md#direct-signer-anchor-enrollment).
+
 ## Release Test Feature:
 
 1. Migration Flow

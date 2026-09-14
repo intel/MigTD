@@ -43,6 +43,14 @@ popd
   ```
 ### Note
 
+With `--policy-v2`, RTMR1 uses the same signer-anchor helper as the firmware:
+root certificate DER, full byte-exact leaf Subject DN DER, and dedicated EKU.
+The direct 48-byte CFV slot takes precedence over PEM; PEM derives the anchor,
+while a direct digest is measured as supplied and still requires endorsement
+authentication. The calculator reproduces measurements; merely hashing an
+image does not authenticate it. See the
+[measurement contract](../../doc/policy_v2.md#direct-signer-anchor-enrollment).
+
 For a `TDVF_SECTION` with `Attributes` set to `0x00000001` (indicating `PAGE.ADD + MR.EXTEND`), the measurement process is performed on a page-by-page basis for the entire section. For each individual page within that section, a `TDCALL[TDH.MEM.PAGE.ADD]` is executed, followed immediately by a `TDCALL[TDH.MR.EXTEND]`:
 
 ```

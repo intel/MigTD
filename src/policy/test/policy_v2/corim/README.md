@@ -5,8 +5,16 @@ be used as production trust material. They include an ES384 COSE_Sign1 CoRIM,
 its leaf-first issuer chain and independently calculated 48-byte signer anchor,
 a numbered empty CRL (7), a CRL revoking the signer (8), and equivalent signed
 JSON collateral with optional TD Identity.
-The leaf asserts the test-only signer EKU `1.3.6.1.4.1.32473.1.1`; the anchor
-binds its DER-encoded OID to the root certificate hash.
+The leaf asserts the test-only signer EKU `1.3.6.1.4.1.32473.1.1`. The signer
+anchor binds the root certificate, full Subject Distinguished Name, and that
+DER-encoded EKU OID. Its independently
+calculated formula matches the contract documented in `doc/policy_v2.md`.
+
+Additional genuinely signed CoRIMs cover key rotation and additional EKUs with
+unchanged identity, accepted changes to unbound certificate metadata, and
+rejected changes to the Subject DN and signer purpose. The DN mismatch keeps
+the same Common Name but changes the organization. Tests also reject anchors
+that omit the Subject DN or include unbound fields in the binding.
 
 The chain is leaf -> intermediate -> root. Both CRLs are complete, direct,
 issuer-wide CRLs signed by the immediate intermediate with `cRLSign`; they
