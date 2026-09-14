@@ -35,6 +35,12 @@ cargo build -p json-signer
 ./target/debug/json-signer --sign  --name tdTcbMapping --private-key /path/to/pkcs8 --input /path/to/tcb_mapping.json --output tcb_mapping_signed.json
 ```
 
+After signature verification, JSON TCB mappings must contain valid 96-character
+hexadecimal `tdinfo_hash` values (48 bytes). The same hash, compared without
+regard to hexadecimal letter case, must not map to different SVNs. Identical
+hash/SVN duplicates remain accepted; malformed or conflicting entries reject
+the mapping with `InvalidServtdTcbMapping`.
+
 All v2 policies must include a CA-signed PEM CRL with a CRL-number extension
 in `policyData.servtdCrl` or `policyData.servtdCollateral.servtdCrl`.
 If no certificates are revoked, provide a valid

@@ -146,8 +146,10 @@ impl<'a> RawServtdTcbMapping<'a> {
         )
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-        serde_json::from_str::<TdTcbMapping>(self.td_tcb_mapping.get())
-            .map_err(|_| PolicyError::InvalidServtdTcbMapping)
+        let mapping = serde_json::from_str::<TdTcbMapping>(self.td_tcb_mapping.get())
+            .map_err(|_| PolicyError::InvalidServtdTcbMapping)?;
+        mapping.validate()?;
+        Ok(mapping)
     }
 }
 
@@ -194,6 +196,28 @@ impl Measurements {
 }
 
 impl TdTcbMapping {
+    fn validate(&self) -> Result<(), PolicyError> {
+        for (index, mapping) in self.svn_mappings.iter().enumerate() {
+            let hash = hex_string_to_bytes(&mapping.td_measurements.tdinfo_hash)
+                .map_err(|_| PolicyError::InvalidServtdTcbMapping)?;
+            if hash.len() != SHA384_DIGEST_SIZE {
+                return Err(PolicyError::InvalidServtdTcbMapping);
+            }
+
+            for previous in &self.svn_mappings[..index] {
+                if previous
+                    .td_measurements
+                    .tdinfo_hash
+                    .eq_ignore_ascii_case(&mapping.td_measurements.tdinfo_hash)
+                    && previous.isvsvn != mapping.isvsvn
+                {
+                    return Err(PolicyError::InvalidServtdTcbMapping);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Look up the engine SVN for the TD represented by `report` by computing
     /// `tdinfo_hash` (per redesign §RTMR-layout) and matching the
     /// `svnMappings[].tdMeasurements.tdinfo_hash` entries.
@@ -387,10 +411,27 @@ pub fn compute_tdinfo_hash_from_report(
 mod test {
     use super::*;
 
+    fn mapping_with_hashes(entries: &[(String, u16)]) -> TdTcbMapping {
+        let mut mapping: TdTcbMapping =
+            serde_json::from_slice(include_bytes!("../../test/policy_v2/tcb_mapping.json"))
+                .unwrap();
+        mapping.svn_mappings = entries
+            .iter()
+            .map(|(hash, isvsvn)| SvnMapping {
+                td_measurements: Measurements {
+                    tdinfo_hash: hash.clone(),
+                },
+                isvsvn: *isvsvn,
+            })
+            .collect();
+        mapping
+    }
+
     #[test]
     fn test_get_engine_svn() {
         let engine_bytes = include_bytes!("../../test/policy_v2/tcb_mapping.json");
         let engine: TdTcbMapping = serde_json::from_slice(engine_bytes).unwrap();
+        engine.validate().unwrap();
 
         // The first svnMappings entry in the test fixture is the canonical
         // tdinfo_hash (= SHA384(TDINFO) = init_servtd_info_hash for attr=0).
@@ -413,6 +454,51 @@ mod test {
                     .into(),
         };
         assert!(engine.get_engine_svn_by_measurements(&bogus).is_none());
+    }
+
+    #[test]
+    fn json_mapping_rejects_malformed_hashes() {
+        for hash in [
+            String::new(),
+            "ab".repeat(47),
+            "ab".repeat(49),
+            "a".repeat(95),
+            "zz".repeat(48),
+            "\u{00e9}".repeat(48),
+        ] {
+            assert!(matches!(
+                mapping_with_hashes(&[(hash, 1)]).validate(),
+                Err(PolicyError::InvalidServtdTcbMapping)
+            ));
+        }
+    }
+
+    #[test]
+    fn json_mapping_rejects_conflicting_duplicate_svns() {
+        let hash = "ab".repeat(48);
+        for duplicate in [hash.clone(), hash.to_ascii_uppercase()] {
+            assert!(matches!(
+                mapping_with_hashes(&[(hash.clone(), 1), (duplicate, 2)]).validate(),
+                Err(PolicyError::InvalidServtdTcbMapping)
+            ));
+        }
+    }
+
+    #[test]
+    fn json_mapping_preserves_identical_duplicates() {
+        let mut mapping = mapping_with_hashes(&[
+            ("ab".repeat(48), 1),
+            ("ab".repeat(48), 1),
+            ("AB".repeat(48), 1),
+            ("cd".repeat(48), 2),
+        ]);
+        mapping.validate().unwrap();
+        assert_eq!(mapping.get_engine_svn_by_tdinfo_hash(&[0xab; 48]), Some(1));
+        assert_eq!(mapping.get_engine_svn_by_tdinfo_hash(&[0xcd; 48]), Some(2));
+
+        mapping.svn_mappings.clear();
+        mapping.validate().unwrap();
+        assert!(mapping.get_engine_svn_by_tdinfo_hash(&[0xab; 48]).is_none());
     }
 
     #[test]
@@ -480,6 +566,28 @@ mod test {
             .servtd_tcb_mapping
             .verify_signature(issuer_chain.as_bytes())
             .is_ok());
+    }
+
+    #[test]
+    fn signed_conflicting_json_mapping_is_rejected() {
+        let input = include_bytes!(
+            "../../test/policy_v2/tcb_mapping_validation/conflicting_svn_signed.json"
+        );
+        let chain = include_bytes!("../../test/policy_v2/tcb_mapping_validation/issuer_chain.pem");
+        let mapping = RawServtdTcbMapping::deserialize_from_json(input).unwrap();
+        let signature = hex_string_to_bytes(&mapping.signature).unwrap();
+        crypto::verify_cert_chain_and_signature(
+            chain,
+            mapping.td_tcb_mapping.get().as_bytes(),
+            &signature,
+        )
+        .unwrap();
+
+        let result = mapping.verify_signature(chain);
+        assert!(
+            matches!(result, Err(PolicyError::InvalidServtdTcbMapping)),
+            "{result:?}"
+        );
     }
 
     #[test]
