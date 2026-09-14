@@ -327,8 +327,8 @@ fn get_policy_issuer_chain_and_measure(event_log: &mut [u8]) {
     };
 
     // RTMR1 measures the signer anchor, not the full PEM chain. Derive the
-    // anchor from the root certificate hash and dedicated leaf EKU OID, or
-    // load it directly from the 48-byte signer-anchor slot.
+    // anchor from the root certificate, leaf Subject DN/SAN, and dedicated EKU,
+    // or load it directly from the 48-byte signer-anchor slot.
     let signer_anchor = match migtd::policy::resolve_signer_anchor(anchor_source) {
         Ok(a) => a,
         Err(e) => {

@@ -24,7 +24,10 @@ SIGNER_EKU = x509.ObjectIdentifier("1.3.6.1.4.1.32473.1.1")
 SIGNER_EKU_DER = bytes.fromhex("060a2b0601040181fd590101")
 
 
-def certificate(subject, issuer, public_key, issuer_key, serial, is_ca):
+def certificate(
+    subject, issuer, public_key, issuer_key, serial, is_ca,
+    *, san_names=None, eku_oids=(SIGNER_EKU,),
+):
     builder = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -49,13 +52,52 @@ def certificate(subject, issuer, public_key, issuer_key, serial, is_ca):
         )
     )
     if not is_ca:
-        builder = builder.add_extension(x509.ExtendedKeyUsage([SIGNER_EKU]), critical=False)
+        builder = builder.add_extension(x509.ExtendedKeyUsage(eku_oids), critical=False)
+        if san_names is not None:
+            builder = builder.add_extension(x509.SubjectAlternativeName(san_names), critical=False)
     return builder.sign(issuer_key, hashes.SHA384())
 
 
 def signed_json(name, value, key):
     payload = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
     return {name: value, "signature": key.sign(payload, ec.ECDSA(hashes.SHA384())).hex()}
+
+
+def signer_anchor(root, leaf):
+    try:
+        names = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        san_input = b"\x00"
+    else:
+        san_input = b"\x01" + names.public_bytes()
+    components = [
+        b"MIGTD-RTMR1-ANCHOR-V2",
+        hashlib.sha384(root.public_bytes(serialization.Encoding.DER)).digest(),
+        hashlib.sha384(leaf.subject.public_bytes()).digest(),
+        hashlib.sha384(san_input).digest(),
+        SIGNER_EKU_DER,
+    ]
+    return hashlib.sha384(b"\x00".join(components)).digest()
+
+
+def signed_corim(payload, leaf, issuer, root, key):
+    protected = cbor2.dumps({
+        1: -35,
+        3: "application/rim+cbor",
+        15: {1: "MigTD emulation fixture"},
+        33: [
+            leaf.public_bytes(serialization.Encoding.DER),
+            issuer.public_bytes(serialization.Encoding.DER),
+            root.public_bytes(serialization.Encoding.DER),
+        ],
+    })
+    tbs = cbor2.dumps(["Signature1", protected, b"", payload])
+    signature = key.sign(tbs, ec.ECDSA(hashes.SHA384()))
+    r, s = utils.decode_dss_signature(signature)
+    cose = cbor2.CBORTag(
+        18, [protected, {}, payload, r.to_bytes(48, "big") + s.to_bytes(48, "big")],
+    )
+    return cbor2.dumps(cose)
 
 
 def generate(policy_path):
@@ -73,29 +115,26 @@ def generate(policy_path):
     leaf_key = ec.generate_private_key(ec.SECP384R1())
     root_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Root")])
     issuer_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Issuer")])
-    leaf_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Signer")])
+    leaf_name = x509.Name([
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "MigTD Test"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Signer"),
+    ])
+    san_names = [
+        x509.DNSName("migtd.example"),
+        x509.UniformResourceIdentifier("urn:tdx:migtd"),
+    ]
     root = certificate(root_name, root_name, root_key.public_key(), root_key, 1, True)
     issuer = certificate(issuer_name, root_name, issuer_key.public_key(), root_key, 2, True)
-    leaf = certificate(leaf_name, issuer_name, leaf_key.public_key(), issuer_key, 3, False)
-    root_der = root.public_bytes(serialization.Encoding.DER)
-    chain_der = [
-        leaf.public_bytes(serialization.Encoding.DER),
-        issuer.public_bytes(serialization.Encoding.DER),
-        root_der,
-    ]
+    leaf = certificate(
+        leaf_name, issuer_name, leaf_key.public_key(), issuer_key, 3, False, san_names=san_names,
+    )
     chain_pem = (
         leaf.public_bytes(serialization.Encoding.PEM)
         + issuer.public_bytes(serialization.Encoding.PEM)
         + root.public_bytes(serialization.Encoding.PEM)
     )
-    anchor = hashlib.sha384(
-        b"MIGTD-RTMR1-ANCHOR-V1\0"
-        + hashlib.sha384(root_der).digest()
-        + b"\0"
-        + SIGNER_EKU_DER
-    ).digest()
     (output / "issuer_chain.pem").write_bytes(chain_pem)
-    (output / "signer_anchor.bin").write_bytes(anchor)
+    (output / "signer_anchor.bin").write_bytes(signer_anchor(root, leaf))
 
     for number, revoked, filename in (
         (7, False, "servtd.crl.pem"),
@@ -134,17 +173,29 @@ def generate(policy_path):
     payload = cbor2.dumps(cbor2.CBORTag(
         501, {0: "migtd-emulation", 1: [cbor2.CBORTag(506, cbor2.dumps(comid))]},
     ))
-    protected = cbor2.dumps({
-        1: -35,
-        3: "application/rim+cbor",
-        15: {1: "MigTD emulation fixture"},
-        33: chain_der,
-    })
-    tbs = cbor2.dumps(["Signature1", protected, b"", payload])
-    signature = leaf_key.sign(tbs, ec.ECDSA(hashes.SHA384()))
-    r, s = utils.decode_dss_signature(signature)
-    cose = cbor2.CBORTag(18, [protected, {}, payload, r.to_bytes(48, "big") + s.to_bytes(48, "big")])
-    (output / "tcb_mapping.corim").write_bytes(cbor2.dumps(cose))
+    (output / "tcb_mapping.corim").write_bytes(signed_corim(payload, leaf, issuer, root, leaf_key))
+    other_subject = x509.Name([
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Other Organization"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Signer"),
+    ])
+    other_san = [san_names[0], x509.UniformResourceIdentifier("urn:tdx:other")]
+    variants = [
+        ("rotated", leaf_name, san_names, [SIGNER_EKU]),
+        ("subject_mismatch", other_subject, san_names, [SIGNER_EKU]),
+        ("san_mismatch", leaf_name, other_san, [SIGNER_EKU]),
+        ("no_san", leaf_name, None, [SIGNER_EKU]),
+        ("other_eku", leaf_name, san_names, [x509.ObjectIdentifier("1.3.6.1.4.1.32473.1.2")]),
+        ("multiple_eku", leaf_name, san_names, [
+            x509.ObjectIdentifier("1.3.6.1.5.5.7.3.3"), SIGNER_EKU,
+        ]),
+    ]
+    for serial, (name, subject, names, purposes) in enumerate(variants, start=4):
+        key = ec.generate_private_key(ec.SECP384R1())
+        cert = certificate(
+            subject, issuer_name, key.public_key(), issuer_key, serial, False,
+            san_names=names, eku_oids=purposes,
+        )
+        (output / f"tcb_mapping_{name}.corim").write_bytes(signed_corim(payload, cert, issuer, root, key))
 
     collateral = {
         "majorVersion": 1,
