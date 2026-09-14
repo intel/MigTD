@@ -39,9 +39,11 @@ pub const MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID: Guid = Guid::from_fields(
 
 // {2B9D5A84-6F3C-4E71-8A2D-0C7E1F4B6A93}
 //
-// FFS GUID of the 48-byte RTMR1 signer anchor
-// `A = SHA384(tag || 0x00 || SHA384(rootDER) || 0x00 || DER(signerEKUOID))`,
-// where `tag = "MIGTD-RTMR1-ANCHOR-V1"`.
+// FFS GUID of the 48-byte RTMR1 signer anchor produced by
+// `policy::compute_signer_anchor` with domain tag "MIGTD-RTMR1-ANCHOR".
+// It binds root certificate DER, full leaf Subject DN DER, and the
+// dedicated signer EKU.
+// See doc/policy_v2.md for the DER encoding formula.
 // The pipeline can enroll this directly instead of the policy issuer chain PEM.
 // Retained JSON TCB mappings then need an explicit embedded mapping issuer chain.
 // Measured into RTMR1 exactly like the PEM-derived anchor, so the two forms are
@@ -97,9 +99,8 @@ pub fn get_policy_issuer_chain() -> Option<&'static [u8]> {
 }
 
 /// Read the directly enrolled 48-byte RTMR1 signer anchor from the CFV.
-/// Returns `None` when only the legacy policy
-/// issuer chain PEM is enrolled; callers then fall back to
-/// [`get_policy_issuer_chain`] and derive the anchor from the PEM.
+/// Returns `None` when the direct slot is absent; callers then use
+/// [`get_policy_issuer_chain`] to derive the anchor from PEM.
 pub fn get_signer_anchor() -> Option<&'static [u8]> {
     let cfv = get_config_volume();
     fv::get_file_from_fv(
@@ -111,7 +112,8 @@ pub fn get_signer_anchor() -> Option<&'static [u8]> {
 
 /// Resolve the signer-anchor *source* bytes from the CFV: the 48-byte anchor
 /// slot when present, otherwise the policy issuer chain PEM. Both forms are
-/// accepted by `policy::resolve_signer_anchor`. Returns `None` only when
+/// resolved by `policy::resolve_signer_anchor`; an invalid
+/// direct input is not retried as PEM. Returns `None` only when
 /// neither slot is enrolled.
 pub fn get_signer_anchor_source() -> Option<&'static [u8]> {
     get_signer_anchor().or_else(get_policy_issuer_chain)

@@ -98,6 +98,7 @@ show_usage() {
     echo "    example files in config/AzCVMEmu. Some reference values in those files for the ServTD may become"
     echo "    outdated over time. Use ./sh_script/build_AzCVMEmu_policy_and_test.sh to generate updated policy"
     echo "    and issuer chain files."
+    echo "  - Both signer inputs bind the root certificate, full Subject DN, and dedicated EKU."
     echo "  - Migration flow automatically includes EnableLogArea and GetTDReport requests before"
     echo "    the actual migration, ensuring logging is enabled and a TD report is generated."
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"

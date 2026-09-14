@@ -87,11 +87,11 @@ pub(crate) struct BuildArgs {
     /// Use migration policy v2
     #[clap(long)]
     policy_v2: bool,
-    /// Issuer chain of migration policy v2. Provide this OR `--signer-anchor`
-    /// (at least one is required when `policy_v2` is set).
+    /// PEM issuer chain from which policy v2 derives its signer anchor.
+    /// Provide this OR `--signer-anchor` (at least one is required for policy v2).
     #[clap(long)]
     policy_issuer_chain: Option<PathBuf>,
-    /// Path of the 48-byte RTMR1 signer anchor to enroll as an alternative to
+    /// Path of the raw 48-byte RTMR1 signer anchor, instead of
     /// `--policy-issuer-chain`.
     #[clap(long)]
     signer_anchor: Option<PathBuf>,

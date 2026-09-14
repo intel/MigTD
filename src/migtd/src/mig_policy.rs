@@ -109,9 +109,9 @@ mod v2 {
         let mut verified_policy = raw.verify(cert_chain)?;
 
         // Attach the optional CoRIM hash endorsement enrolled in the CFV. Its
-        // COSE signer chain is bound to the SAME RTMR1 signer anchor as the CFV
-        // policy issuer chain, so a CoRIM signed under a different root cert or
-        // signer EKU fails closed. The CoRIM is NOT measured
+        // COSE signer chain must reproduce the RTMR1 anchor enrolled directly
+        // or derived from the CFV PEM. A different root DER, full Subject DN DER,
+        // or signer EKU fails closed. The CoRIM is NOT measured
         // (`config::get_servtd_corim` is never read by `do_measurements`), so
         // enrolling it does not change the ServTD/`tdinfo_hash`.
         // MigTD has no trusted wall clock. `decode_signed` rejects CWT
@@ -451,15 +451,15 @@ mod v2 {
         let events = parse_events(event_log).ok_or(PolicyError::InvalidEventLog)?;
         check_policy_issuer_chain_integrity(policy_issuer_chain, &events)?;
 
-        // 2. Verify the peer policy using its RTMR1-bound issuer chain
+        // 2. Verify the peer policy using its RTMR1-bound anchor source.
         let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
         let local_servtd_crl = local_policy.servtd_crl.as_bytes();
         #[cfg_attr(not(feature = "servtd_corim"), allow(unused_mut))]
         let mut verified_policy = unverified_policy
             .verify_with_authoritative_servtd_crl(policy_issuer_chain, local_servtd_crl)?;
 
-        // 3. Compare the peer's RTMR1 signer anchor (root certificate hash +
-        //    dedicated leaf EKU OID), not the full policy issuer chain PEM.
+        // 3. Compare the peer's RTMR1 signer anchor (root certificate DER,
+        //    full Subject DN DER, and dedicated EKU), not full chain PEM.
         //    This supports direct-anchor enrollment without a PEM chain.
         //    Policy verification has already bound the peer's embedded mapping
         //    chain to `signer_anchor`.
@@ -467,9 +467,9 @@ mod v2 {
             return Err(PolicyError::PeerCertChainValidation);
         }
 
-        // Separately preserve Subject DN/SAN continuity for JSON mapping
-        // signers when both sides ship a chain; the anchor does not bind these
-        // identities. Absent on both sides (CoRIM-only) is fine; one-sided fails.
+        // Cross-check JSON mapping chains as defense in depth; the anchor
+        // already binds Subject DN and purpose. Absent on both sides
+        // (CoRIM-only) is fine; one-sided fails.
         match (
             local_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
             verified_policy.servtd_tcb_mapping_issuer_chain.as_deref(),
@@ -483,7 +483,7 @@ mod v2 {
             _ => return Err(PolicyError::PeerCertChainValidation),
         }
 
-        // Likewise preserve Subject DN/SAN continuity for TD Identity signers
+        // Likewise preserve Subject DN continuity for TD Identity signers
         // when both sides ship a chain. If exactly one side has it, the chains
         // do not match and it fails closed.
         match (

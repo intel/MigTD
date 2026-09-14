@@ -27,7 +27,9 @@ popd
 `--mapping-chain` is required even when `--identity-chain` is supplied. The
 generator always includes `servtdTcbMappingIssuerChain`; it does not choose an
 implicit mapping signer. MigTD verifies that this chain resolves to the enrolled
-RTMR1 signer anchor.
+RTMR1 signer anchor: root certificate DER, full leaf Subject DN DER, and
+dedicated EKU. See the
+[anchor contract](../../doc/policy_v2.md#direct-signer-anchor-enrollment).
 
 For SVN-only collateral, omit both `--identity` and `--identity-chain`. When an
 identity is supplied, its separate chain remains required and is not replaced

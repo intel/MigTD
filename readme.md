@@ -84,6 +84,11 @@ To specify the root certificate to be enrolled, you can use the `--root-ca` argu
 cargo image --root-ca /path/to/cert
 ```
 
+The `--root-ca` input belongs to policy v1. For `--policy-v2`, supply `--policy`
+and either `--policy-issuer-chain` or a raw 48-byte `--signer-anchor`. Policy v2
+uses the root-certificate/full Subject DN/dedicated-EKU signer anchor. See the
+[policy v2 guide](doc/policy_v2.md#direct-signer-anchor-enrollment).
+
 To specify the policy file to be enrolled, you can use the `--policy` argument:
 ```
 cargo image --policy /path/to/policy

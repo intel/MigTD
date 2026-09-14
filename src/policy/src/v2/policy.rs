@@ -201,8 +201,8 @@ pub struct VerifiedPolicy<'a> {
     pub servtd_identity_issuer_chain: Option<String>,
     /// Authoritative signer CRL from top-level or legacy JSON collateral.
     pub servtd_crl: String,
-    /// RTMR1 signer anchor binding the root certificate hash to the DER-encoded
-    /// dedicated leaf EKU OID, used to authenticate peer collateral.
+    /// RTMR1 signer anchor binding root certificate DER, full leaf Subject DN
+    /// DER, and dedicated EKU, used to authenticate peer mappings.
     pub signer_anchor: [u8; SHA384_DIGEST_SIZE],
     /// Authenticated CoRIM; when set, it is the sole hash-to-SVN authority.
     #[cfg(feature = "servtd_corim")]
@@ -357,8 +357,8 @@ impl<'a> RawPolicyData<'a> {
         Ok(policy_data.collaterals)
     }
 
-    /// Verify the servtd collateral using the given (RTMR1-anchored) issuer
-    /// chain.
+    /// Verify servtd collateral against the RTMR1 signer-anchor source:
+    /// a direct 48-byte anchor or a PEM chain from which the anchor is derived.
     pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
         let verified_policy = self.verify_signatures_and_anchors(issuer_chain)?;
         verified_policy.verify_signer_chains_not_revoked(verified_policy.servtd_crl.as_bytes())?;
