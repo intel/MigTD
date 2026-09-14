@@ -186,7 +186,7 @@ impl ServtdCorim {
 ///    an RFC 9360 `x5chain` to be present.
 /// 3. Verify the x5chain integrity and the COSE signature over the
 ///    `Sig_structure1` TBS (delegated to the `crypto` crate).
-/// 4. Bind the chain's root plus each dedicated EKU purpose the leaf asserts to
+/// 4. Bind the root, leaf Subject DN/SAN, and each asserted dedicated EKU to
 ///    `expected_signer_anchor` — the RTMR1-measured policy signer anchor — so
 ///    the CoRIM signer is the same root-of-trust the firmware measured from the
 ///    CFV. The anchor is recomputed for each asserted purpose and one must
@@ -221,19 +221,20 @@ fn verify_and_extract_payload(
         .to_be_signed(&[])
         .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
-    let (root_der, leaf_eku_oids_der) =
-        crypto::verify_cose_sign1_es384_x5chain(&certs, &tbs, &envelope.signature)
-            .map_err(|_| PolicyError::SignatureVerificationFailed)?;
+    let signer = crypto::verify_cose_sign1_es384_x5chain(&certs, &tbs, &envelope.signature)
+        .map_err(|_| PolicyError::SignatureVerificationFailed)?;
 
     // Anchor-first match: the signer leaf may assert the dedicated MigTD
     // policy-signer purpose alongside unrelated EKUs (e.g. a code-signing OID).
     // Recompute the signer anchor for each asserted purpose and accept iff one
     // reproduces the RTMR1-measured `expected_signer_anchor` under the presented
-    // root. This binds the CoRIM signer to the measured root-of-trust without
+    // root and leaf Subject DN/SAN. This binds identity and purpose without
     // the firmware hard-coding which EKU OID identifies the signer.
     let mut anchor_matches = false;
-    for leaf_eku_oid_der in &leaf_eku_oids_der {
-        if compute_signer_anchor(&root_der, leaf_eku_oid_der)? == *expected_signer_anchor {
+    for leaf_eku_oid_der in &signer.leaf_eku_oids_der {
+        if compute_signer_anchor(&signer.root_der, &signer.leaf_identity, leaf_eku_oid_der)?
+            == *expected_signer_anchor
+        {
             anchor_matches = true;
             break;
         }
@@ -352,6 +353,7 @@ fn svn_exact(m: &MeasurementMap) -> Option<u64> {
 pub(super) mod test {
     use super::*;
     use alloc::{vec, vec::Vec};
+    use core::convert::TryInto;
     use corim::{
         builder::{ComidBuilder, CorimBuilder},
         types::{
@@ -390,6 +392,68 @@ pub(super) mod test {
             .unwrap();
         let hash = crate::v2::hex_string_to_bytes(EMULATION_HASH).unwrap();
         assert_eq!(corim.lookup_by_tdinfo_hash(&hash).unwrap().isvsvn, 1);
+    }
+
+    fn verify_fixture_signature(cose: &[u8]) -> crypto::VerifiedCoseSigner {
+        let envelope = decode_signed_corim(cose).unwrap();
+        let certs = envelope.protected.x5chain.as_ref().unwrap().certs();
+        let tbs = envelope.to_be_signed(&[]).unwrap();
+        crypto::verify_cose_sign1_es384_x5chain(&certs, &tbs, &envelope.signature).unwrap()
+    }
+
+    #[test]
+    fn signed_corim_preserves_identity_across_key_rotation_and_extra_ekus() {
+        let original = verify_fixture_signature(EMULATION_COSE);
+        for cose in [
+            include_bytes!("../../test/policy_v2/corim/tcb_mapping_rotated.corim").as_slice(),
+            include_bytes!("../../test/policy_v2/corim/tcb_mapping_multiple_eku.corim").as_slice(),
+        ] {
+            let signer = verify_fixture_signature(cose);
+            assert_eq!(signer.root_der, original.root_der);
+            assert_eq!(signer.leaf_identity, original.leaf_identity);
+            let corim = ServtdCorim::decode_signed(cose, 0, EMULATION_ANCHOR).unwrap();
+            corim
+                .verify_signer_chain_not_revoked(EMULATION_CRL)
+                .unwrap();
+            let hash = crate::v2::hex_string_to_bytes(EMULATION_HASH).unwrap();
+            assert_eq!(corim.lookup_by_tdinfo_hash(&hash).unwrap().isvsvn, 1);
+        }
+    }
+
+    #[test]
+    fn signed_corim_rejects_dn_san_and_purpose_changes() {
+        let original = verify_fixture_signature(EMULATION_COSE);
+        for cose in [
+            include_bytes!("../../test/policy_v2/corim/tcb_mapping_subject_mismatch.corim")
+                .as_slice(),
+            include_bytes!("../../test/policy_v2/corim/tcb_mapping_san_mismatch.corim").as_slice(),
+            include_bytes!("../../test/policy_v2/corim/tcb_mapping_no_san.corim").as_slice(),
+            include_bytes!("../../test/policy_v2/corim/tcb_mapping_other_eku.corim").as_slice(),
+        ] {
+            let signer = verify_fixture_signature(cose);
+            assert_eq!(signer.root_der, original.root_der);
+            assert!(matches!(
+                ServtdCorim::decode_signed(cose, 0, EMULATION_ANCHOR),
+                Err(PolicyError::InvalidServtdTcbMapping)
+            ));
+        }
+    }
+
+    #[test]
+    fn signed_corim_rejects_legacy_eku_only_anchor() {
+        let signer = verify_fixture_signature(EMULATION_COSE);
+        let mut legacy_input = b"MIGTD-RTMR1-ANCHOR-V1\0".to_vec();
+        legacy_input.extend_from_slice(&crypto::hash::digest_sha384(&signer.root_der).unwrap());
+        legacy_input.push(0);
+        legacy_input.extend_from_slice(&signer.leaf_eku_oids_der[0]);
+        let legacy_anchor: [u8; SHA384_DIGEST_SIZE] = crypto::hash::digest_sha384(&legacy_input)
+            .unwrap()
+            .try_into()
+            .unwrap();
+        assert!(matches!(
+            ServtdCorim::decode_signed(EMULATION_COSE, 0, &legacy_anchor),
+            Err(PolicyError::InvalidServtdTcbMapping)
+        ));
     }
 
     #[test]
