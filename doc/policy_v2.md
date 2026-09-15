@@ -48,9 +48,9 @@ signed CRL with an empty revocation list, not an empty file or an omitted field.
 The CRL must be signed by the immediate, non-root issuer of each signing leaf,
 not just any CA present in its chain. That intermediate must have
 `BasicConstraints.cA=true` and an explicit `KeyUsage.cRLSign` permission.
-Missing, malformed, or duplicate KeyUsage extensions are rejected. The policy
-and identity may use separate leaves and keys, but both must have the same
-issuing intermediate when sharing this CRL.
+Missing, malformed, or duplicate KeyUsage extensions are rejected. Mapping
+and optional identity may use separate leaves and keys, but both must have
+the same issuing intermediate when sharing this CRL.
 
 Only complete, direct, issuer-wide CRLs are supported. Delta CRLs, issuing
 distribution points, indirect entries, reason-scoped or delegated certificate
@@ -69,12 +69,17 @@ Produce the ServTD identity, TCB mapping, and CRL collateral bundle:
 
 ```sh
 cargo build -p servtd-collateral-generator
-./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json --servtd-crl /path/to/servtd_signers.crl.pem -o servtd_collateral.json
+./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json --mapping-chain /path/to/mapping_issuer_chain.pem --servtd-crl /path/to/servtd_signers.crl.pem -o servtd_collateral.json
 ```
 
-Result: `servtd_collateral.json` contains the signed ServTD identity, its issuer
-chain, the signed TCB mapping, and the CRL. The TCB mapping is verified with the
-policy issuer chain whose signer anchor is measured into RTMR1.
+`--mapping-chain` is required and is always embedded as
+`servtdTcbMappingIssuerChain`. Omit both `--identity` and `--identity-chain` for
+SVN-only collateral; otherwise the identity retains its separate issuer chain.
+
+Result: `servtd_collateral.json` contains the signed TCB mapping, its issuer
+chain, the CRL, and any signed ServTD identity with its issuer chain. MigTD
+verifies the mapping with its explicit chain and requires that chain to resolve
+to the signer anchor measured into RTMR1.
 
 Missing, null, malformed, or unauthenticated CRLs are rejected during policy
 verification, as are CRLs without a CRL-number extension. MigTD checks peer
