@@ -720,7 +720,7 @@ echo
 # Each variant is built by:
 #   1. Signing td_identity with an identity leaf key
 #   2. Signing tcb_mapping with the RTMR1-bound policy leaf key
-#   3. Building servtd_collateral embedding the identity issuer chain
+#   3. Building servtd_collateral embedding the mapping and identity issuer chains
 #   4. Merging policy data with collaterals + servtd_collateral
 #   5. Wrapping policyData without an outer signature
 #
@@ -741,6 +741,7 @@ build_signed_policy_variant() {
     local identity_key="$CERT_DIR/identity_signing_${identity_suffix}_pkcs8.key"
     local policy_key="$CERT_DIR/policy_signing_${policy_suffix}_pkcs8.key"
     local identity_chain="$CERT_DIR/identity_issuer_chain_${identity_suffix}.pem"
+    local mapping_chain="$CERT_DIR/policy_issuer_chain_${policy_suffix}.pem"
 
     local td_identity_signed="$TEMP_DIR/td_identity_signed_${label}.json"
     local tcb_mapping_signed="$TEMP_DIR/tcb_mapping_signed_${label}.json"
@@ -767,6 +768,7 @@ build_signed_policy_variant() {
         --identity "$td_identity_signed" \
         --identity-chain "$identity_chain" \
         --mapping "$tcb_mapping_signed" \
+        --mapping-chain "$mapping_chain" \
         --servtd-crl "$CERT_DIR/servtd.crl.pem" \
         --output "$servtd_collateral"
 
