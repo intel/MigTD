@@ -541,6 +541,7 @@ IDENTITY_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
     --identity "$TD_IDENTITY_SIGNED" \
     --identity-chain "$IDENTITY_CHAIN" \
     --mapping "$TCB_MAPPING_SIGNED" \
+    --mapping-chain "$CERT_DIR/policy_issuer_chain.pem" \
     --servtd-crl "$CERT_DIR/servtd.crl.pem" \
     --output "$SERVTD_COLLATERAL"
 
