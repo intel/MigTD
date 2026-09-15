@@ -13,8 +13,7 @@ struct ServtdCollateral<'a> {
     major_version: u32,
     minor_version: u32,
     servtd_tcb_mapping: &'a RawValue,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    servtd_tcb_mapping_issuer_chain: Option<String>,
+    servtd_tcb_mapping_issuer_chain: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     servtd_identity: Option<&'a RawValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -26,16 +25,15 @@ pub fn build_servtd_collateral(
     identity_path: Option<&Path>,
     identity_chain_path: Option<&Path>,
     mapping_path: &Path,
-    mapping_chain_path: Option<&Path>,
+    mapping_chain_path: &Path,
     servtd_crl_path: &Path,
 ) -> Result<Vec<u8>> {
     let mapping_bytes = read_file(mapping_path)?;
     let mapping_val: &RawValue = serde_json::from_slice(&mapping_bytes)
         .context("Failed to parse mapping JSON (expected signed mapping JSON)")?;
 
-    let mapping_chain = mapping_chain_path
-        .map(|path| String::from_utf8(read_file(path)?).context("Mapping issuer chain not UTF-8"))
-        .transpose()?;
+    let mapping_chain = String::from_utf8(read_file(mapping_chain_path)?)
+        .context("Mapping issuer chain not UTF-8")?;
 
     // The TD Identity is optional; when present it must come with its chain
     // (enforced at the CLI via clap `requires`).
@@ -82,7 +80,7 @@ mod tests {
             Some(&config.join("td_identity_signed.json")),
             Some(&config.join("policy_issuer_chain.pem")),
             &config.join("tcb_mapping_signed.json"),
-            None,
+            &config.join("policy_issuer_chain.pem"),
             &config.join("servtd.crl.pem"),
         )
         .unwrap();
@@ -91,5 +89,34 @@ mod tests {
             collateral["servtdCrl"],
             fs::read_to_string(config.join("servtd.crl.pem")).unwrap()
         );
+        assert_eq!(
+            collateral["servtdTcbMappingIssuerChain"],
+            fs::read_to_string(config.join("policy_issuer_chain.pem")).unwrap()
+        );
+        assert_eq!(
+            collateral["servtdIdentityIssuerChain"],
+            fs::read_to_string(config.join("policy_issuer_chain.pem")).unwrap()
+        );
+        assert!(collateral.get("servtdIdentity").is_some());
+    }
+
+    #[test]
+    fn mapping_chain_is_emitted_without_identity() {
+        let config = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/templates");
+        let bytes = build_servtd_collateral(
+            None,
+            None,
+            &config.join("tcb_mapping_signed.json"),
+            &config.join("policy_issuer_chain.pem"),
+            &config.join("servtd.crl.pem"),
+        )
+        .unwrap();
+        let collateral: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            collateral["servtdTcbMappingIssuerChain"],
+            fs::read_to_string(config.join("policy_issuer_chain.pem")).unwrap()
+        );
+        assert!(collateral.get("servtdIdentity").is_none());
+        assert!(collateral.get("servtdIdentityIssuerChain").is_none());
     }
 }

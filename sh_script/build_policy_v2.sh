@@ -65,6 +65,7 @@ cargo build -p servtd-collateral-generator
   --identity "$signed_identity_file" \
   --identity-chain "$key_dir/migtd_issuer_chain.pem" \
   --mapping "$config_temp_dir/tcb_mapping_signed.json" \
+  --mapping-chain "$key_dir/migtd_issuer_chain.pem" \
   --servtd-crl "$servtd_crl_file" \
   -o "$config_temp_dir/servtd_collateral.json"
 
