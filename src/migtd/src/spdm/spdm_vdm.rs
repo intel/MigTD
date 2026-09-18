@@ -25,11 +25,14 @@ pub const VDM_MESSAGE_MINOR_VERSION: u8 = 0;
 
 pub const VDM_MESSAGE_EXCHANGE_PUB_KEY_REQ_ELEMENT_COUNT: u8 = 1;
 pub const VDM_MESSAGE_EXCHANGE_PUB_KEY_RSP_ELEMENT_COUNT: u8 = 1;
+#[cfg(not(feature = "policy_v2"))]
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT: u8 = 5;
+#[cfg(feature = "policy_v2")]
+pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT: u8 = 4;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 3;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_REQ_ELEMENT_COUNT: u8 = 2;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_RSP_ELEMENT_COUNT: u8 = 2;
-pub const VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT: u8 = 5;
+pub const VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT: u8 = 4;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 3;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_REQ_COUNT: u8 = 1;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_RSP_COUNT: u8 = 0;
@@ -632,4 +635,80 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
     };
 
     (Ok(()), Some(&rsp_bytes[..len]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_encoded_element_count(
+        op_code: VdmMessageOpCode,
+        element_count: u8,
+        elements: &[VdmMessageElementType],
+    ) {
+        let mut buffer = [0u8; 64];
+        let mut writer = Writer::init(&mut buffer);
+        VdmMessage {
+            major_version: VDM_MESSAGE_MAJOR_VERSION,
+            minor_version: VDM_MESSAGE_MINOR_VERSION,
+            op_code,
+            element_count,
+        }
+        .encode(&mut writer)
+        .unwrap();
+        for &element_type in elements {
+            VdmMessageElement {
+                element_type,
+                length: 1,
+            }
+            .encode(&mut writer)
+            .unwrap();
+            writer.extend_from_slice(&[0]).unwrap();
+        }
+
+        let used = writer.used();
+        let mut reader = Reader::init(&buffer[..used]);
+        let header = VdmMessage::read(&mut reader).unwrap();
+        let mut actual_count = 0;
+        while reader.any_left() {
+            let element = VdmMessageElement::read(&mut reader).unwrap();
+            reader.take(element.length as usize).unwrap();
+            actual_count += 1;
+        }
+        assert_eq!(actual_count, elements.len());
+        assert_eq!(usize::from(header.element_count), actual_count);
+    }
+
+    #[test]
+    fn migration_attestation_header_matches_element_count() {
+        let mut elements = Vec::from([
+            VdmMessageElementType::QuoteMy,
+            VdmMessageElementType::EventLogMy,
+            VdmMessageElementType::MigPolicyMy,
+            VdmMessageElementType::SerVtdExt,
+        ]);
+        if !cfg!(feature = "policy_v2") {
+            elements.push(VdmMessageElementType::TdReportInit);
+        }
+        assert_encoded_element_count(
+            VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
+            VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT,
+            &elements,
+        );
+    }
+
+    #[cfg(feature = "policy_v2")]
+    #[test]
+    fn rebind_attestation_header_matches_element_count() {
+        assert_encoded_element_count(
+            VdmMessageOpCode::ExchangeRebindAttestInfoReq,
+            VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT,
+            &[
+                VdmMessageElementType::TdReportMy,
+                VdmMessageElementType::EventLogMy,
+                VdmMessageElementType::MigPolicyMy,
+                VdmMessageElementType::SerVtdExt,
+            ],
+        );
+    }
 }

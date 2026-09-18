@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{self, value::RawValue};
 
 use crate::{
-    v2::{bytes_to_hex_string, hex_string_to_bytes, policy, verify_event_hash},
+    v2::{
+        bytes_to_hex_string,
+        measurement::{compute_signer_anchor_from_chain_pem, extract_canonical_policy_data_bytes},
+        policy, verify_event_hash,
+    },
     CcEvent, Collaterals, EventName, PolicyError, ServtdCollateral, TdIdentity, TdTcbMapping,
 };
 
@@ -166,6 +170,9 @@ pub struct PolicyEvaluationInfo {
 
     /// The minimal crl_num of root_ca_crl
     pub root_ca_crl_num: Option<u32>,
+
+    /// The minimal CRL number for the servTD signer chain.
+    pub servtd_crl_num: Option<u32>,
 }
 
 pub struct VerifiedPolicy<'a> {
@@ -173,7 +180,7 @@ pub struct VerifiedPolicy<'a> {
     pub servtd_identity: TdIdentity,
     pub servtd_identity_issuer_chain: String,
     pub servtd_tcb_mapping: TdTcbMapping,
-    pub servtd_tcb_mapping_issuer_chain: String,
+    pub servtd_crl: String,
     /// The policy signing certificate chain (PEM) used to verify this policy.
     pub policy_issuer_chain: String,
 }
@@ -192,7 +199,20 @@ pub fn check_policy_integrity(
     policy: &[u8],
     events: &BTreeMap<EventName, CcEvent>,
 ) -> Result<(), PolicyError> {
-    if !verify_event_hash(events, &EventName::MigTdPolicy, policy)? {
+    let policy_data_bytes = extract_canonical_policy_data_bytes(policy)?;
+    if !verify_event_hash(events, &EventName::MigTdPolicyData, &policy_data_bytes)? {
+        return Err(PolicyError::PolicyHashMismatch);
+    }
+
+    Ok(())
+}
+
+pub fn check_policy_issuer_chain_integrity(
+    issuer_chain: &[u8],
+    events: &BTreeMap<EventName, CcEvent>,
+) -> Result<(), PolicyError> {
+    let signer_anchor = compute_signer_anchor_from_chain_pem(issuer_chain)?;
+    if !verify_event_hash(events, &EventName::MigTdPolicySigner, &signer_anchor)? {
         return Err(PolicyError::PolicyHashMismatch);
     }
 
@@ -204,7 +224,6 @@ pub fn check_policy_integrity(
 pub struct RawPolicyData<'a> {
     #[serde(borrow)]
     pub policy_data: &'a RawValue,
-    pub signature: String,
 }
 
 impl<'a> RawPolicyData<'a> {
@@ -218,29 +237,36 @@ impl<'a> RawPolicyData<'a> {
         Ok(policy_data.collaterals)
     }
 
-    /// Verify the policy signature and servtd collateral using the given issuer chain.
+    /// Verify servTD collateral using the RTMR1-measured policy issuer chain.
     pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
         let policy_issuer_chain = core::str::from_utf8(issuer_chain)
             .map_err(|_| PolicyError::InvalidPolicy)?
             .to_string();
 
-        // Step 1: Verify signature over raw policy data
-        let policy_data = self.verify_policy_data_signature(issuer_chain)?;
+        let policy_data: PolicyData<'a> =
+            serde_json::from_str(self.policy_data.get()).map_err(|_| PolicyError::InvalidPolicy)?;
 
-        // Step 2: Verify servtd collateral signatures using their own embedded chains
         let servtd_collateral = &policy_data.servtd_collateral;
         let servtd_identity = servtd_collateral
             .servtd_identity
             .verify_signature(servtd_collateral.servtd_identity_issuer_chain.as_bytes())?;
         let servtd_tcb_mapping = servtd_collateral
             .servtd_tcb_mapping
-            .verify_signature(servtd_collateral.servtd_tcb_mapping_issuer_chain.as_bytes())?;
+            .verify_signature(issuer_chain)?;
 
         let servtd_identity_issuer_chain = servtd_collateral.servtd_identity_issuer_chain.clone();
-        let servtd_tcb_mapping_issuer_chain =
-            servtd_collateral.servtd_tcb_mapping_issuer_chain.clone();
+        let servtd_crl = servtd_collateral.servtd_crl.clone();
 
-        // Step 3: Sanity checks
+        crypto::verify_signer_chain_not_revoked(issuer_chain, servtd_crl.as_bytes())
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        crypto::verify_signer_chain_not_revoked(
+            servtd_identity_issuer_chain.as_bytes(),
+            servtd_crl.as_bytes(),
+        )
+        .map_err(|_| PolicyError::SignerRevoked)?;
+        crypto::crl::get_crl_number(servtd_crl.as_bytes())
+            .map_err(|_| PolicyError::InvalidCollateral)?;
+
         if !policy_data.validate() {
             return Err(PolicyError::InvalidParameter);
         }
@@ -250,26 +276,9 @@ impl<'a> RawPolicyData<'a> {
             servtd_identity,
             servtd_identity_issuer_chain,
             servtd_tcb_mapping,
-            servtd_tcb_mapping_issuer_chain,
+            servtd_crl,
             policy_issuer_chain,
         })
-    }
-
-    fn verify_policy_data_signature(
-        &self,
-        issuer_chain: &[u8],
-    ) -> Result<PolicyData<'a>, PolicyError> {
-        let signature = hex_string_to_bytes(&self.signature)?;
-
-        crypto::verify_cert_chain_and_signature(
-            issuer_chain,
-            self.policy_data.get().as_bytes(),
-            &signature,
-        )
-        .map_err(|_| PolicyError::SignatureVerificationFailed)?;
-
-        serde_json::from_str::<PolicyData>(self.policy_data.get())
-            .map_err(|_| PolicyError::InvalidPolicy)
     }
 }
 
@@ -523,7 +532,7 @@ impl PlatformPolicy {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CrlPolicy {
     pck_crl_num: Option<PolicyProperty>,
     root_ca_crl_num: Option<PolicyProperty>,
@@ -557,6 +566,7 @@ impl CrlPolicy {
 #[serde(rename_all = "camelCase")]
 struct ServtdPolicy {
     migtd_identity: MigTdIdentityPolicy,
+    servtd_crl_num: Option<PolicyProperty>,
 }
 
 impl ServtdPolicy {
@@ -602,6 +612,13 @@ impl ServtdPolicy {
                     .and_then(|s| s.try_into().ok()),
             )? {
                 return Err(PolicyError::SvnMismatch);
+            }
+        }
+
+        if let Some(property) = &self.servtd_crl_num {
+            let servtd_crl_num = value.servtd_crl_num.ok_or(PolicyError::CrlEvaluation)?;
+            if !property.evaluate_integer(servtd_crl_num, relative_reference.servtd_crl_num)? {
+                return Err(PolicyError::CrlEvaluation);
             }
         }
 
@@ -897,6 +914,14 @@ mod test {
     use super::*;
     use alloc::{string::ToString, vec};
 
+    #[allow(dead_code)]
+    mod revocation_fixtures {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/test/policy_v2/revocation.rs"
+        ));
+    }
+
     #[test]
     fn test_parse_policy_data() {
         let policy = include_str!("../../test/policy_v2/policy_data.json");
@@ -910,6 +935,108 @@ mod test {
         let issuer_chain =
             include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
         policy.verify(issuer_chain).unwrap();
+    }
+
+    #[test]
+    fn test_policy_requires_servtd_crl() {
+        let original: serde_json::Value =
+            serde_json::from_str(include_str!("../../test/policy_v2/policy_v2.json")).unwrap();
+        let issuer_chain =
+            include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
+
+        for crl in [None, Some(serde_json::Value::Null)] {
+            let mut policy = original.clone();
+            let collateral = policy["policyData"]["servtdCollateral"]
+                .as_object_mut()
+                .unwrap();
+            if let Some(crl) = crl {
+                collateral.insert("servtdCrl".to_string(), crl);
+            } else {
+                collateral.remove("servtdCrl");
+            }
+            let input = serde_json::to_vec(&policy).unwrap();
+            let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+            assert!(matches!(
+                policy.verify(issuer_chain),
+                Err(PolicyError::InvalidPolicy)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_policy_accepts_empty_servtd_crl() {
+        use revocation_fixtures as fixtures;
+
+        let input = serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
+        let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+        let verified = policy.verify(fixtures::POLICY_CHAIN).unwrap();
+        assert_eq!(verified.servtd_crl.as_bytes(), fixtures::EMPTY_CRL);
+    }
+
+    #[test]
+    fn test_policy_requires_servtd_crl_number() {
+        use revocation_fixtures as fixtures;
+
+        let input = serde_json::to_vec(&fixtures::policy_json(fixtures::NO_NUMBER_CRL)).unwrap();
+        let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+        let result = policy.verify(fixtures::POLICY_CHAIN).map(|_| ());
+        assert!(
+            matches!(result, Err(PolicyError::InvalidCollateral)),
+            "{:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_policy_rejects_revoked_or_invalid_servtd_signers() {
+        use revocation_fixtures as fixtures;
+
+        for crl in [
+            fixtures::REVOKED_POLICY_CRL,
+            fixtures::REVOKED_IDENTITY_CRL,
+            fixtures::REVOKED_ISSUER_CRL,
+            fixtures::UNRELATED_CRL,
+            fixtures::TAMPERED_CRL,
+            fixtures::NON_CA_CRL,
+            b"",
+        ] {
+            let input = serde_json::to_vec(&fixtures::policy_json(crl)).unwrap();
+            let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+            assert!(matches!(
+                policy.verify(fixtures::POLICY_CHAIN),
+                Err(PolicyError::SignerRevoked)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_policy_requires_common_crl_issuer() {
+        use revocation_fixtures as fixtures;
+
+        for (crl, allowed) in [
+            (fixtures::EMPTY_CRL, false),
+            (fixtures::ROOT_EMPTY_CRL, true),
+        ] {
+            let mut policy = fixtures::policy_json(crl);
+            let collateral = &mut policy["policyData"]["servtdCollateral"];
+            collateral["servtdIdentityIssuerChain"] =
+                core::str::from_utf8(fixtures::IDENTITY_OTHER_ISSUER_CHAIN)
+                    .unwrap()
+                    .into();
+            collateral["servtdIdentity"] =
+                serde_json::from_slice(fixtures::SIGNED_IDENTITY_OTHER_ISSUER).unwrap();
+            let input = serde_json::to_vec(&policy).unwrap();
+            let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
+
+            if allowed {
+                policy.verify(fixtures::POLICY_CHAIN).unwrap();
+            } else {
+                assert!(matches!(
+                    policy.verify(fixtures::POLICY_CHAIN),
+                    Err(PolicyError::SignerRevoked)
+                ));
+            }
+        }
     }
 
     #[test]
@@ -927,6 +1054,7 @@ mod test {
             migtd_isvsvn: None,
             pck_crl_num: None,
             root_ca_crl_num: None,
+            servtd_crl_num: None,
         };
         let relative_ref = PolicyEvaluationInfo::default();
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());
@@ -953,6 +1081,127 @@ mod test {
         value.fmspc = Some([0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00]);
 
         assert!(global_policy.evaluate(&value, &relative_ref).is_ok());
+    }
+
+    #[test]
+    fn test_global_crl_policy_rejects_servtd_crl_floor() {
+        let error = serde_json::from_str::<GlobalPolicy>(
+            r#"{"crl":{"servtdCrlNum":{"operation":"greater-or-equal","reference":5}}}"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field `servtdCrlNum`"));
+    }
+
+    #[test]
+    fn test_servtd_crl_floor_with_absolute_reference() {
+        let policy = serde_json::from_str::<ServtdPolicy>(
+            r#"{"migtdIdentity":{},"servtdCrlNum":{"operation":"greater-or-equal","reference":5}}"#,
+        )
+        .unwrap();
+        let relative = PolicyEvaluationInfo::default();
+
+        for (servtd_crl_num, allowed) in [
+            (None, false),
+            (Some(4), false),
+            (Some(5), true),
+            (Some(6), true),
+        ] {
+            let value = PolicyEvaluationInfo {
+                servtd_crl_num,
+                ..PolicyEvaluationInfo::default()
+            };
+            let result = policy.evaluate(&value, &relative);
+            if allowed {
+                assert!(result.is_ok(), "{:?}", result);
+            } else {
+                assert!(matches!(result, Err(PolicyError::CrlEvaluation)));
+            }
+        }
+    }
+
+    #[test]
+    fn test_servtd_crl_floor_self_reference_requires_local_crl() {
+        let policy = serde_json::from_str::<ServtdPolicy>(
+            r#"{"migtdIdentity":{},"servtdCrlNum":{"operation":"greater-or-equal","reference":"self"}}"#,
+        )
+        .unwrap();
+        let value = PolicyEvaluationInfo {
+            servtd_crl_num: Some(5),
+            ..PolicyEvaluationInfo::default()
+        };
+
+        assert!(matches!(
+            policy.evaluate(&value, &PolicyEvaluationInfo::default()),
+            Err(PolicyError::InvalidReference)
+        ));
+    }
+
+    #[test]
+    fn test_servtd_crl_floor_is_optional() {
+        let policy = serde_json::from_str::<ServtdPolicy>(r#"{"migtdIdentity":{}}"#).unwrap();
+        assert!(policy
+            .evaluate(
+                &PolicyEvaluationInfo::default(),
+                &PolicyEvaluationInfo::default(),
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn test_servtd_crl_floor_in_all_policy_blocks() {
+        let block_json = r#"[
+            {"global":{"crl":{
+                "pckCrlNum":{"operation":"greater-or-equal","reference":5},
+                "rootCaCrlNum":{"operation":"greater-or-equal","reference":5}
+            }}},
+            {"servtd":{
+                "migtdIdentity":{},
+                "servtdCrlNum":{"operation":"greater-or-equal","reference":"self"}
+            }}
+        ]"#;
+        let mut policy = serde_json::from_str::<PolicyData>(include_str!(
+            "../../test/policy_v2/policy_data.json"
+        ))
+        .unwrap();
+        for block in [
+            &mut policy.policy,
+            &mut policy.forward_policy,
+            &mut policy.backward_policy,
+        ] {
+            *block = Some(serde_json::from_str(block_json).unwrap());
+        }
+        let relative = PolicyEvaluationInfo {
+            servtd_crl_num: Some(5),
+            ..PolicyEvaluationInfo::default()
+        };
+
+        for skip_global in [false, true] {
+            for (servtd_crl_num, allowed) in [
+                (None, false),
+                (Some(4), false),
+                (Some(5), true),
+                (Some(6), true),
+            ] {
+                let value = PolicyEvaluationInfo {
+                    servtd_crl_num,
+                    pck_crl_num: if skip_global { None } else { Some(5) },
+                    root_ca_crl_num: if skip_global { None } else { Some(5) },
+                    migtd_tcb_status: Some("UpToDate".to_string()),
+                    ..PolicyEvaluationInfo::default()
+                };
+                for result in [
+                    policy.evaluate_policy_common(&value, &relative, skip_global),
+                    policy.evaluate_policy_forward(&value, &relative, skip_global),
+                    policy.evaluate_policy_backward(&value, &relative, skip_global),
+                ] {
+                    if allowed {
+                        assert!(result.is_ok(), "{:?}", result);
+                    } else {
+                        assert!(matches!(result, Err(PolicyError::CrlEvaluation)));
+                    }
+                }
+            }
+        }
     }
 
     #[test]

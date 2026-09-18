@@ -119,7 +119,24 @@ pub fn get_policy_signer_key_hash(cert_chain_pem: &[u8]) -> Result<[u8; SHA384_D
     Ok(hash)
 }
 
-/// Verifies a certificate chain and then verifies a message signature
+pub fn split_chain_pem_to_leaf_and_root_der(cert_chain_pem: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf = chain[0].as_ref().to_vec();
+    let root = chain.last().unwrap().as_ref().to_vec();
+    Ok((leaf, root))
+}
+
+pub fn extract_leaf_subject_der_from_chain_pem(cert_chain_pem: &[u8]) -> Result<Vec<u8>> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf_der = chain[0].as_ref();
+    let cert = x509::Certificate::from_der(leaf_der).map_err(|_| Error::ParseCertificate)?;
+    cert.tbs_certificate
+        .subject
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)
+}
+
+/// Verifies a certificate chain and then verifies a message signature.
 pub fn verify_cert_chain_and_signature(
     cert_chain_pem: &[u8],
     message: &[u8],
@@ -128,10 +145,47 @@ pub fn verify_cert_chain_and_signature(
     let cert_chain = extract_cert_chain_from_pem(cert_chain_pem)?;
 
     verify_certificate_chain(&cert_chain)?;
+    verify_issuer_ca_constraints(&cert_chain)?;
 
     // Extract public key from the leaf certificate and verify signature
     let leaf_cert = &cert_chain[0];
     verify_signature_with_cert(leaf_cert, message, signature)?;
+
+    Ok(())
+}
+
+pub fn verify_signer_chain_not_revoked(chain_pem: &[u8], crl_pem: &[u8]) -> Result<()> {
+    let chain_der = extract_cert_chain_from_pem(chain_pem)?;
+    let chain = chain_der
+        .iter()
+        .map(|der| x509::Certificate::from_der(der.as_ref()).map_err(|_| Error::ParseCertificate))
+        .collect::<Result<Vec<_>>>()?;
+
+    let crl_issuer_der = crl::get_crl_issuer_der(crl_pem)?;
+    let mut issuer_key = None;
+    for cert in &chain {
+        let subject_der = cert
+            .tbs_certificate
+            .subject
+            .to_der()
+            .map_err(|_| Error::ParseCertificate)?;
+        if subject_der == crl_issuer_der && is_ca_certificate(cert)? {
+            issuer_key = Some(extract_public_key_from_cert(cert)?);
+            break;
+        }
+    }
+    let issuer_key = issuer_key.ok_or_else(|| {
+        Error::CertChainVerification("CRL issuer does not match any CA in the signer chain".into())
+    })?;
+    crl::verify_crl_signature(crl_pem, &issuer_key)?;
+
+    for cert in &chain {
+        if crl::is_serial_revoked(crl_pem, cert.tbs_certificate.serial_number.as_bytes())? {
+            return Err(Error::CertChainVerification(
+                "a certificate in the signer chain is revoked".into(),
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -176,6 +230,19 @@ fn verify_certificate_chain(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
         verify_cert_signature(&subject_cert, &issuer_cert)?;
     }
 
+    Ok(())
+}
+
+fn verify_issuer_ca_constraints(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
+    for cert_der in cert_chain.iter().skip(1) {
+        let issuer =
+            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
+        if !is_ca_certificate(&issuer)? {
+            return Err(Error::CertChainVerification(
+                "certificate chain contains a non-CA issuer".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -385,8 +452,14 @@ fn check_root_ca_match(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
+#[path = "../test/crl/fixtures.rs"]
+mod crl_test_data;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crl_test_data as fixtures;
 
     // Full 3-cert chain from key_gen.sh (leaf-to-root).
     // - Leaf:         CN=MigTD Info Issuer (NOT a CA — KeyUsage=digitalSignature only).
@@ -566,6 +639,76 @@ m07Y31+o+LpsZuEnlIETx/zemHA=
     fn test_cert_chain_verification() {
         let cert_chain = extract_cert_chain_from_pem(test_chain()).unwrap();
         assert!(verify_certificate_chain(&cert_chain).is_ok());
+    }
+
+    #[test]
+    fn test_signer_crl_accepts_unrevoked_chains() {
+        for (chain, crl) in [
+            (fixtures::POLICY_CHAIN, fixtures::EMPTY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::EMPTY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_POLICY_CRL),
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_IDENTITY_CRL),
+        ] {
+            verify_signer_chain_not_revoked(chain, crl).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_signer_crl_rejects_revoked_leaf_or_issuer() {
+        for (chain, crl) in [
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_POLICY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_IDENTITY_CRL),
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_ISSUER_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_ISSUER_CRL),
+        ] {
+            let result = verify_signer_chain_not_revoked(chain, crl);
+            assert!(
+                matches!(&result, Err(Error::CertChainVerification(message))
+                    if message.contains("is revoked")),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_signer_crl_rejects_untrusted_crls() {
+        for crl in [fixtures::UNRELATED_CRL, fixtures::NON_CA_CRL] {
+            let result = verify_signer_chain_not_revoked(fixtures::POLICY_CHAIN, crl);
+            assert!(
+                matches!(&result, Err(Error::CertChainVerification(message))
+                    if message.contains("CRL issuer does not match any CA")),
+                "{result:?}"
+            );
+        }
+        assert!(matches!(
+            verify_signer_chain_not_revoked(fixtures::POLICY_CHAIN, fixtures::TAMPERED_CRL,),
+            Err(Error::EcdsaVerify)
+        ));
+        assert!(matches!(
+            verify_signer_chain_not_revoked(
+                fixtures::IDENTITY_OTHER_ISSUER_CHAIN,
+                fixtures::EMPTY_CRL,
+            ),
+            Err(Error::CertChainVerification(message))
+                if message.contains("CRL issuer does not match any CA")
+        ));
+    }
+
+    #[test]
+    fn test_signer_verification_rejects_non_ca_issuers() {
+        let valid = extract_cert_chain_from_pem(test_chain()).unwrap();
+        verify_issuer_ca_constraints(&valid).unwrap();
+
+        let invalid = extract_cert_chain_from_pem(attacker_chain()).unwrap();
+        verify_certificate_chain(&invalid).unwrap();
+        assert!(matches!(
+            verify_issuer_ca_constraints(&invalid),
+            Err(Error::CertChainVerification(message)) if message.contains("non-CA issuer")
+        ));
+        assert!(matches!(
+            verify_cert_chain_and_signature(attacker_chain(), b"test", b""),
+            Err(Error::CertChainVerification(message)) if message.contains("non-CA issuer")
+        ));
     }
 
     #[test]
