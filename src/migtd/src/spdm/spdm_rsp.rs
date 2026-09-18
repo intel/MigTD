@@ -538,8 +538,10 @@ pub fn handle_exchange_mig_attest_info_req(
     #[cfg(feature = "policy_v2")]
     let servtd_ext_bytes_vec = servtd_ext_bytes.to_vec();
 
-    // Init TDINFO from src (used for SERVTD_HASH verification)
+    #[cfg(not(feature = "policy_v2"))]
+    // Init TDINFO from src
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    #[cfg(not(feature = "policy_v2"))]
     if vdm_element.element_type != VdmMessageElementType::TdReportInit {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
@@ -547,20 +549,10 @@ pub fn handle_exchange_mig_attest_info_req(
         );
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
-    #[cfg(feature = "policy_v2")]
-    if vdm_element.length as usize != crate::migration::TD_INFO_SIZE {
-        error!(
-            "Invalid VDM message TdReportInit length: {} (expected {})\n",
-            vdm_element.length,
-            crate::migration::TD_INFO_SIZE
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_SIZE);
-    }
+    #[cfg(not(feature = "policy_v2"))]
     let td_report_init = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    #[cfg(feature = "policy_v2")]
-    let td_report_init_vec = td_report_init.to_vec();
     #[cfg(not(feature = "policy_v2"))]
     let _ = td_report_init;
 
@@ -585,7 +577,6 @@ pub fn handle_exchange_mig_attest_info_req(
             &quote_src_vec,
             &event_log_src_vec,
             &mig_policy_hash_src,
-            &td_report_init_vec,
             &servtd_ext_bytes_vec,
             &peer_data,
             &th1,
@@ -730,7 +721,6 @@ fn rsp_verify_peer_attestation_v2(
     quote_peer: &[u8],
     event_log_peer: &[u8],
     mig_policy_hash_peer: &[u8],
-    peer_init_td_info: &[u8],
     servtd_ext_peer: &[u8],
     peer_data: &[u8],
     th1: &SpdmDigestStruct,
@@ -744,15 +734,14 @@ fn rsp_verify_peer_attestation_v2(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
-    // 2. Authenticate remote, verify init TDINFO integrity against ServtdExt,
-    //    and evaluate policy with init TDINFO as reference.
+    // 2. Authenticate remote and verify initial/current continuity against
+    //    the authenticated SERVTD_EXT.
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
-        let verified_report_peer = match mig_policy::authenticate_migration_source_with_init_tdinfo(
+        let verified_report_peer = match mig_policy::authenticate_migration_source(
             quote_peer,
             peer_data,
             event_log_peer,
-            peer_init_td_info,
             servtd_ext_peer,
         ) {
             Err(e) => {
@@ -795,7 +784,7 @@ fn rsp_verify_peer_attestation_v2(
     }
 
     #[cfg(feature = "test_disable_ra_and_accept_all")]
-    let _ = (peer_init_td_info, servtd_ext_peer);
+    let _ = servtd_ext_peer;
 
     Ok(())
 }
@@ -1146,28 +1135,6 @@ pub fn handle_exchange_rebind_attest_info_req(
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
     let servtd_ext_vec = servtd_ext.to_vec();
 
-    // TD report init
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if vdm_element.element_type != VdmMessageElementType::TdReportInit {
-        error!(
-            "Invalid VDM message element_type: {:x?}\n",
-            vdm_element.element_type
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    };
-    if vdm_element.length as usize != crate::migration::TD_INFO_SIZE {
-        error!(
-            "Invalid VDM message TdReportInit length: {} (expected {})\n",
-            vdm_element.length,
-            crate::migration::TD_INFO_SIZE
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_SIZE);
-    }
-    let td_report_init = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    let td_report_init_vec = td_report_init.to_vec();
-
     // attestation verification
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
@@ -1186,7 +1153,6 @@ pub fn handle_exchange_rebind_attest_info_req(
             &td_report_src_vec,
             &event_log_src_vec,
             peer_data,
-            &td_report_init_vec,
             &servtd_ext_vec,
         );
         if let Err(e) = &policy_check_result {

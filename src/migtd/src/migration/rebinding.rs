@@ -17,13 +17,13 @@ use crate::migration::transport::*;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
 
-use crate::{config, migration::pre_session_data::pre_session_data_exchange};
+use crate::migration::pre_session_data::pre_session_data_exchange;
 
 use crate::{
     driver::ticks::with_timeout,
     migration::{
         servtd_ext::{write_approved_servtd_ext_hash, ServtdExt},
-        MigrationResult, MigtdMigrationInformation, TD_INFO_SIZE,
+        MigrationResult, MigtdMigrationInformation,
     },
     ratls::{self, find_extension, EXTNID_MIGTD_SERVTD_EXT},
 };
@@ -75,22 +75,6 @@ pub async fn start_rebinding(
     info: &MigtdMigrationInformation,
     data: &mut Vec<u8>,
 ) -> Result<(), MigrationResult> {
-    // Per GHCI 1.5: if VMM provided initMigtdData, verify policy binding
-    // before driving the rebinding exchange. Mirrors exchange_msk; without
-    // this check a hostile VMM could cause the rebind attestation to be
-    // built over an initial TDINFO whose policy signer hash / SVN would
-    // be rejected on the standard migration path.
-    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-    if let Some(init_td_info) = info.init_td_info_if_present() {
-        crate::mig_policy::verify_init_migtd_data_policy_binding(init_td_info).map_err(|e| {
-            log::error!(
-                migration_request_id = info.mig_request_id;
-                "start_rebinding: initMigtdData policy binding verification failed: {:?}\n", e
-            );
-            MigrationResult::PolicyUnsatisfiedError
-        })?;
-    }
-
     let mut transport = setup_transport(info.mig_request_id).await?;
 
     // Exchange peer-data (policy + issuer chain) firstly because of the message size limitation of TLS protocol
@@ -327,24 +311,9 @@ async fn rebinding_old_prepare(
 ) -> Result<(), MigrationResult> {
     let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
 
-    // Resolve the initial TDINFO_STRUCT: use VMM-provided bytes when present,
-    // otherwise fall back to the local MigTD's self-report.
-    let local;
-    let init_td_info: &[u8; TD_INFO_SIZE] = match info.init_td_info_if_present() {
-        Some(t) => t,
-        None => {
-            local = crate::migration::local_init_td_info()?;
-            &local
-        }
-    };
-
-    // Per GHCI 1.5: init_tdinfo replaces the old init_report (full TDREPORT).
-    // The TDINFO_STRUCT contains all the measurement fields needed for verification.
-    let init_tdinfo: &[u8] = init_td_info;
-
     // TLS client
-    let mut ratls_client = ratls::client_rebinding(transport, peer_data, init_tdinfo, &servtd_ext)
-        .map_err(|_| {
+    let mut ratls_client =
+        ratls::client_rebinding(transport, peer_data, &servtd_ext).map_err(|_| {
             #[cfg(feature = "vmcall-raw")]
             data.extend_from_slice(
                 &format!(

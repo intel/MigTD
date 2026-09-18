@@ -441,25 +441,14 @@ pub async fn send_and_receive_sdm_migration_attest_info(
             .ok_or(SPDM_STATUS_BUFFER_FULL)?;
     }
 
-    // Init TDINFO: use VMM-provided init_td_info if available, otherwise local
+    #[cfg(not(feature = "policy_v2"))]
+    // Init TDINFO
     {
-        #[cfg(feature = "policy_v2")]
-        let tdinfo_init_local;
-        #[cfg(feature = "policy_v2")]
-        let tdinfo_init: &[u8] = if let Some(td_info) = mig_info.init_td_info_if_present() {
-            td_info
-        } else {
-            tdinfo_init_local = crate::migration::local_init_td_info()
-                .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            &tdinfo_init_local
-        };
-        #[cfg(not(feature = "policy_v2"))]
         let tdinfo_init_owned = {
             let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
                 .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
             report.td_info.as_bytes().to_vec()
         };
-        #[cfg(not(feature = "policy_v2"))]
         let tdinfo_init: &[u8] = &tdinfo_init_owned;
         let tdinfo_init_element = VdmMessageElement {
             element_type: VdmMessageElementType::TdReportInit,
@@ -1029,19 +1018,6 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     let binding_handle = rebind_info.binding_handle;
     let target_td_uuid = &rebind_info.target_td_uuid;
 
-    // Resolve the initial TDINFO_STRUCT: use VMM-provided bytes when present,
-    // otherwise fall back to the local MigTD's self-report.
-    let local_td_info;
-    let init_td_info: &[u8; crate::migration::TD_INFO_SIZE] =
-        match rebind_info.init_td_info_if_present() {
-            Some(t) => t,
-            None => {
-                local_td_info = crate::migration::local_init_td_info()
-                    .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
-                &local_td_info
-            }
-        };
-
     let servtd_ext = read_servtd_ext(binding_handle, target_td_uuid)
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
 
@@ -1054,21 +1030,6 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     cnt += writer
         .extend_from_slice(servtd_ext.as_bytes())
-        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
-
-    //TD info init (per GHCI 1.5: TDINFO_STRUCT)
-    // NOTE: VdmMessageElementType::TdReportInit name retained for wire compatibility;
-    // payload is now TDINFO_STRUCT, not full TDREPORT.
-    let tdinfo_init: &[u8] = init_td_info;
-    let tdreport_init_element = VdmMessageElement {
-        element_type: VdmMessageElementType::TdReportInit,
-        length: tdinfo_init.len() as u32,
-    };
-    cnt += tdreport_init_element
-        .encode(&mut writer)
-        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-    cnt += writer
-        .extend_from_slice(tdinfo_init)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     spdm_requester.common.reset_buffer_via_request_code(

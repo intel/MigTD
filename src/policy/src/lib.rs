@@ -13,6 +13,10 @@ pub use v1::*;
 mod v2;
 #[cfg(feature = "policy_v2")]
 pub use v2::*;
+#[path = "v2/measurement.rs"]
+pub mod measurement;
+#[cfg(not(feature = "policy_v2"))]
+pub use measurement::*;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use cc_measurement::CcEventHeader;
@@ -189,6 +193,8 @@ pub enum EventName {
     MigTdPolicy,
     SgxRootKey,
     MigTdPolicySigner,
+    /// Canonical policyData bytes with the updateable TCB mapping removed.
+    MigTdPolicyData,
     Unknown,
 }
 
@@ -201,6 +207,7 @@ impl From<&str> for EventName {
             "Digest.MigTdCoreSvn" => Self::MigTdCoreSvn,
             "Digest.MigTdPolicy" => Self::MigTdPolicy,
             "Digest.MigTdSgxRootKey" => Self::SgxRootKey,
+            "Digest.MigTdPolicyData" => Self::MigTdPolicyData,
             _ => Self::Unknown,
         }
     }
