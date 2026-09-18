@@ -98,7 +98,8 @@ Script capabilities at a glance:
 - With `--mock-report` flag: Builds with `--features "AzCVMEmu,test_mock_report"` for mock TD reports/quotes with full attestation flow (works on any Linux machine).
 - With `--igvm-attest` flag: Builds with `--features "AzCVMEmu,igvm-attest"` to use servtd_get_quote for quote generation (compatible with mock-report).
 - With `--skip-ra` flag: Builds with `--features "AzCVMEmu,test_disable_ra_and_accept_all"` to bypass attestation entirely (works on any Linux machine).
-- Validates and sets required env vars: `MIGTD_POLICY_FILE` and `MIGTD_ROOT_CA_FILE`.
+- Validates each started peer's policy and signer files. Policy v1 uses
+  `MIGTD_ROOT_CA_FILE`; policy v2 uses an issuer chain or direct signer anchor.
 - Auto-sets `RUST_BACKTRACE` (1) and `RUST_LOG` (debug in debug builds, info in release) unless already set.
 - If `/dev/tpmrm0` (or TPM2-ABRMD socket) is present and permissions are insufficient, it automatically enables sudo even if `--no-sudo` is passed (not needed with `--mock-report` or `--skip-ra`).
 - Exports `TSS2_TCTI=device:/dev/tpmrm0` when the device exists, to help TPM2-TSS.
@@ -112,7 +113,11 @@ Supported options:
 - `-p, --dest-port PORT`           destination port (default: 8001)
 - `--policy-file FILE`             policy file path (default: config/policy.json)
 - `--root-ca-file FILE`            root CA file path (default: config/Intel_SGX_Provisioning_Certification_RootCA.cer)
-- `--policy-issuer-chain-file FILE` policy issuer chain file path (required with --policy-v2)
+- `--policy-issuer-chain-file FILE` policy v2 issuer chain, unless a signer anchor is supplied
+- `--signer-anchor-file FILE`       raw 48-byte policy v2 signer anchor (takes precedence over the chain)
+- `--servtd-corim-file FILE`        signed servTD CoRIM; requires policy v2 and enables `servtd_corim`
+- `--src-signer-anchor-file FILE`, `--dst-signer-anchor-file FILE` override the shared anchor for one peer
+- `--src-servtd-corim-file FILE`, `--dst-servtd-corim-file FILE` override the shared CoRIM for one peer
 - `--policy-v2`                    enable policy v2 support
 - `--features FEATURES`            add extra cargo features (comma-separated, e.g., 'spdm_attestation')
 - `--igvm-attest`                  enable IGVM attestation feature (uses servtd_get_quote)
@@ -152,9 +157,23 @@ What the script prints/shows:
 # Policy v2 example
 ./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --both
 
+# CoRIM-only policy with a direct signer anchor
+./migtdemu.sh --policy-v2 --policy-file /path/to/corim_policy.json \
+  --signer-anchor-file /path/to/signer-anchor.bin \
+  --servtd-corim-file /path/to/servtd_tcb_mapping.corim --mock-report --both
+
 # With additional features (e.g., SPDM attestation)
 ./migtdemu.sh --features spdm_attestation --both
 ```
+
+Explicit per-side policies or signer/CoRIM files suppress automatic mock-policy
+generation. A CoRIM-only policy still requires a numbered signer CRL at
+`policyData.servtdCrl`. If JSON collateral is retained with a direct anchor,
+it must include `servtdTcbMappingIssuerChain`; an unused outer PEM path does
+not provide the fallback. See [direct enrollment](policy_v2.md#direct-signer-anchor-enrollment).
+Enabling `servtd_corim` without supplying a CoRIM remains valid for JSON policies.
+Per-peer file overrides do not relax the existing peer-chain and identity-presence
+compatibility requirements.
 
 **Manual execution:**
 
@@ -166,6 +185,16 @@ export MIGTD_ROOT_CA_FILE="/path/to/your/root_ca.cer"
 ```
 
 Both files must exist at the specified paths. The program will exit with an error if either environment variable is missing or if the files cannot be found. vTPM access may require sudo: if TPM devices (e.g., /dev/tpmrm0) are present and permissions are insufficient, run with sudo or set `TSS2_TCTI` accordingly. The `migtdemu.sh` script auto-enables sudo when needed.
+
+For policy v2, replace `MIGTD_ROOT_CA_FILE` with
+`MIGTD_POLICY_ISSUER_CHAIN_FILE` or `MIGTD_SIGNER_ANCHOR_FILE`. To use a signed
+CoRIM, build with `servtd_corim` and set `MIGTD_SERVTD_CORIM_FILE` as well.
+The emulated FV exposes these artifacts under the same GUIDs as firmware.
+Missing, oversized, empty, or incorrectly sized requested artifacts fail
+initialization; MigTD performs signature, signer-anchor, and local-CRL checks.
+The anchor must be exactly 48 raw bytes, and the CoRIM limit is 1 MiB.
+Supplying an anchor without `policy_v2`, or a CoRIM without `servtd_corim`,
+is rejected rather than ignored.
 
 Run the application:
 

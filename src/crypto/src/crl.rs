@@ -2,19 +2,20 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use crate::x509::{Extension, Time};
+use crate::x509::{AlgorithmIdentifier, Extension, Time};
 use crate::Error;
 use alloc::vec::Vec;
-use der::asn1::{AnyRef, BitStringRef, ObjectIdentifier};
+use der::asn1::{AnyRef, BitStringRef, ObjectIdentifier, UintRef};
 use der::{Choice, Decode, Encode, ErrorKind, Header, Sequence, Tag, TagMode, TagNumber, Tagged};
 use pki_types::{pem::PemObject, CertificateRevocationListDer};
 
 const CRL_NUMBER_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.20");
+const ECDSA_WITH_SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
 
 #[derive(Sequence)]
 pub struct Crl<'a> {
     tbs_cert_list: TbsCertList<'a>,
-    signature_algorithm: AnyRef<'a>,
+    signature_algorithm: AlgorithmIdentifier<'a>,
     signature_value: BitStringRef<'a>,
 }
 
@@ -31,7 +32,7 @@ struct TbsCertList<'a> {
 
 #[derive(Sequence)]
 struct RevokedCertificate<'a> {
-    user_certificate: AnyRef<'a>,
+    user_certificate: UintRef<'a>,
     revocation_date: AnyRef<'a>,
     crl_entry_extensions: Option<AnyRef<'a>>,
 }
@@ -120,9 +121,140 @@ pub fn get_crl_number(crl: &[u8]) -> Result<u32, Error> {
     Err(Error::CrlNumberNotFound)
 }
 
+fn crl_pem_to_der(crl: &[u8]) -> Result<Vec<u8>, Error> {
+    CertificateRevocationListDer::from_pem_slice(crl)
+        .map(|der| der.as_ref().to_vec())
+        .map_err(|_| Error::DecodePemCert)
+}
+
+pub fn get_crl_issuer_der(crl: &[u8]) -> Result<Vec<u8>, Error> {
+    let der = crl_pem_to_der(crl)?;
+    let crl = Crl::from_der(&der).map_err(|_| Error::ParseCertificate)?;
+    crl.tbs_cert_list
+        .issuer
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)
+}
+
+pub fn verify_crl_signature(crl: &[u8], issuer_public_key: &[u8]) -> Result<(), Error> {
+    let der = crl_pem_to_der(crl)?;
+    let crl = Crl::from_der(&der).map_err(|_| Error::ParseCertificate)?;
+
+    if crl.signature_algorithm.algorithm != ECDSA_WITH_SHA384_OID {
+        return Err(Error::UnsupportedAlgorithm);
+    }
+
+    let tbs = crl
+        .tbs_cert_list
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)?;
+    let signature = crl
+        .signature_value
+        .as_bytes()
+        .ok_or(Error::ParseCertificate)?;
+
+    crate::ecdsa::ecdsa_verify_with_algorithm(
+        issuer_public_key,
+        &tbs,
+        signature,
+        &crate::ecdsa::ECDSA_P384_SHA384_ASN1,
+    )
+    .map_err(|_| Error::EcdsaVerify)
+}
+
+pub fn is_serial_revoked(crl: &[u8], serial: &[u8]) -> Result<bool, Error> {
+    let der = crl_pem_to_der(crl)?;
+    let crl = Crl::from_der(&der).map_err(|_| Error::ParseCertificate)?;
+
+    Ok(crl
+        .tbs_cert_list
+        .revoked_certificates
+        .iter()
+        .flatten()
+        .any(|entry| entry.user_certificate.as_bytes() == serial))
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::crl_test_data as fixtures;
+
+    fn public_key(chain_pem: &[u8]) -> Vec<u8> {
+        let chain = crate::extract_cert_chain_from_pem(chain_pem).unwrap();
+        let certificate = crate::x509::Certificate::from_der(chain[0].as_ref()).unwrap();
+        crate::extract_public_key_from_cert(&certificate).unwrap()
+    }
+
+    #[test]
+    fn test_servtd_crl_signature() {
+        let issuer_key = public_key(fixtures::ISSUER_CERT);
+        for crl in [
+            fixtures::EMPTY_CRL,
+            fixtures::REVOKED_POLICY_CRL,
+            fixtures::REVOKED_IDENTITY_CRL,
+            fixtures::NO_NUMBER_CRL,
+        ] {
+            verify_crl_signature(crl, &issuer_key).unwrap();
+        }
+        verify_crl_signature(
+            fixtures::REVOKED_ISSUER_CRL,
+            &public_key(fixtures::ROOT_CERT),
+        )
+        .unwrap();
+        verify_crl_signature(fixtures::ROOT_EMPTY_CRL, &public_key(fixtures::ROOT_CERT)).unwrap();
+        verify_crl_signature(fixtures::NON_CA_CRL, &public_key(fixtures::POLICY_CHAIN)).unwrap();
+
+        assert!(matches!(
+            verify_crl_signature(fixtures::TAMPERED_CRL, &issuer_key),
+            Err(Error::EcdsaVerify)
+        ));
+        assert!(matches!(
+            verify_crl_signature(fixtures::EMPTY_CRL, &public_key(fixtures::ROOT_CERT)),
+            Err(Error::EcdsaVerify)
+        ));
+    }
+
+    #[test]
+    fn test_servtd_crl_issuer() {
+        let issuer_der = crate::pem_cert_to_der(fixtures::ISSUER_CERT).unwrap();
+        let issuer = crate::x509::Certificate::from_der(issuer_der.as_ref()).unwrap();
+        let subject = issuer.tbs_certificate.subject.to_der().unwrap();
+
+        assert_eq!(get_crl_issuer_der(fixtures::EMPTY_CRL).unwrap(), subject);
+        assert_ne!(
+            get_crl_issuer_der(fixtures::UNRELATED_CRL).unwrap(),
+            subject
+        );
+    }
+
+    #[test]
+    fn test_servtd_crl_serials() {
+        assert!(is_serial_revoked(fixtures::REVOKED_POLICY_CRL, &[0x80]).unwrap());
+        assert!(!is_serial_revoked(fixtures::REVOKED_POLICY_CRL, &[0x81]).unwrap());
+        assert!(is_serial_revoked(fixtures::REVOKED_IDENTITY_CRL, &[0x81]).unwrap());
+        assert!(is_serial_revoked(fixtures::REVOKED_ISSUER_CRL, &[2]).unwrap());
+        assert!(!is_serial_revoked(fixtures::EMPTY_CRL, &[0x80]).unwrap());
+
+        assert_eq!(get_crl_number(fixtures::EMPTY_CRL).unwrap(), 7);
+        assert_eq!(get_crl_number(fixtures::REVOKED_POLICY_CRL).unwrap(), 8);
+        assert!(matches!(
+            get_crl_number(fixtures::NO_NUMBER_CRL),
+            Err(Error::CrlNumberNotFound)
+        ));
+    }
+
+    #[test]
+    fn test_servtd_crl_rejects_empty_input() {
+        assert!(matches!(get_crl_issuer_der(b""), Err(Error::DecodePemCert)));
+        assert!(matches!(
+            verify_crl_signature(b"", &public_key(fixtures::ISSUER_CERT)),
+            Err(Error::DecodePemCert)
+        ));
+        assert!(matches!(
+            is_serial_revoked(b"", &[0x80]),
+            Err(Error::DecodePemCert)
+        ));
+    }
 
     #[test]
     fn test_get_crl_number() {
