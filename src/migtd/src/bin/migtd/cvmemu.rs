@@ -54,6 +54,17 @@ pub fn main() {
 
 /// Initialize emulation layer
 fn initialize_emulation() {
+    let signer_anchor_path = optional_file_path("MIGTD_SIGNER_ANCHOR_FILE");
+    let servtd_corim_path = optional_file_path("MIGTD_SERVTD_CORIM_FILE");
+    if signer_anchor_path.is_some() && !cfg!(feature = "policy_v2") {
+        eprintln!("MIGTD_SIGNER_ANCHOR_FILE requires the policy_v2 feature");
+        process::exit(1);
+    }
+    if servtd_corim_path.is_some() && !cfg!(feature = "servtd_corim") {
+        eprintln!("MIGTD_SERVTD_CORIM_FILE requires the servtd_corim feature");
+        process::exit(1);
+    }
+
     // Get file paths from environment variables
     let policy_file_path = match env::var("MIGTD_POLICY_FILE") {
         Ok(path) => {
@@ -80,34 +91,18 @@ fn initialize_emulation() {
 
     #[cfg(feature = "policy_v2")]
     let result = {
-        // policy_v2: root CA is embedded in policy collaterals, only need issuer chain
-        let policy_issuer_chain_file_path = env::var("MIGTD_POLICY_ISSUER_CHAIN_FILE")
-            .map_err(|_| {
-                log::error!("Policy v2 requires a policy issuer chain file but MIGTD_POLICY_ISSUER_CHAIN_FILE was not set\n");
-            })
-            .unwrap_or_else(|_| process::exit(1));
-
-        log::info!(
-            "MIGTD_POLICY_ISSUER_CHAIN_FILE set to: {}\n",
-            policy_issuer_chain_file_path
-        );
-
-        // Verify chain file exists
-        if !std::path::Path::new(&policy_issuer_chain_file_path).exists() {
-            println!(
-                "Policy issuer chain file not found: {}",
-                policy_issuer_chain_file_path
-            );
-            print_usage();
-            process::exit(1);
-        }
-
-        let chain_path_static: &'static str =
-            Box::leak(policy_issuer_chain_file_path.into_boxed_str());
-        td_shim_interface_emu::init_file_based_emulation_with_policy_chain(
+        let issuer_chain_path = optional_file_path("MIGTD_POLICY_ISSUER_CHAIN_FILE");
+        td_shim_interface_emu::init_file_based_emulation_with_policy_endorsements(
             policy_path,
-            chain_path_static,
+            issuer_chain_path.as_deref(),
+            signer_anchor_path.as_deref(),
+            servtd_corim_path.as_deref(),
         )
+        .unwrap_or_else(|error| {
+            eprintln!("Failed to initialize policy v2 emulation: {}", error);
+            process::exit(1);
+        });
+        true
     };
 
     #[cfg(not(feature = "policy_v2"))]
@@ -141,11 +136,30 @@ fn initialize_emulation() {
         #[cfg(feature = "policy_v2")]
         {
             let chain_file = env::var("MIGTD_POLICY_ISSUER_CHAIN_FILE").ok();
-            log::info!("  Policy Issuer Chain: {:?}\n", chain_file);
+            log::info!(
+                "  Policy Issuer Chain (unless anchor supplied): {:?}\n",
+                chain_file
+            );
+            log::info!("  Signer Anchor: {:?}\n", signer_anchor_path);
+            log::info!("  ServTD CoRIM: {:?}\n", servtd_corim_path);
         }
     } else {
         log::error!("Failed to initialize file-based emulation\n");
         std::process::exit(1);
+    }
+}
+
+fn optional_file_path(name: &str) -> Option<String> {
+    match env::var(name) {
+        Ok(path) if !path.is_empty() => {
+            log::info!("{} set to: {}\n", name, path);
+            Some(path)
+        }
+        Ok(_) | Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => {
+            eprintln!("{} must contain a UTF-8 file path", name);
+            process::exit(1);
+        }
     }
 }
 
@@ -420,10 +434,14 @@ fn parse_commandline_args() {
 fn print_usage() {
     println!("MigTD AzCVMEmu Mode Usage:");
     println!();
-    println!("Required Environment Variables:");
+    println!("Environment Variables:");
     println!("  MIGTD_POLICY_FILE          Path to the migration policy file");
     println!("  MIGTD_ROOT_CA_FILE         Path to the root CA certificate file (not used with policy_v2)");
-    println!("  MIGTD_POLICY_ISSUER_CHAIN_FILE Path to the policy issuer certificate chain file (policy_v2 only)");
+    println!("  MIGTD_POLICY_ISSUER_CHAIN_FILE Policy issuer chain (policy_v2, unless an anchor is supplied)");
+    println!("  MIGTD_SIGNER_ANCHOR_FILE   Optional 48-byte raw signer anchor (policy_v2 only; takes precedence over the chain)");
+    println!(
+        "  MIGTD_SERVTD_CORIM_FILE    Optional signed servTD CoRIM (requires servtd_corim feature)"
+    );
     println!("  Note: Accessing a vTPM (e.g., /dev/tpmrm0) may require sudo or proper device permissions.");
     println!("        If using TPM2-TSS, you may need to export TSS2_TCTI=device:/dev/tpmrm0");
     println!();
