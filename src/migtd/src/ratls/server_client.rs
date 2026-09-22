@@ -228,9 +228,16 @@ fn prepare_report_data(public_key: &[u8]) -> Result<[u8; 64]> {
 fn gen_quote(public_key: &[u8]) -> Result<Vec<u8>> {
     let additional_data = prepare_report_data(public_key)?;
 
-    let (quote, _report) = crate::quote::get_quote_with_retry(&additional_data).map_err(|e| {
+    let (quote, report) = crate::quote::get_quote_with_retry(&additional_data).map_err(|e| {
         log::error!("get_quote_with_retry failed: {:?}\n", e);
         RatlsError::GetQuote
+    })?;
+    crate::quote::verify_local_quote(&quote, &report).map_err(|e| {
+        log::error!(
+            "Local quote does not match the generated TD report: {:?}\n",
+            e
+        );
+        RatlsError::VerifyQuote
     })?;
 
     Ok(quote)
