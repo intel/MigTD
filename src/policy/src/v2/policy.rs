@@ -239,6 +239,23 @@ impl<'a> RawPolicyData<'a> {
 
     /// Verify servTD collateral using the RTMR1-measured policy issuer chain.
     pub fn verify(&self, issuer_chain: &[u8]) -> Result<VerifiedPolicy<'a>, PolicyError> {
+        self.verify_with_servtd_crl(issuer_chain, None)
+    }
+
+    /// Authenticate the peer CRL's metadata but apply only local revocations.
+    pub fn verify_with_authoritative_servtd_crl(
+        &self,
+        issuer_chain: &[u8],
+        authoritative_crl: &[u8],
+    ) -> Result<VerifiedPolicy<'a>, PolicyError> {
+        self.verify_with_servtd_crl(issuer_chain, Some(authoritative_crl))
+    }
+
+    fn verify_with_servtd_crl(
+        &self,
+        issuer_chain: &[u8],
+        authoritative_crl: Option<&[u8]>,
+    ) -> Result<VerifiedPolicy<'a>, PolicyError> {
         let policy_issuer_chain = core::str::from_utf8(issuer_chain)
             .map_err(|_| PolicyError::InvalidPolicy)?
             .to_string();
@@ -257,15 +274,23 @@ impl<'a> RawPolicyData<'a> {
         let servtd_identity_issuer_chain = servtd_collateral.servtd_identity_issuer_chain.clone();
         let servtd_crl = servtd_collateral.servtd_crl.clone();
 
-        crypto::verify_signer_chain_not_revoked(issuer_chain, servtd_crl.as_bytes())
+        crypto::verify_signer_crl(issuer_chain, servtd_crl.as_bytes())
             .map_err(|_| PolicyError::SignerRevoked)?;
-        crypto::verify_signer_chain_not_revoked(
+        crypto::verify_signer_crl(
             servtd_identity_issuer_chain.as_bytes(),
             servtd_crl.as_bytes(),
         )
         .map_err(|_| PolicyError::SignerRevoked)?;
         crypto::crl::get_crl_number(servtd_crl.as_bytes())
             .map_err(|_| PolicyError::InvalidCollateral)?;
+        let revocations = authoritative_crl.unwrap_or(servtd_crl.as_bytes());
+        crypto::verify_signer_chain_not_revoked(issuer_chain, revocations)
+            .map_err(|_| PolicyError::SignerRevoked)?;
+        crypto::verify_signer_chain_not_revoked(
+            servtd_identity_issuer_chain.as_bytes(),
+            revocations,
+        )
+        .map_err(|_| PolicyError::SignerRevoked)?;
 
         if !policy_data.validate() {
             return Err(PolicyError::InvalidParameter);
@@ -1013,10 +1038,7 @@ mod test {
     fn test_policy_requires_common_crl_issuer() {
         use revocation_fixtures as fixtures;
 
-        for (crl, allowed) in [
-            (fixtures::EMPTY_CRL, false),
-            (fixtures::ROOT_EMPTY_CRL, true),
-        ] {
+        for crl in [fixtures::EMPTY_CRL, fixtures::ROOT_EMPTY_CRL] {
             let mut policy = fixtures::policy_json(crl);
             let collateral = &mut policy["policyData"]["servtdCollateral"];
             collateral["servtdIdentityIssuerChain"] =
@@ -1028,15 +1050,52 @@ mod test {
             let input = serde_json::to_vec(&policy).unwrap();
             let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
 
-            if allowed {
-                policy.verify(fixtures::POLICY_CHAIN).unwrap();
-            } else {
-                assert!(matches!(
-                    policy.verify(fixtures::POLICY_CHAIN),
-                    Err(PolicyError::SignerRevoked)
-                ));
-            }
+            assert!(matches!(
+                policy.verify(fixtures::POLICY_CHAIN),
+                Err(PolicyError::SignerRevoked)
+            ));
         }
+    }
+
+    #[test]
+    fn test_peer_crl_metadata_is_authenticated_without_applying_its_revocations() {
+        use revocation_fixtures as fixtures;
+        let input =
+            serde_json::to_vec(&fixtures::policy_json(fixtures::REVOKED_POLICY_CRL)).unwrap();
+        let raw = RawPolicyData::deserialize_from_json(&input).unwrap();
+        assert!(matches!(
+            raw.verify(fixtures::POLICY_CHAIN),
+            Err(PolicyError::SignerRevoked)
+        ));
+        let peer = raw
+            .verify_with_authoritative_servtd_crl(fixtures::POLICY_CHAIN, fixtures::EMPTY_CRL)
+            .unwrap();
+        assert_eq!(
+            crypto::crl::get_crl_number(peer.servtd_crl.as_bytes()).unwrap(),
+            8
+        );
+        for crl in [fixtures::TAMPERED_CRL, fixtures::ROOT_EMPTY_CRL] {
+            let input = serde_json::to_vec(&fixtures::policy_json(crl)).unwrap();
+            assert!(matches!(
+                RawPolicyData::deserialize_from_json(&input)
+                    .unwrap()
+                    .verify_with_authoritative_servtd_crl(
+                        fixtures::POLICY_CHAIN,
+                        fixtures::EMPTY_CRL
+                    ),
+                Err(PolicyError::SignerRevoked)
+            ));
+        }
+        let input = serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
+        assert!(matches!(
+            RawPolicyData::deserialize_from_json(&input)
+                .unwrap()
+                .verify_with_authoritative_servtd_crl(
+                    fixtures::POLICY_CHAIN,
+                    fixtures::REVOKED_POLICY_CRL
+                ),
+            Err(PolicyError::SignerRevoked)
+        ));
     }
 
     #[test]

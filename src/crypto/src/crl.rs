@@ -10,6 +10,10 @@ use der::{Choice, Decode, Encode, ErrorKind, Header, Sequence, Tag, TagMode, Tag
 use pki_types::{pem::PemObject, CertificateRevocationListDer};
 
 const CRL_NUMBER_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.20");
+const DELTA_CRL_INDICATOR_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.27");
+const ISSUING_DISTRIBUTION_POINT_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.28");
+const CERTIFICATE_ISSUER_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.29");
+const CRL_REASON_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.21");
 const ECDSA_WITH_SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
 
 #[derive(Sequence)]
@@ -34,7 +38,7 @@ struct TbsCertList<'a> {
 struct RevokedCertificate<'a> {
     user_certificate: UintRef<'a>,
     revocation_date: AnyRef<'a>,
-    crl_entry_extensions: Option<AnyRef<'a>>,
+    crl_entry_extensions: Option<Vec<Extension<'a>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,6 +138,52 @@ pub fn get_crl_issuer_der(crl: &[u8]) -> Result<Vec<u8>, Error> {
         .issuer
         .to_der()
         .map_err(|_| Error::ParseCertificate)
+}
+
+/// ServTD supports only complete, direct, issuer-wide CRLs.
+/// This restriction does not apply to Intel platform CRL parsing.
+pub fn validate_servtd_crl_profile(crl: &[u8]) -> Result<(), Error> {
+    let der = crl_pem_to_der(crl)?;
+    let crl = Crl::from_der(&der).map_err(|_| Error::ParseCertificate)?;
+    if let Some(extensions) = &crl.tbs_cert_list.crl_extensions {
+        validate_servtd_extensions(extensions.get(), false)?;
+    }
+    for entry in crl.tbs_cert_list.revoked_certificates.iter().flatten() {
+        if let Some(extensions) = &entry.crl_entry_extensions {
+            validate_servtd_extensions(extensions, true)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_servtd_extensions(extensions: &[Extension<'_>], entry: bool) -> Result<(), Error> {
+    for (index, extension) in extensions.iter().enumerate() {
+        if extensions[..index]
+            .iter()
+            .any(|previous| previous.extn_id == extension.extn_id)
+        {
+            return Err(Error::ParseCertificate);
+        }
+        if extension.critical.unwrap_or(false)
+            || extension.extn_id == DELTA_CRL_INDICATOR_OID
+            || extension.extn_id == ISSUING_DISTRIBUTION_POINT_OID
+            || extension.extn_id == CERTIFICATE_ISSUER_OID
+        {
+            return Err(Error::CertChainVerification(
+                "servTD requires a complete, direct, issuer-wide CRL".into(),
+            ));
+        }
+        if entry && extension.extn_id == CRL_REASON_OID {
+            let value = extension.extn_value.ok_or(Error::ParseCertificate)?;
+            let reason = AnyRef::from_der(value.as_bytes()).map_err(|_| Error::ParseCertificate)?;
+            if reason.tag() != Tag::Enumerated || !matches!(reason.value(), [0..=6] | [9] | [10]) {
+                return Err(Error::CertChainVerification(
+                    "unsupported reason in a complete servTD CRL".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn verify_crl_signature(crl: &[u8], issuer_public_key: &[u8]) -> Result<(), Error> {
