@@ -143,7 +143,8 @@ Package the generated policy data without an outer signature:
 jq -c '{policyData: .}' policy_v2.json > policy_v2_signed.json
 ```
 
-RTMR2 measures canonical `policyData` with only `servtdTcbMapping` removed to
+RTMR2 measures canonical `policyData` with `servtdTcbMapping` and its
+`servtdTcbMappingIssuerChain` removed to
 avoid the mapping/image circular dependency. The TCB mapping remains separately
 signed by the RTMR1-bound policy issuer.
 

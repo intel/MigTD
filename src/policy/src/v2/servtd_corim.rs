@@ -400,6 +400,46 @@ pub(super) mod test {
     }
 
     #[test]
+    fn corim_peer_crl_metadata_is_authenticated_after_chain_attachment() {
+        let base: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../test/policy_v2/policy_v2.json")).unwrap();
+        let revoked = include_bytes!("../../test/policy_v2/corim/revoked.crl.pem");
+        let mut tampered = revoked.to_vec();
+        let index = tampered
+            .windows(5)
+            .rposition(|bytes| bytes == b"\n----")
+            .unwrap()
+            - 5;
+        tampered[index] = if tampered[index] == b'A' { b'B' } else { b'A' };
+        for (delivered, accepted) in [
+            (revoked.as_slice(), true),
+            (tampered.as_slice(), false),
+            (
+                include_bytes!("../../../crypto/test/crl/root_empty.crl.pem").as_slice(),
+                false,
+            ),
+        ] {
+            let mut value = base.clone();
+            value["policyData"]
+                .as_object_mut()
+                .unwrap()
+                .remove("servtdCollateral");
+            value["policyData"]["servtdCrl"] = core::str::from_utf8(delivered).unwrap().into();
+            let bytes = serde_json::to_vec(&value).unwrap();
+            let raw = crate::v2::RawPolicyData::deserialize_from_json(&bytes).unwrap();
+            let mut peer = raw
+                .verify_with_authoritative_servtd_crl(EMULATION_ANCHOR, EMULATION_CRL)
+                .unwrap();
+            peer.attach_verified_peer_servtd_corim(EMULATION_COSE)
+                .unwrap();
+            assert_eq!(
+                peer.verify_signer_chains_not_revoked(EMULATION_CRL).is_ok(),
+                accepted
+            );
+        }
+    }
+
+    #[test]
     fn emulation_fixture_supports_direct_anchor_and_optional_json_identity() {
         let mut value: serde_json::Value =
             serde_json::from_slice(include_bytes!("../../test/policy_v2/policy_v2.json")).unwrap();
