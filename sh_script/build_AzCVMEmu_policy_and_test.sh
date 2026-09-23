@@ -283,9 +283,19 @@ generate_certificates() {
         -subj "$root_ca_subject" \
         -$hash_algo
 
-    # Generate two leaf certs (a and b) from the same root CA with the same CN
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name \
+        -out "$output_dir/intermediate_ca.key"
+    openssl req -new -key "$output_dir/intermediate_ca.key" \
+        -out "$output_dir/intermediate_ca.csr" -subj "/CN=MigTD Intermediate CA/O=Intel Corporation"
+    openssl x509 -req -in "$output_dir/intermediate_ca.csr" \
+        -CA "$output_dir/root_ca.pem" -CAkey "$output_dir/root_ca.key" -CAcreateserial \
+        -out "$output_dir/intermediate_ca.pem" -days $cert_validity_days -$hash_algo \
+        -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n')
+    rm -f "$output_dir/intermediate_ca.csr"
+
+    # Generate two leaf certs (a and b) from the same intermediate CA with the same CN
     # This exercises the peer cert chain validation / key rotation path.
-    # Two leaf families are generated under the same root CA:
+    # Two leaf families share one intermediate-issued servTD CRL:
     #   - policy_signing_{a,b}    : signs tcb_mapping
     #   - identity_signing_{a,b}  : signs td_identity  (embedded in servtd_collateral)
     for family_subject in \
@@ -320,8 +330,8 @@ generate_certificates() {
 
             openssl x509 -req \
                 -in "$output_dir/${family}_${suffix}.csr" \
-                -CA "$output_dir/root_ca.pem" \
-                -CAkey "$output_dir/root_ca.key" \
+                -CA "$output_dir/intermediate_ca.pem" \
+                -CAkey "$output_dir/intermediate_ca.key" \
                 -CAcreateserial \
                 -out "$output_dir/${family}_${suffix}.pem" \
                 -days $cert_validity_days \
@@ -329,7 +339,7 @@ generate_certificates() {
                 -extensions v3_ca \
                 -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
 
-            cat "$output_dir/${family}_${suffix}.pem" "$output_dir/root_ca.pem" \
+            cat "$output_dir/${family}_${suffix}.pem" "$output_dir/intermediate_ca.pem" "$output_dir/root_ca.pem" \
                 > "$output_dir/${family_chain_prefix}_${suffix}.pem"
 
             rm -f "$output_dir/${family}_${suffix}.csr"
@@ -340,7 +350,8 @@ generate_certificates() {
     cp "$output_dir/policy_signing_a_pkcs8.key" "$output_dir/policy_signing_pkcs8.key"
     cp "$output_dir/policy_issuer_chain_a.pem" "$output_dir/policy_issuer_chain.pem"
     bash "$PROJECT_ROOT/sh_script/test/generate_empty_servtd_crl.sh" \
-        "$output_dir/root_ca.pem" "$output_dir/root_ca.key" "$output_dir/servtd.crl.pem"
+        "$output_dir/intermediate_ca.pem" "$output_dir/intermediate_ca.key" "$output_dir/servtd.crl.pem"
+    shred -u "$output_dir/intermediate_ca.key"
 }
 
 # Parse command line arguments
