@@ -96,45 +96,62 @@ During startup:
   their authenticated RTMR1 and RTMR2 event digests before the mapping is used.
 - Collaterals are used for quote verification and TCB evaluation.
 
-## 5. Build Final MigTD Image with policy which contain updated TCD mapping
-### Generate new key pair for policy signing
-```
-bash sh_script/key_gen.sh
-```
+## 5. Finalize the cumulative TCB mapping
 
-### build migtd with existing policy
-```
-cargo clean
+Prepare the signing keys and complete steps 1-3 **before** measuring the release.
+Retain the exact signed identity as `config/templates/td_identity_signed.json`
+and use `key/migtd_issuer_chain.pem` consistently for this example. Freeze the
+identity, its signature and issuer chain, platform collaterals, policy settings,
+image build options, and TDINFO manifest. Re-signing an unchanged identity can
+produce a different signature, changing RTMR2 and therefore `tdinfo_hash`.
+
+`build_policy_v2.sh` is a mapping-finalization step, not an initial policy
+generator. It consumes the already-signed identity and rejects changes to
+measured policy data rather than silently invalidating the recorded hash.
+
+### Build with the prepared policy
+```sh
 cargo image --policy-v2 \
  --policy config/templates/policy_v2_signed.json \
  --policy-issuer-chain key/migtd_issuer_chain.pem
 ```
 
 ### Build migtd-hash tool
-```
-pushd tools/migtd-hash
-cargo build
-popd
+```sh
+cargo build -p migtd-hash
 ```
 
 ### Generate new measurement with updated TCB mapping
-```
+```sh
 ./target/debug/migtd-hash --manifest config/servtd_info.json \
  --image target/release/migtd.bin \
  --policy-v2 \
+ --output-tdinfo-hash target/release/expected_tdinfo_hash.txt \
  --mapping-isvsvn <release-svn> \
  --update-tcb-mapping config/templates/tcb_mapping.json
 ```
 
 ### Sign the cumulative mapping and rebuild the policy
-```
-bash sh_script/build_policy_v2.sh [preprod/prod] config/templates/tcb_mapping.json
+```sh
+bash sh_script/build_policy_v2.sh preprod \
+ config/templates/tcb_mapping.json config/templates/td_identity_signed.json
 ```
 ### Rebuild migtd with new policy
-```
+```sh
 cargo image --policy-v2 \
  --policy config/templates/policy_v2_signed.json \
  --policy-issuer-chain key/migtd_issuer_chain.pem
+```
+
+Require the rebuilt image to retain the recorded release hash. Do not publish
+the image or mapping if this comparison fails:
+
+```sh
+./target/debug/migtd-hash --manifest config/servtd_info.json \
+ --image target/release/migtd.bin --policy-v2 \
+ --output-tdinfo-hash target/release/final_tdinfo_hash.txt
+cmp --silent target/release/expected_tdinfo_hash.txt target/release/final_tdinfo_hash.txt \
+ || { echo "Final image no longer matches its TDINFO endorsement" >&2; exit 1; }
 ```
 
 ## Summary Flow
@@ -143,3 +160,6 @@ cargo image --policy-v2 \
 2. Sign the ServTD identity and cumulative TCB mapping -> generate `servtd_collateral.json`
 3. Generate policy data -> package it as `policy_v2_signed.json` without an outer signature
 4. Build the image with measured policy data and issuer chain
+5. Record its `tdinfo_hash` and update the cumulative mapping
+6. Re-sign only the mapping, preserving every measured input
+7. Rebuild and require the final `tdinfo_hash` to equal the recorded value
