@@ -6,6 +6,10 @@ its leaf-first issuer chain and independently calculated 48-byte signer anchor,
 a numbered empty CRL (7), a CRL revoking the signer (8), and equivalent signed
 JSON collateral with optional TD Identity.
 
+The chain is leaf -> intermediate -> root. Both CRLs are complete, direct,
+issuer-wide CRLs signed by the immediate intermediate with `cRLSign`; they
+cover only that CA's signing leaves.
+
 The private keys are generated in memory and are never written or retained.
 Certificates and CRLs use a fixed 2020-2120 validity window so fixture tests do
 not depend on the current date. CoRIM CWT claims contain no time claims.

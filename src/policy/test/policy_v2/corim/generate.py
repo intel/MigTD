@@ -65,15 +65,23 @@ def generate(policy_path):
     }
 
     root_key = ec.generate_private_key(ec.SECP384R1())
+    issuer_key = ec.generate_private_key(ec.SECP384R1())
     leaf_key = ec.generate_private_key(ec.SECP384R1())
     root_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Root")])
+    issuer_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Issuer")])
     leaf_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "MigTD CoRIM Emulation Signer")])
     root = certificate(root_name, root_name, root_key.public_key(), root_key, 1, True)
-    leaf = certificate(leaf_name, root_name, leaf_key.public_key(), root_key, 2, False)
+    issuer = certificate(issuer_name, root_name, issuer_key.public_key(), root_key, 2, True)
+    leaf = certificate(leaf_name, issuer_name, leaf_key.public_key(), issuer_key, 3, False)
     root_der = root.public_bytes(serialization.Encoding.DER)
-    chain_der = [leaf.public_bytes(serialization.Encoding.DER), root_der]
+    chain_der = [
+        leaf.public_bytes(serialization.Encoding.DER),
+        issuer.public_bytes(serialization.Encoding.DER),
+        root_der,
+    ]
     chain_pem = (
         leaf.public_bytes(serialization.Encoding.PEM)
+        + issuer.public_bytes(serialization.Encoding.PEM)
         + root.public_bytes(serialization.Encoding.PEM)
     )
     anchor = hashlib.sha384(
@@ -91,7 +99,7 @@ def generate(policy_path):
     ):
         builder = (
             x509.CertificateRevocationListBuilder()
-            .issuer_name(root_name)
+            .issuer_name(issuer_name)
             .last_update(START)
             .next_update(END)
             .add_extension(x509.CRLNumber(number), critical=False)
@@ -99,11 +107,11 @@ def generate(policy_path):
         if revoked:
             builder = builder.add_revoked_certificate(
                 x509.RevokedCertificateBuilder()
-                .serial_number(2)
+                .serial_number(3)
                 .revocation_date(START)
                 .build()
             )
-        crl = builder.sign(root_key, hashes.SHA384())
+        crl = builder.sign(issuer_key, hashes.SHA384())
         (output / filename).write_bytes(crl.public_bytes(serialization.Encoding.PEM))
 
     environment = {0: {1: "Intel", 2: "TDX"}, 1: cbor2.CBORTag(560, b"migration-td")}
