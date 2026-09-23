@@ -6,6 +6,7 @@ key_dir="./key"
 
 environment="${1:-pre-production}"
 tcb_mapping_file="${2:-}"
+signed_identity_file="${3:-}"
 case "$environment" in
   pre-production|preprod)
     collateral_file="collateral_pre_production_fmspc.json"
@@ -14,14 +15,20 @@ case "$environment" in
     collateral_file="collateral_production_fmspc.json"
     ;;
   *)
-    echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json>"
+    echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json> <signed-identity.json>" >&2
     exit 1
     ;;
 esac
 
 echo "Selected collateral environment '$environment' using $collateral_file"
-if [[ -z "$tcb_mapping_file" ]]; then
-  echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json>" >&2
+if [[ -z "$tcb_mapping_file" || -z "$signed_identity_file" ]]; then
+  echo "Usage: $0 <pre-production|production> <cumulative-tcb-mapping.json> <signed-identity.json>" >&2
+  exit 1
+fi
+if [[ ! -s "$signed_identity_file" ]] || ! jq -e \
+  '(.tdIdentity | type == "object") and (.signature | type == "string" and length > 0)' \
+  "$signed_identity_file" >/dev/null; then
+  echo "The signed identity used to measure this release is required: $signed_identity_file" >&2
   exit 1
 fi
 if ! jq -e '.svnMappings | type == "array" and length > 0' "$tcb_mapping_file" >/dev/null; then
@@ -30,6 +37,8 @@ if ! jq -e '.svnMappings | type == "array" and length > 0' "$tcb_mapping_file" >
   exit 1
 fi
 echo "Signing cumulative TCB mapping: $tcb_mapping_file"
+measured_policy=$(jq -cS 'del(.servtdCollateral.servtdTcbMapping)' \
+  "$config_temp_dir/policy_v2.json")
 
 # Build migtd-collateral-generator and generate collateral_pre_production_fmspc.json
 # cargo build -p migtd-collateral-generator
@@ -37,38 +46,40 @@ echo "Signing cumulative TCB mapping: $tcb_mapping_file"
 #   -o $config_temp_dir/collateral_pre_production_fmspc.json \
 #   --pre-production
 
-# Build json-signer and sign td_identity.json
+# The signed identity is measured; only the TCB mapping may be re-signed here.
 cargo build -p json-signer
 ./target/debug/json-signer --sign \
-  --name tdIdentity \
-  --private-key $key_dir/issuer_pkcs8.key \
-  --input $config_temp_dir/td_identity.json \
-  --output $config_temp_dir/td_identity_signed.json
-
-# Sign tcb_mapping.json
-./target/debug/json-signer --sign \
   --name tdTcbMapping \
-  --private-key $key_dir/issuer_pkcs8.key \
+  --private-key "$key_dir/issuer_pkcs8.key" \
   --input "$tcb_mapping_file" \
-  --output $config_temp_dir/tcb_mapping_signed.json
+  --output "$config_temp_dir/tcb_mapping_signed.json"
 
 # Build servtd-collateral-generator and generate servtd_collateral.json
 cargo build -p servtd-collateral-generator
 ./target/debug/servtd-collateral-generator \
-  --identity $config_temp_dir/td_identity_signed.json \
-  --identity-chain $key_dir/migtd_issuer_chain.pem \
-  --mapping $config_temp_dir/tcb_mapping_signed.json \
-  -o $config_temp_dir/servtd_collateral.json
+  --identity "$signed_identity_file" \
+  --identity-chain "$key_dir/migtd_issuer_chain.pem" \
+  --mapping "$config_temp_dir/tcb_mapping_signed.json" \
+  -o "$config_temp_dir/servtd_collateral.json"
 
 # Build migtd-policy-generator and generate policy_v2.json
 cargo build -p migtd-policy-generator
+policy_output=$(mktemp "$config_temp_dir/policy_v2.XXXXXX")
+trap 'rm -f -- "$policy_output"' EXIT
 ./target/debug/migtd-policy-generator v2 \
-  --policy-data $config_temp_dir/policy_v2.json \
-  --collaterals $config_temp_dir/../$collateral_file \
-  --servtd-collateral $config_temp_dir/servtd_collateral.json \
-  -o $config_temp_dir/policy_v2.json
+  --policy-data "$config_temp_dir/policy_v2.json" \
+  --collaterals "$config_temp_dir/../$collateral_file" \
+  --servtd-collateral "$config_temp_dir/servtd_collateral.json" \
+  -o "$policy_output"
+
+updated_measurement=$(jq -cS 'del(.servtdCollateral.servtdTcbMapping)' "$policy_output")
+if [[ "$updated_measurement" != "$measured_policy" ]]; then
+  echo "Finalization would change measured policy data; prepare and measure a new release first." >&2
+  exit 1
+fi
+mv -- "$policy_output" "$config_temp_dir/policy_v2.json"
 
 # policyData integrity is provided by RTMR2; the policy blob has no outer
 # signature. Keep the historical output filename for build compatibility.
-jq -c '{policyData: .}' $config_temp_dir/policy_v2.json \
-  > $config_temp_dir/policy_v2_signed.json
+jq -c '{policyData: .}' "$config_temp_dir/policy_v2.json" \
+  > "$config_temp_dir/policy_v2_signed.json"
