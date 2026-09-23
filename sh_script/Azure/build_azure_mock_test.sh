@@ -166,6 +166,16 @@ generate_certificates() {
         -subj "$root_ca_subject" \
         -$hash_algo
 
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name \
+        -out "$output_dir/intermediate_ca.key"
+    openssl req -new -key "$output_dir/intermediate_ca.key" \
+        -out "$output_dir/intermediate_ca.csr" -subj "/CN=MigTD Intermediate CA/O=Microsoft Corporation"
+    openssl x509 -req -in "$output_dir/intermediate_ca.csr" \
+        -CA "$output_dir/root_ca.pem" -CAkey "$output_dir/root_ca.key" -CAcreateserial \
+        -out "$output_dir/intermediate_ca.pem" -days $cert_validity_days -$hash_algo \
+        -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n')
+    rm -f "$output_dir/intermediate_ca.csr"
+
     echo "3. Generating policy signing private key..."
     openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name -out "$output_dir/policy_signing.key"
 
@@ -181,11 +191,11 @@ generate_certificates() {
         -out "$output_dir/policy_signing.csr" \
         -subj "$leaf_subject"
 
-    echo "6. Signing leaf certificate with root CA..."
+    echo "6. Signing leaf certificate with intermediate CA..."
     openssl x509 -req \
         -in "$output_dir/policy_signing.csr" \
-        -CA "$output_dir/root_ca.pem" \
-        -CAkey "$output_dir/root_ca.key" \
+        -CA "$output_dir/intermediate_ca.pem" \
+        -CAkey "$output_dir/intermediate_ca.key" \
         -CAcreateserial \
         -out "$output_dir/policy_signing.pem" \
         -days $cert_validity_days \
@@ -193,11 +203,12 @@ generate_certificates() {
         -extensions v3_ca \
         -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
 
-    # Create certificate chain (leaf + root)
+    # Create certificate chain (leaf + intermediate + root)
     echo "7. Creating certificate chain..."
-    cat "$output_dir/policy_signing.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain.pem"
+    cat "$output_dir/policy_signing.pem" "$output_dir/intermediate_ca.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain.pem"
     bash "$PROJECT_ROOT/sh_script/test/generate_empty_servtd_crl.sh" \
-        "$output_dir/root_ca.pem" "$output_dir/root_ca.key" "$output_dir/servtd.crl.pem"
+        "$output_dir/intermediate_ca.pem" "$output_dir/intermediate_ca.key" "$output_dir/servtd.crl.pem"
+    shred -u "$output_dir/intermediate_ca.key"
 
     # Clean up CSR
     rm -f "$output_dir/policy_signing.csr"
