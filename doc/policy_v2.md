@@ -35,11 +35,28 @@ cargo build -p json-signer
 ./target/debug/json-signer --sign  --name tdTcbMapping --private-key /path/to/pkcs8 --input /path/to/tcb_mapping.json --output tcb_mapping_signed.json
 ```
 
-All v2 policies must include a CA-signed PEM CRL with a CRL-number extension
+All v2 policies must include an intermediate-CA-signed PEM CRL with a CRL-number extension
 in `servtdCollateral.servtdCrl`. If no certificates are revoked, provide a valid
 signed CRL with an empty revocation list, not an empty file or an omitted field.
-The CRL-issuing CA must be present in both the policy-signer chain (also used for
-the TCB mapping) and the identity-signer chain. An issuer mismatch fails closed.
+The CRL must be signed by the immediate, non-root issuer of each signing leaf,
+not just any CA present in its chain. That intermediate must have
+`BasicConstraints.cA=true` and an explicit `KeyUsage.cRLSign` permission.
+Missing, malformed, or duplicate KeyUsage extensions are rejected. The policy
+and identity may use separate leaves and keys, but both must have the same
+issuing intermediate when sharing this CRL.
+
+Only complete, direct, issuer-wide CRLs are supported. Delta CRLs, issuing
+distribution points, indirect entries, reason-scoped or delegated certificate
+distribution points, and unsupported critical extensions are rejected.
+Unrecognized non-critical extensions, including Microsoft CA-version and
+next-publish metadata, remain permitted. Revocation lookup applies only to
+the signing leaves, never to root or intermediate serial numbers.
+
+This profile deliberately excludes intermediate revocation and automatic
+intermediate-key rollover. Root-issued CRLs and root-issued signing leaves
+are not supported. Leaf-key rotation under the same intermediate is supported.
+Changing measured collateral still requires a new image and TDINFO endorsement.
+These restrictions apply only to `servtdCrl`, not Intel platform CRLs.
 
 Produce the ServTD identity, TCB mapping, and CRL collateral bundle:
 
@@ -85,6 +102,10 @@ An optional servTD signer CRL floor belongs in a `servtd` entry in the applicabl
 This constraint remains active in each evaluated servTD policy block when
 rebinding skips platform checks. The example requires the peer's CRL number to
 be at least the local CRL number; a missing peer or local number fails evaluation.
+Both CRLs must authenticate with the same immediate-issuer name and key under
+the issuer-wide profile before their numbers are compared. The peer CRL's
+signature, profile, and number are checked, but its revocation entries never
+override or supplement the local revocation decision.
 The CRL itself remains in `servtdCollateral.servtdCrl`. `global.crl` accepts only
 `pckCrlNum` and `rootCaCrlNum`; placing `servtdCrlNum` there is rejected.
 

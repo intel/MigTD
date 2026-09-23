@@ -407,11 +407,14 @@ mod v2 {
         check_policy_issuer_chain_integrity(policy_issuer_chain, &events)?;
 
         // 2. Verify the peer policy using its RTMR1-bound issuer chain
-        let verified_policy = unverified_policy.verify(policy_issuer_chain)?;
+        let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let verified_policy = unverified_policy.verify_with_authoritative_servtd_crl(
+            policy_issuer_chain,
+            local_policy.servtd_crl.as_bytes(),
+        )?;
 
         // 3. Validate that peer's chains share the same root CA and leaf
         //    subject name as our local chains.
-        let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
         let local_chain = get_policy_issuer_chain().ok_or(PolicyError::InvalidParameter)?;
         crypto::validate_peer_cert_chain(
             local_chain,
@@ -785,7 +788,7 @@ mod v2 {
         }
 
         #[test]
-        fn peer_identity_must_contain_the_local_crl_issuer() {
+        fn peer_identity_must_use_the_local_crl_intermediate() {
             let local_input =
                 serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
             let local = load_policy(&local_input, fixtures::POLICY_CHAIN);
@@ -799,15 +802,19 @@ mod v2 {
             collateral["servtdIdentity"] =
                 serde_json::from_slice(fixtures::SIGNED_IDENTITY_OTHER_ISSUER).unwrap();
             let peer_input = serde_json::to_vec(&peer_json).unwrap();
-            let peer = load_policy(&peer_input, fixtures::POLICY_CHAIN);
             crypto::validate_peer_cert_chain(
                 local.servtd_identity_issuer_chain.as_bytes(),
-                peer.servtd_identity_issuer_chain.as_bytes(),
+                fixtures::IDENTITY_OTHER_ISSUER_CHAIN,
             )
             .unwrap();
 
             assert!(matches!(
-                verify_peer_signer_revocation(&peer, &local),
+                RawPolicyData::deserialize_from_json(&peer_input)
+                    .unwrap()
+                    .verify_with_authoritative_servtd_crl(
+                        fixtures::POLICY_CHAIN,
+                        local.servtd_crl.as_bytes(),
+                    ),
                 Err(PolicyError::SignerRevoked)
             ));
         }
