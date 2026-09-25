@@ -77,7 +77,7 @@ pub(crate) struct BuildArgs {
     /// Path of the configuration file for td-shim image layout
     #[clap(long)]
     image_layout: Option<PathBuf>,
-    /// Log level control in debug migtd; release builds disable logging
+    /// Log level control in migtd, default value is `off` for release and `info` for debug
     #[clap(short, long)]
     log_level: Option<LogLevel>,
     /// MMIO space layout configuration for migtd
@@ -113,7 +113,9 @@ enum LogLevel {
 }
 
 impl LogLevel {
-    // Debug log levels are selected at compile time via Cargo features.
+    // Log levels can be statically set at compile time via Cargo features and they are
+    // configured separately for release and debug build.
+    // This function is used to output feature for `migtd` crate to control its log level.
     fn debug_feature(&self) -> &str {
         match self {
             LogLevel::Off => "log/max_level_off",
@@ -122,6 +124,17 @@ impl LogLevel {
             LogLevel::Info => "log/max_level_info",
             LogLevel::Debug => "log/max_level_debug",
             LogLevel::Trace => "log/max_level_trace",
+        }
+    }
+
+    fn release_feature(&self) -> &str {
+        match self {
+            LogLevel::Off => "log/release_max_level_off",
+            LogLevel::Error => "log/release_max_level_error",
+            LogLevel::Warn => "log/release_max_level_warn",
+            LogLevel::Info => "log/release_max_level_info",
+            LogLevel::Debug => "log/release_max_level_debug",
+            LogLevel::Trace => "log/release_max_level_trace",
         }
     }
 }
@@ -185,12 +198,6 @@ impl BuildArgs {
     }
 
     fn check_arguments(&self) -> Result<()> {
-        if !self.debug && self.log_level.is_some_and(|level| level != LogLevel::Off) {
-            return Err(anyhow::anyhow!(
-                "release MigTD builds disable logging; --log-level must be off"
-            ));
-        }
-
         if !self.no_tdinfo && self.image_format() == DEFAULT_IMAGE_FORMAT && self.td_info_svn == 0 {
             return Err(anyhow::anyhow!("TD_INFO SVN must be non-zero"));
         }
@@ -490,6 +497,37 @@ impl BuildArgs {
             }
         } else {
             println!("Building release MigTD");
+            match self.log_level {
+                Some(loglevel) => match loglevel {
+                    LogLevel::Off => {
+                        println!("Building release MigTD found loglevel=Off), overriding to Info");
+                        features.push_str(LogLevel::Info.release_feature());
+                    }
+                    LogLevel::Error => {
+                        println!("Building release MigTD found loglevel=Error");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Warn => {
+                        println!("Building release MigTD found loglevel=Warn");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Info => {
+                        println!("Building release MigTD found loglevel=Info");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Debug => {
+                        println!("Building release MigTD found loglevel=Debug");
+                        features.push_str(loglevel.release_feature());
+                    }
+                    LogLevel::Trace => {
+                        println!("Building release MigTD found loglevel=Trace");
+                        features.push_str(loglevel.release_feature());
+                    }
+                },
+                _ => {
+                    println!("Building release MigTD found None(loglevel)");
+                }
+            }
         }
 
         features
