@@ -20,6 +20,7 @@ const DEFAULT_IMAGE_FORMAT: &str = "tdvf";
 const MIGTD_TD_INFO_GUID: &str = "dbbdfad7-9cba-4aae-b498-c0fd425860b4";
 const MIGTD_MAX_MIGRATION_CHANNEL_COUNT: u32 = 12;
 const MIGTD_MAX_VCPU_COUNT: u32 = 1;
+const MIGTD_SIGNER_ANCHOR_SIZE: usize = 48;
 
 lazy_static! {
     static ref PROJECT_ROOT: &'static Path =
@@ -86,9 +87,17 @@ pub(crate) struct BuildArgs {
     /// Use migration policy v2
     #[clap(long)]
     policy_v2: bool,
-    /// Issuer chain of migration policy v2, required if `policy_v2` is set
+    /// Issuer chain of migration policy v2. Provide this OR `--signer-anchor`
+    /// (at least one is required when `policy_v2` is set).
     #[clap(long)]
     policy_issuer_chain: Option<PathBuf>,
+    /// Path of the 48-byte RTMR1 signer anchor to enroll as an alternative to
+    /// `--policy-issuer-chain`.
+    #[clap(long)]
+    signer_anchor: Option<PathBuf>,
+    /// Path of the signed ServTD TCB-mapping CoRIM (`COSE_Sign1`).
+    #[clap(long)]
+    servtd_corim: Option<PathBuf>,
     /// Security Version Number recorded in the MigTD TD_INFO structure
     #[clap(long, default_value_t = 1)]
     td_info_svn: u32,
@@ -213,10 +222,91 @@ impl BuildArgs {
                     "policy_v2 is enabled but no policy file is provided"
                 ));
             }
-            if self.policy_issuer_chain.is_none() {
+            if self.policy_issuer_chain.is_none() && self.signer_anchor.is_none() {
                 return Err(anyhow::anyhow!(
-                    "policy_v2 is enabled but no policy_issuer_chain file is provided"
+                    "policy_v2 is enabled but neither --policy-issuer-chain nor --signer-anchor was provided"
                 ));
+            }
+            if let Some(anchor) = &self.signer_anchor {
+                self.check_direct_anchor_configuration(anchor)?;
+            }
+        } else if self.servtd_corim.is_some() {
+            return Err(anyhow::anyhow!("--servtd-corim requires --policy-v2"));
+        } else if self.signer_anchor.is_some() {
+            return Err(anyhow::anyhow!("--signer-anchor requires --policy-v2"));
+        }
+        Ok(())
+    }
+
+    fn check_direct_anchor_configuration(&self, anchor_path: &Path) -> Result<()> {
+        let anchor = fs::read(anchor_path)
+            .with_context(|| format!("Failed to read signer anchor {}", anchor_path.display()))?;
+        if anchor.len() != MIGTD_SIGNER_ANCHOR_SIZE {
+            return Err(anyhow::anyhow!(
+                "--signer-anchor requires exactly 48 raw bytes, got {}",
+                anchor.len()
+            ));
+        }
+
+        let policy_path = self.policy()?;
+        let policy: serde_json::Value = serde_json::from_slice(&fs::read(&policy_path)?)
+            .with_context(|| format!("Failed to parse policy {}", policy_path.display()))?;
+        let policy_data = policy
+            .get("policyData")
+            .and_then(serde_json::Value::as_object)
+            .context("--signer-anchor requires a policy with a policyData JSON object")?;
+        let collateral = policy_data
+            .get("servtdCollateral")
+            .filter(|value| !value.is_null());
+        if let Some(collateral) = collateral {
+            let collateral = collateral
+                .as_object()
+                .context("servtdCollateral must be a JSON object")?;
+            if !collateral
+                .get("servtdTcbMapping")
+                .is_some_and(serde_json::Value::is_object)
+            {
+                return Err(anyhow::anyhow!(
+                    "Retained servtdCollateral requires a signed servtdTcbMapping"
+                ));
+            }
+            collateral
+                .get("servtdTcbMappingIssuerChain")
+                .and_then(serde_json::Value::as_str)
+                .filter(|chain| !chain.trim().is_empty())
+                .context(
+                    "--signer-anchor requires an explicit servtdTcbMappingIssuerChain for retained JSON collateral, even with --servtd-corim or --policy-issuer-chain",
+                )?;
+        } else if self.servtd_corim.is_none() {
+            return Err(anyhow::anyhow!(
+                "--signer-anchor requires JSON servtdCollateral or an enrolled --servtd-corim"
+            ));
+        }
+
+        let top_level_crl = policy_data
+            .get("servtdCrl")
+            .filter(|value| !value.is_null());
+        let nested_crl = collateral
+            .and_then(|value| value.get("servtdCrl"))
+            .filter(|value| !value.is_null());
+        if let (Some(top), Some(nested)) = (top_level_crl, nested_crl) {
+            if top != nested {
+                return Err(anyhow::anyhow!(
+                    "Top-level and nested servtdCrl values differ"
+                ));
+            }
+        }
+        top_level_crl
+            .or(nested_crl)
+            .and_then(serde_json::Value::as_str)
+            .filter(|crl| !crl.trim().is_empty())
+            .context("--signer-anchor requires a nonempty servtdCrl in the policy")?;
+
+        if let Some(path) = &self.servtd_corim {
+            let corim = fs::read(path)
+                .with_context(|| format!("Failed to read servtd CoRIM {}", path.display()))?;
+            if corim.is_empty() {
+                return Err(anyhow::anyhow!("--servtd-corim must not be empty"));
             }
         }
         Ok(())
@@ -371,15 +461,38 @@ impl BuildArgs {
         ]);
 
         let cmd = if self.policy_v2 {
-            cmd.args(&[
-                "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
-                self.policy_issuer_chain()?.to_str().unwrap(),
-            ])
+            // Prefer the 48-byte anchor slot when `--signer-anchor` is given,
+            // otherwise enroll the policy issuer chain PEM.
+            if let Some(anchor) = &self.signer_anchor {
+                let anchor = fs::canonicalize(anchor)?;
+                cmd.args(&[
+                    "2B9D5A84-6F3C-4E71-8A2D-0C7E1F4B6A93",
+                    anchor.to_str().unwrap(),
+                ])
+            } else {
+                cmd.args(&[
+                    "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
+                    self.policy_issuer_chain()?.to_str().unwrap(),
+                ])
+            }
         } else {
             cmd.args(&[
                 "CA437832-4C51-4322-B13D-A21BD0C8FFF6",
                 self.root_ca()?.to_str().unwrap(),
             ])
+        };
+
+        // Enroll the signed ServTD TCB-mapping CoRIM under its own FFS GUID.
+        // This file is not measured (see config::MIGTD_SERVTD_CORIM_FFS_GUID),
+        // so it does not affect the image tdinfo_hash.
+        let corim_path = self.servtd_corim()?;
+        let cmd = if let Some(corim) = &corim_path {
+            cmd.args(&[
+                "7E5B9C11-2D4A-4F6E-9B3C-1A2B3C4D5E6F",
+                corim.to_str().unwrap(),
+            ])
+        } else {
+            cmd
         };
 
         cmd.args(&["-o", bin.to_str().unwrap()]).run()?;
@@ -454,6 +567,10 @@ impl BuildArgs {
 
         if self.policy_v2 {
             features.push_str(",policy_v2");
+        }
+
+        if self.servtd_corim.is_some() {
+            features.push_str(",servtd_corim");
         }
 
         if let Some(selected) = &self.features {
@@ -592,6 +709,14 @@ impl BuildArgs {
         fs::canonicalize(path).map_err(|e| e.into())
     }
 
+    /// Canonicalized path of the signed ServTD TCB-mapping CoRIM, if provided.
+    fn servtd_corim(&self) -> Result<Option<PathBuf>> {
+        match self.servtd_corim.as_ref() {
+            Some(path) => Ok(Some(fs::canonicalize(path)?)),
+            None => Ok(None),
+        }
+    }
+
     fn root_ca(&self) -> Result<PathBuf> {
         let path = self.root_ca.as_ref().unwrap_or(&DEFAULT_CA);
         fs::canonicalize(path).map_err(|e| e.into())
@@ -610,5 +735,226 @@ impl BuildArgs {
         };
         let path = self.image_layout.as_deref().unwrap_or(default);
         fs::canonicalize(path).map_err(|e| e.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use serde_json::{json, Value};
+
+    fn image_args(arguments: &[&str]) -> BuildArgs {
+        let program = crate::Program::try_parse_from(
+            ["xtask", "image"]
+                .iter()
+                .copied()
+                .chain(arguments.iter().copied()),
+        )
+        .unwrap();
+        match program.command {
+            crate::Commands::Image(args) => args,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn signer_anchor_requires_policy_v2() {
+        let args = image_args(&["--signer-anchor", "anchor.bin"]);
+        assert_eq!(
+            args.check_arguments().unwrap_err().to_string(),
+            "--signer-anchor requires --policy-v2"
+        );
+    }
+
+    #[test]
+    fn servtd_corim_requires_policy_v2() {
+        let args = image_args(&["--servtd-corim", "mapping.corim"]);
+        assert_eq!(
+            args.check_arguments().unwrap_err().to_string(),
+            "--servtd-corim requires --policy-v2"
+        );
+    }
+
+    #[test]
+    fn legacy_image_without_endorsement_flags_is_valid() {
+        assert!(image_args(&[]).check_arguments().is_ok());
+    }
+
+    fn anchor_policy(json_mapping: bool) -> Value {
+        let mut policy: Value = serde_json::from_str(include_str!(
+            "../../src/policy/test/policy_v2/policy_v2.json"
+        ))
+        .unwrap();
+        let data = policy["policyData"].as_object_mut().unwrap();
+        if json_mapping {
+            data["servtdCollateral"]["servtdTcbMappingIssuerChain"] = Value::String(
+                include_str!("../../src/policy/test/policy_v2/cert_chain/policy_issuer_chain.pem")
+                    .to_string(),
+            );
+        } else {
+            let collateral = data.remove("servtdCollateral").unwrap();
+            data.insert("servtdCrl".to_string(), collateral["servtdCrl"].clone());
+        }
+        policy
+    }
+
+    fn anchor_args(policy: &Value, corim: bool) -> (xshell::TempDir, BuildArgs) {
+        let sh = Shell::new().unwrap();
+        let dir = sh.create_temp_dir().unwrap();
+        let policy_path = dir.path().join("policy.json");
+        let anchor_path = dir.path().join("anchor.bin");
+        fs::write(&policy_path, serde_json::to_vec(policy).unwrap()).unwrap();
+        fs::write(&anchor_path, [0u8; MIGTD_SIGNER_ANCHOR_SIZE]).unwrap();
+        let mut args = image_args(&[
+            "--policy-v2",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--signer-anchor",
+            anchor_path.to_str().unwrap(),
+        ]);
+        if corim {
+            let path = dir.path().join("mapping.corim");
+            fs::write(&path, b"CoRIM artifact (configuration checks only)").unwrap();
+            args.servtd_corim = Some(path);
+        }
+        (dir, args)
+    }
+
+    #[test]
+    fn direct_anchor_accepts_json_with_an_explicit_mapping_chain() {
+        for corim in [false, true] {
+            let (dir, mut args) = anchor_args(&anchor_policy(true), corim);
+            args.policy_issuer_chain = Some(dir.path().join("not-enrolled.pem"));
+            args.features = Some("servtd_corim".to_string());
+            assert!(args.check_arguments().is_ok());
+        }
+    }
+
+    #[test]
+    fn direct_anchor_accepts_json_with_a_top_level_crl() {
+        let mut policy = anchor_policy(true);
+        let crl = policy["policyData"]["servtdCollateral"]
+            .as_object_mut()
+            .unwrap()
+            .remove("servtdCrl")
+            .unwrap();
+        policy["policyData"]["servtdCrl"] = crl;
+        let (_dir, args) = anchor_args(&policy, false);
+        assert!(args.check_arguments().is_ok());
+    }
+
+    #[test]
+    fn direct_anchor_accepts_corim_only_with_a_crl() {
+        let (_dir, args) = anchor_args(&anchor_policy(false), true);
+        assert!(args.check_arguments().is_ok());
+    }
+
+    #[test]
+    fn retained_json_requires_its_chain_even_with_corim_or_outer_pem() {
+        for corim in [false, true] {
+            for chain in [Value::Null, json!(""), json!("  ")] {
+                let mut policy = anchor_policy(true);
+                policy["policyData"]["servtdCollateral"]["servtdTcbMappingIssuerChain"] = chain;
+                let (dir, mut args) = anchor_args(&policy, corim);
+                args.policy_issuer_chain = Some(dir.path().join("not-enrolled.pem"));
+                assert!(args
+                    .check_arguments()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("explicit servtdTcbMappingIssuerChain"));
+            }
+        }
+    }
+
+    #[test]
+    fn retained_json_mapping_is_required_even_with_corim() {
+        let mut policy = anchor_policy(true);
+        policy["policyData"]["servtdCollateral"]
+            .as_object_mut()
+            .unwrap()
+            .remove("servtdTcbMapping");
+        let (_dir, args) = anchor_args(&policy, true);
+        assert!(args
+            .check_arguments()
+            .unwrap_err()
+            .to_string()
+            .contains("signed servtdTcbMapping"));
+    }
+
+    #[test]
+    fn direct_anchor_requires_a_mapping_source() {
+        let (_dir, args) = anchor_args(&anchor_policy(false), false);
+        assert!(args
+            .check_arguments()
+            .unwrap_err()
+            .to_string()
+            .contains("an enrolled --servtd-corim"));
+    }
+
+    #[test]
+    fn direct_anchor_requires_the_raw_48_byte_representation() {
+        let (_dir, args) = anchor_args(&anchor_policy(true), false);
+        for length in [0, 47, 49, 96] {
+            fs::write(args.signer_anchor.as_ref().unwrap(), vec![0; length]).unwrap();
+            assert!(args
+                .check_arguments()
+                .unwrap_err()
+                .to_string()
+                .contains("exactly 48 raw bytes"));
+        }
+    }
+
+    #[test]
+    fn direct_anchor_requires_a_nonempty_crl() {
+        for crl in [Value::Null, json!(""), json!(" \n"), json!(7)] {
+            let mut policy = anchor_policy(false);
+            policy["policyData"]["servtdCrl"] = crl;
+            let (_dir, args) = anchor_args(&policy, true);
+            assert!(args
+                .check_arguments()
+                .unwrap_err()
+                .to_string()
+                .contains("nonempty servtdCrl"));
+        }
+    }
+
+    #[test]
+    fn direct_anchor_rejects_disagreeing_crls() {
+        let mut policy = anchor_policy(true);
+        policy["policyData"]["servtdCrl"] = json!("different CRL");
+        let (_dir, args) = anchor_args(&policy, false);
+        assert!(args
+            .check_arguments()
+            .unwrap_err()
+            .to_string()
+            .contains("servtdCrl values differ"));
+    }
+
+    #[test]
+    fn direct_anchor_requires_a_readable_nonempty_corim_file() {
+        let (_dir, args) = anchor_args(&anchor_policy(false), true);
+        fs::write(args.servtd_corim.as_ref().unwrap(), []).unwrap();
+        assert!(args
+            .check_arguments()
+            .unwrap_err()
+            .to_string()
+            .contains("--servtd-corim must not be empty"));
+        fs::remove_file(args.servtd_corim.as_ref().unwrap()).unwrap();
+        assert!(args
+            .check_arguments()
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to read servtd CoRIM"));
+    }
+
+    #[test]
+    fn direct_anchor_requires_a_policy_data_object() {
+        let (_dir, args) = anchor_args(&json!({"policyData": []}), true);
+        assert!(args
+            .check_arguments()
+            .unwrap_err()
+            .to_string()
+            .contains("policyData JSON object"));
     }
 }
