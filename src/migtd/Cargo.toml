@@ -60,7 +60,7 @@ tokio = { version = "1.0", features = ["rt", "rt-multi-thread"], optional = true
 minicov = { version = "0.2", default-features = false, optional = true }
 td-benchmark = { path = "../../deps/td-shim/devtools/td-benchmark", default-features = false,  optional = true }
 
-spdmlib = {path = "../../deps/spdm-rs/spdmlib", default-features = false, features = ["spdm-ring", "chunk-cap", "mut-auth", "hashed-transcript-data"]}
+spdmlib = {path = "../../deps/spdm-rs/spdmlib", default-features = false, features = ["spdm-ring", "chunk-cap", "mut-auth", "hashed-transcript-data", "disable-release-logging"]}
 codec = {path= "../../deps/spdm-rs/codec"}
 maybe-async = "0.2.7"
 async-trait = "0.1.71"
