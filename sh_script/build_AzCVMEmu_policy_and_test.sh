@@ -206,9 +206,9 @@ POLICY_DATA_MERGED="$TEMP_DIR/policy_data_merged.json"
 OUTPUT_POLICY="$OUTPUT_DIR/policy_v2_signed.json"
 OUTPUT_POLICY_A="$OUTPUT_DIR/policy_v2_signed_a.json"
 OUTPUT_POLICY_B="$OUTPUT_DIR/policy_v2_signed_b.json"
-# Variant B with policy + tcb_mapping leaf certs both rotated
+# Compatibility alias for the historical policy+mapping rotation scenario
 OUTPUT_POLICY_PM_B="$OUTPUT_DIR/policy_v2_signed_pm_b.json"
-# Variant B with policy + tcb_mapping + td_identity leaf certs all rotated
+# Variant B with policy/mapping and td_identity leaf certs all rotated
 OUTPUT_POLICY_PMI_B="$OUTPUT_DIR/policy_v2_signed_pmi_b.json"
 OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
 OUTPUT_CERT_CHAIN_A="$OUTPUT_DIR/policy_issuer_chain_a.pem"
@@ -217,11 +217,7 @@ CERT_DIR="$TEMP_DIR/certs"
 PRIVATE_KEY="$CERT_DIR/policy_signing_pkcs8.key"
 PRIVATE_KEY_A="$CERT_DIR/policy_signing_a_pkcs8.key"
 PRIVATE_KEY_B="$CERT_DIR/policy_signing_b_pkcs8.key"
-# Independent leaf signing keys for tcb_mapping and td_identity (both variants
-# under the same root CA). Used to exercise rotation of the inner cert chains
-# embedded in servtd_collateral.
-MAPPING_PRIVATE_KEY_A="$CERT_DIR/mapping_signing_a_pkcs8.key"
-MAPPING_PRIVATE_KEY_B="$CERT_DIR/mapping_signing_b_pkcs8.key"
+# Independent td_identity signing keys under the same root CA.
 IDENTITY_PRIVATE_KEY_A="$CERT_DIR/identity_signing_a_pkcs8.key"
 IDENTITY_PRIVATE_KEY_B="$CERT_DIR/identity_signing_b_pkcs8.key"
 
@@ -287,17 +283,23 @@ generate_certificates() {
         -subj "$root_ca_subject" \
         -$hash_algo
 
-    # Generate two leaf certs (a and b) from the same root CA with the same CN
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name \
+        -out "$output_dir/intermediate_ca.key"
+    openssl req -new -key "$output_dir/intermediate_ca.key" \
+        -out "$output_dir/intermediate_ca.csr" -subj "/CN=MigTD Intermediate CA/O=Intel Corporation"
+    openssl x509 -req -in "$output_dir/intermediate_ca.csr" \
+        -CA "$output_dir/root_ca.pem" -CAkey "$output_dir/root_ca.key" -CAcreateserial \
+        -out "$output_dir/intermediate_ca.pem" -days $cert_validity_days -$hash_algo \
+        -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n')
+    rm -f "$output_dir/intermediate_ca.csr"
+
+    # Generate two leaf certs (a and b) from the same intermediate CA with the same CN
     # This exercises the peer cert chain validation / key rotation path.
-    # Three leaf families are generated, all under the same root CA:
-    #   - policy_signing_{a,b}    : signs the outer policy
-    #   - mapping_signing_{a,b}   : signs tcb_mapping (embedded in servtd_collateral)
+    # Two leaf families share one intermediate-issued servTD CRL:
+    #   - policy_signing_{a,b}    : signs tcb_mapping
     #   - identity_signing_{a,b}  : signs td_identity  (embedded in servtd_collateral)
-    # Variant "a" uses the same logical leaf for all three; variant "b" rotates
-    # one or more of them depending on the test mode.
     for family_subject in \
         "policy_signing:/CN=MigTD Policy Issuer/O=Intel Corporation" \
-        "mapping_signing:/CN=MigTD TCB Mapping Issuer/O=Intel Corporation" \
         "identity_signing:/CN=MigTD TD Identity Issuer/O=Intel Corporation"; do
         local family="${family_subject%%:*}"
         local subject="${family_subject#*:}"
@@ -309,7 +311,6 @@ generate_certificates() {
         local family_chain_prefix
         case "$family" in
             policy_signing)   family_chain_prefix="policy_issuer_chain" ;;
-            mapping_signing)  family_chain_prefix="mapping_issuer_chain" ;;
             identity_signing) family_chain_prefix="identity_issuer_chain" ;;
         esac
 
@@ -329,8 +330,8 @@ generate_certificates() {
 
             openssl x509 -req \
                 -in "$output_dir/${family}_${suffix}.csr" \
-                -CA "$output_dir/root_ca.pem" \
-                -CAkey "$output_dir/root_ca.key" \
+                -CA "$output_dir/intermediate_ca.pem" \
+                -CAkey "$output_dir/intermediate_ca.key" \
                 -CAcreateserial \
                 -out "$output_dir/${family}_${suffix}.pem" \
                 -days $cert_validity_days \
@@ -338,7 +339,7 @@ generate_certificates() {
                 -extensions v3_ca \
                 -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
 
-            cat "$output_dir/${family}_${suffix}.pem" "$output_dir/root_ca.pem" \
+            cat "$output_dir/${family}_${suffix}.pem" "$output_dir/intermediate_ca.pem" "$output_dir/root_ca.pem" \
                 > "$output_dir/${family_chain_prefix}_${suffix}.pem"
 
             rm -f "$output_dir/${family}_${suffix}.csr"
@@ -348,6 +349,9 @@ generate_certificates() {
     # Keep backward-compatible aliases (default to "a")
     cp "$output_dir/policy_signing_a_pkcs8.key" "$output_dir/policy_signing_pkcs8.key"
     cp "$output_dir/policy_issuer_chain_a.pem" "$output_dir/policy_issuer_chain.pem"
+    bash "$PROJECT_ROOT/sh_script/test/generate_empty_servtd_crl.sh" \
+        "$output_dir/intermediate_ca.pem" "$output_dir/intermediate_ca.key" "$output_dir/servtd.crl.pem"
+    shred -u "$output_dir/intermediate_ca.key"
 }
 
 # Parse command line arguments
@@ -356,6 +360,7 @@ MOCK_QUOTE_FILE=""
 FETCH_COLLATERALS=false
 AZURE_REGION="useast"
 EXTRA_FEATURES=""
+TCB_MAPPING_INPUT=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -395,6 +400,10 @@ while [[ $# -gt 0 ]]; do
             EXTRA_FEATURES="$2"
             shift 2
             ;;
+        --tcb-mapping)
+            TCB_MAPPING_INPUT="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo
@@ -407,6 +416,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --azure-region REGION        Azure region for THIM (useast, westus, northeurope)"
             echo "                               (default: useast, applies with --fetch-collaterals)"
             echo "  --extra-features FEATURES    Extra cargo features to add (e.g., 'igvm-attest')"
+            echo "  --tcb-mapping FILE           Previous authority-maintained mapping to extend"
+            echo "                               (default: existing output, then config/AzCVMEmu)"
             echo "  -h, --help                   Show this help message"
             echo
             echo "Examples:"
@@ -461,8 +472,18 @@ echo
 mkdir -p "$OUTPUT_DIR"
 mkdir -p "$CERT_DIR"
 
+if [[ -n "$TCB_MAPPING_INPUT" && "$TCB_MAPPING_INPUT" != /* ]]; then
+    TCB_MAPPING_INPUT="$PROJECT_ROOT/$TCB_MAPPING_INPUT"
+fi
+TCB_MAPPING_SOURCE="$TCB_MAPPING_TEMPLATE"
+if [ -n "$TCB_MAPPING_INPUT" ]; then
+    TCB_MAPPING_SOURCE="$TCB_MAPPING_INPUT"
+elif [ -f "$OUTPUT_DIR/tcb_mapping.json" ]; then
+    TCB_MAPPING_SOURCE="$OUTPUT_DIR/tcb_mapping.json"
+fi
+
 # Verify input files exist
-for file in "$POLICY_DATA_RAW" "$TD_IDENTITY_TEMPLATE" "$TCB_MAPPING_TEMPLATE"; do
+for file in "$POLICY_DATA_RAW" "$TD_IDENTITY_TEMPLATE" "$TCB_MAPPING_SOURCE"; do
     if [ ! -f "$file" ]; then
         echo -e "${RED}Error: Required input file not found: $file${NC}" >&2
         exit 1
@@ -550,6 +571,12 @@ if ! cargo build --release -p migtd-policy-generator; then
     exit 1
 fi
 
+echo "Building migtd-hash..."
+if ! cargo build --release -p migtd-hash; then
+    echo -e "${RED}Error: Failed to build migtd-hash${NC}" >&2
+    exit 1
+fi
+
 # Verify tools exist
 # azcvm-extract-report may be emitted either to the local crate target/ or the
 # workspace target/ when CARGO_TARGET_DIR is set.
@@ -564,7 +591,7 @@ else
     exit 1
 fi
 
-for tool in json-signer servtd-collateral-generator migtd-policy-generator; do
+for tool in json-signer servtd-collateral-generator migtd-policy-generator migtd-hash; do
     if [ ! -f "$TOOLS_DIR/$tool" ]; then
         echo -e "${RED}Error: Tool '$tool' not found at $TOOLS_DIR/$tool${NC}" >&2
         exit 1
@@ -651,7 +678,7 @@ echo
 #
 echo -e "${BLUE}=== Step 3: Updating TD Identity Template ===${NC}"
 jq -c ".xfam = \"$XFAM\" | .attributes = \"$ATTRIBUTES\" | .mrConfigId = \"$MR_CONFIG_ID\" | \
-.mrOwner = \"$MR_OWNER\" | .mrOwnerConfig = \"$MR_OWNER_CONFIG\" | .mrsigner = \"$MRSIGNER\" | \
+.mrOwner = \"$MR_OWNER\" | .mrOwnerConfig = \"$MR_OWNER_CONFIG\" | \
 .isvProdId = $ISV_PROD_ID | .tcbLevels[0].tcb.isvsvn = $ISVSVN" \
 "$TD_IDENTITY_TEMPLATE" | tr -d '\n' > "$TD_IDENTITY_UPDATED"
 
@@ -659,17 +686,34 @@ echo -e "${GREEN}✓ TD Identity updated: $TD_IDENTITY_UPDATED${NC}"
 echo
 
 #
-# Step 4: Update tcb_mapping.json with extracted measurements
+# Step 4: Update the cumulative tcb_mapping.json with the v2 tdinfo_hash
 # Make sure no ending newline is added (important for signing)
 #
-echo -e "${BLUE}=== Step 4: Updating TCB Mapping Template ===${NC}"
-jq -c ".svnMappings[0].tdMeasurements.mrtd = \"$MRTD\" | \
-.svnMappings[0].tdMeasurements.rtmr0 = \"$RTMR0\" | \
-.svnMappings[0].tdMeasurements.rtmr1 = \"$RTMR1\" | \
-.svnMappings[0].isvsvn = $ISVSVN" \
-"$TCB_MAPPING_TEMPLATE" | tr -d '\n' > "$TCB_MAPPING_UPDATED"
+# The Rust helper retains all supported historical hashes, replaces the
+# current hash by key, rejects conflicting duplicates, and emits deterministic
+# compact JSON for signing. The --from-report path remains byte-identical to
+# the release pipeline.
+#
+echo -e "${BLUE}=== Step 4: Updating Cumulative TCB Mapping ===${NC}"
+
+TDINFO_HASH_FILE="$TEMP_DIR/tdinfo_hash.hex"
+MAPPING_UPDATE_ARGS=(
+    --update-tcb-mapping "$TCB_MAPPING_SOURCE"
+    --output-tcb-mapping "$TCB_MAPPING_UPDATED"
+    --mapping-isvsvn "$ISVSVN"
+)
+"$TOOLS_DIR/migtd-hash" \
+    --policy-v2 \
+    --from-report "$REPORT_DATA_FILE" \
+    --output-tdinfo-hash "$TDINFO_HASH_FILE" \
+    "${MAPPING_UPDATE_ARGS[@]}"
+# Uppercase to match the convention used by signed policies.
+TDINFO_HASH=$(tr 'a-z' 'A-Z' < "$TDINFO_HASH_FILE")
 
 echo -e "${GREEN}✓ TCB Mapping updated: $TCB_MAPPING_UPDATED${NC}"
+echo -e "  history source = $TCB_MAPPING_SOURCE"
+echo -e "  tdinfo_hash = $TDINFO_HASH"
+cp "$TCB_MAPPING_UPDATED" "$OUTPUT_DIR/tcb_mapping.json"
 echo
 
 #
@@ -686,39 +730,36 @@ echo
 #
 # Each variant is built by:
 #   1. Signing td_identity with an identity leaf key
-#   2. Signing tcb_mapping with a mapping leaf key
-#   3. Building servtd_collateral embedding the corresponding identity and
-#      mapping issuer chains
+#   2. Signing tcb_mapping with the RTMR1-bound policy leaf key
+#   3. Building servtd_collateral embedding the mapping and identity issuer chains
 #   4. Merging policy data with collaterals + servtd_collateral
-#   5. Signing the merged policy with a policy leaf key
+#   5. Wrapping policyData without an outer signature
 #
 # All leaves chain to the same root CA so cert-chain validation succeeds.
 #
 # Variants emitted:
-#   _a       : (identity_a, mapping_a, policy_a)               -- baseline
-#   _b       : (identity_a, mapping_a, policy_b)               -- policy leaf rotated
-#   _pm_b    : (identity_a, mapping_b, policy_b)               -- policy + tcb_mapping rotated
-#   _pmi_b   : (identity_b, mapping_b, policy_b)               -- all 3 leaves rotated
+#   _a       : (identity_a, policy_a) -- baseline
+#   _b       : (identity_a, policy_b) -- policy/mapping signer rotated
+#   _pm_b    : compatibility alias for _b
+#   _pmi_b   : (identity_b, policy_b) -- both signers rotated
 #
 build_signed_policy_variant() {
     local label="$1"
     local identity_suffix="$2"   # a or b
-    local mapping_suffix="$3"    # a or b
-    local policy_suffix="$4"     # a or b
-    local output_policy="$5"
+    local policy_suffix="$3"     # a or b
+    local output_policy="$4"
 
     local identity_key="$CERT_DIR/identity_signing_${identity_suffix}_pkcs8.key"
-    local mapping_key="$CERT_DIR/mapping_signing_${mapping_suffix}_pkcs8.key"
     local policy_key="$CERT_DIR/policy_signing_${policy_suffix}_pkcs8.key"
     local identity_chain="$CERT_DIR/identity_issuer_chain_${identity_suffix}.pem"
-    local mapping_chain="$CERT_DIR/mapping_issuer_chain_${mapping_suffix}.pem"
+    local mapping_chain="$CERT_DIR/policy_issuer_chain_${policy_suffix}.pem"
 
     local td_identity_signed="$TEMP_DIR/td_identity_signed_${label}.json"
     local tcb_mapping_signed="$TEMP_DIR/tcb_mapping_signed_${label}.json"
     local servtd_collateral="$TEMP_DIR/servtd_collateral_${label}.json"
     local policy_data_merged="$TEMP_DIR/policy_data_merged_${label}.json"
 
-    echo -e "${BLUE}--- Variant ${label}: identity=${identity_suffix}, mapping=${mapping_suffix}, policy=${policy_suffix} ---${NC}"
+    echo -e "${BLUE}--- Variant ${label}: identity=${identity_suffix}, policy/mapping=${policy_suffix} ---${NC}"
 
     "$TOOLS_DIR/json-signer" \
         --sign \
@@ -730,7 +771,7 @@ build_signed_policy_variant() {
     "$TOOLS_DIR/json-signer" \
         --sign \
         --name "tdTcbMapping" \
-        --private-key "$mapping_key" \
+        --private-key "$policy_key" \
         --input "$TCB_MAPPING_UPDATED" \
         --output "$tcb_mapping_signed"
 
@@ -739,6 +780,7 @@ build_signed_policy_variant() {
         --identity-chain "$identity_chain" \
         --mapping "$tcb_mapping_signed" \
         --mapping-chain "$mapping_chain" \
+        --servtd-crl "$CERT_DIR/servtd.crl.pem" \
         --output "$servtd_collateral"
 
     "$TOOLS_DIR/migtd-policy-generator" v2 \
@@ -747,21 +789,16 @@ build_signed_policy_variant() {
         --servtd-collateral "$servtd_collateral" \
         --output "$policy_data_merged"
 
-    "$TOOLS_DIR/json-signer" \
-        --sign \
-        --name "policyData" \
-        --private-key "$policy_key" \
-        --input "$policy_data_merged" \
-        --output "$output_policy"
+    jq -c '{policyData: .}' "$policy_data_merged" > "$output_policy"
 
-    echo -e "${GREEN}✓ Policy signed (${label}): $output_policy${NC}"
+    echo -e "${GREEN}✓ Policy generated (${label}): $output_policy${NC}"
 }
 
-echo -e "${BLUE}=== Step 6-10: Building Signed Policy Variants ===${NC}"
-build_signed_policy_variant "a"     a a a "$OUTPUT_POLICY_A"
-build_signed_policy_variant "b"     a a b "$OUTPUT_POLICY_B"
-build_signed_policy_variant "pm_b"  a b b "$OUTPUT_POLICY_PM_B"
-build_signed_policy_variant "pmi_b" b b b "$OUTPUT_POLICY_PMI_B"
+echo -e "${BLUE}=== Step 6-10: Building Policy Variants ===${NC}"
+build_signed_policy_variant "a"     a a "$OUTPUT_POLICY_A"
+build_signed_policy_variant "b"     a b "$OUTPUT_POLICY_B"
+build_signed_policy_variant "pm_b"  a b "$OUTPUT_POLICY_PM_B"
+build_signed_policy_variant "pmi_b" b b "$OUTPUT_POLICY_PMI_B"
 
 # Also keep a default signed policy (variant a) for backward compat
 cp "$OUTPUT_POLICY_A" "$OUTPUT_POLICY"
@@ -788,7 +825,6 @@ echo
 echo -e "${BLUE}=== Step 12: Cleaning Up Private Keys ===${NC}"
 for keyfile in \
     "$PRIVATE_KEY_A" "$PRIVATE_KEY_B" "$PRIVATE_KEY" \
-    "$MAPPING_PRIVATE_KEY_A" "$MAPPING_PRIVATE_KEY_B" \
     "$IDENTITY_PRIVATE_KEY_A" "$IDENTITY_PRIVATE_KEY_B"; do
     if [ -f "$keyfile" ]; then
         shred -u "$keyfile" 2>/dev/null || rm -f "$keyfile"
@@ -876,4 +912,3 @@ fi
 
 echo
 echo -e "${GREEN}=== All Done! ===${NC}"
-
