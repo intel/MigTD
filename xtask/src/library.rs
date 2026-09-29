@@ -83,7 +83,8 @@ impl LibraryCrates {
                 // default virtio-vsock feature) so the rebinding module and the
                 // vmcall-raw variant of MigtdMigrationInformation are exercised.
                 // Restricted to --lib because the bin target's `main` symbol
-                // conflicts under `cfg(test) + main + !AzCVMEmu`.
+                // conflicts under `cfg(test) + main + !AzCVMEmu`. These tests
+                // share VMM logging globals, so run them serially.
                 for features in [
                     "main,policy_v2,vmcall-raw",
                     "main,vmcall-raw,spdm_attestation",
@@ -97,6 +98,8 @@ impl LibraryCrates {
                             "--no-default-features",
                             "--features",
                             features,
+                            "--",
+                            "--test-threads=1",
                         ])
                         .run()?;
                 }
