@@ -170,11 +170,7 @@ pub fn verify_servtd_attr(
 ///
 /// Must only be called on an established session, i.e. after the peer certificate
 /// (including its SERVTD_EXT extension) has been authenticated during the handshake.
-#[cfg(all(
-    feature = "main",
-    feature = "policy_v2",
-    not(feature = "spdm_attestation")
-))]
+#[cfg(all(feature = "main", not(feature = "spdm_attestation")))]
 pub fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, MigrationResult> {
     use crate::ratls::{find_extension, EXTNID_MIGTD_SERVTD_EXT};
     use crypto::x509::{Certificate, Decode};
@@ -228,11 +224,7 @@ mod test {
         assert_eq!(size_of::<ServtdExt>(), 272)
     }
 
-    #[cfg(all(
-        feature = "main",
-        feature = "policy_v2",
-        not(feature = "spdm_attestation")
-    ))]
+    #[cfg(all(feature = "main", not(feature = "spdm_attestation")))]
     mod cert {
         use super::super::get_servtd_ext_from_cert;
         use super::ServtdExt;

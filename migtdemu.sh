@@ -106,8 +106,8 @@ show_usage() {
     echo "    the actual migration, ensuring logging is enabled and a TD report is generated."
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
-    echo "  - The rebinding operation ('rebind') always requires policy_v2, which is enabled"
-    echo "    automatically. Specify a policy and an issuer chain or signer anchor."
+    echo "  - Rebinding supports the default Policy v1 mode and Policy v2. Pass --policy-v2 with"
+    echo "    a policy and an issuer chain or signer anchor to select Policy v2."
     echo "  - JSON mapping builds need --servtd-tcb-mapping-file and a policy issuer chain."
     echo "    CoRIM-only policies need --servtd-corim-file and a numbered servtdCrl in policyData."
     echo "    Explicit per-side policies or endorsement files disable automatic policy generation."
@@ -135,11 +135,12 @@ show_usage() {
     echo "  $0 --num-cpus 4 --both               # Run with 4 CPUs (0-3)"
     echo "  $0 --num-cpus 3 --both               # Run with 3 CPUs (0-2)"
     echo
-    echo "  # Rebinding examples (a policy and an issuer chain or signer anchor are required):"
-    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
-    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
-    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --role destination --mock-report"
-    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --log-level trace --mock-report --both"
+    echo "  # Rebinding examples:"
+    echo "  $0 --operation rebind --skip-ra --both"
+    echo "  $0 --operation rebind --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
+    echo "  $0 --operation rebind --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
+    echo "  $0 --operation rebind --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --role destination --mock-report"
+    echo "  $0 --operation rebind --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --log-level trace --mock-report --both"
 }
 
 # Function to check if file exists
@@ -435,8 +436,6 @@ fi
 IS_REBIND=false
 if [[ "$OPERATION" == "rebind" ]]; then
     IS_REBIND=true
-    # Rebinding always requires policy_v2
-    USE_POLICY_V2=true
 fi
 
 if [[ -n "$SERVTD_CORIM_FILE$SRC_SERVTD_CORIM_FILE$DST_SERVTD_CORIM_FILE" ||

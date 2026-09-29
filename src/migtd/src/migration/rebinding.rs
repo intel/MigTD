@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
-use alloc::{boxed::Box, vec::Vec};
+#[cfg(feature = "policy_v2")]
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::time::Duration;
+#[cfg(not(feature = "spdm_attestation"))]
 use crypto::tls::SecureChannel;
 use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
@@ -12,20 +15,25 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[cfg(not(feature = "spdm_attestation"))]
 use crate::migration::servtd_ext::get_servtd_ext_from_cert;
+#[cfg(not(feature = "spdm_attestation"))]
 use crate::migration::servtd_ext::read_servtd_ext;
 use crate::migration::transport::*;
-#[cfg(feature = "spdm_attestation")]
+#[cfg(all(
+    feature = "spdm_attestation",
+    feature = "policy_v2",
+    feature = "vmcall-raw"
+))]
 use crate::spdm;
 
+#[cfg(feature = "policy_v2")]
 use crate::migration::pre_session_data::pre_session_data_exchange;
 
 use crate::{
     driver::ticks::with_timeout,
-    migration::{
-        servtd_ext::write_approved_servtd_ext_hash, MigrationResult, MigtdMigrationInformation,
-    },
-    ratls,
+    migration::{data::MigrationInformation, MigrationResult, MigtdMigrationInformation},
 };
+#[cfg(not(feature = "spdm_attestation"))]
+use crate::{migration::servtd_ext::write_approved_servtd_ext_hash, ratls};
 pub use tdx_tdcall::tdx::TargetTdUuid;
 
 /// Rebind session token held by the Service TD. This field is written by the ServiceTD
@@ -35,6 +43,7 @@ pub const TDCS_FIELD_SERVTD_REBIND_ACCEPT_TOKEN: u64 = 0x191000030000021E;
 pub const TDCS_FIELD_SERVTD_REBIND_ATTR: u64 = 0x1910000300000222;
 const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 
+#[cfg(not(feature = "spdm_attestation"))]
 const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
                                                        // FIXME: Need VMM provide socket information
 
@@ -71,16 +80,37 @@ impl RebindingToken {
     }
 }
 
+#[cfg(any(
+    not(feature = "spdm_attestation"),
+    all(
+        feature = "spdm_attestation",
+        feature = "policy_v2",
+        feature = "vmcall-raw"
+    )
+))]
 pub async fn start_rebinding(
-    info: &MigtdMigrationInformation,
+    info: &MigrationInformation,
     data: &mut Vec<u8>,
 ) -> Result<(), MigrationResult> {
-    let mut transport = setup_transport(info.mig_request_id).await?;
+    let mig_info = &info.mig_info;
 
-    // Exchange peer-data (policy + issuer chain) firstly because of the message size limitation of TLS protocol
+    let transport = setup_transport(
+        mig_info.mig_request_id,
+        #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
+        info.mig_socket_info.mig_td_cid,
+        #[cfg(any(feature = "vmcall-vsock", feature = "virtio-vsock"))]
+        info.mig_socket_info.mig_channel_port,
+    )
+    .await?;
+
+    // Exchange peer-data (policy + issuer chain) first because of the message size limitation of TLS protocol.
+    #[cfg(feature = "policy_v2")]
     const PRE_SESSION_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
+    #[cfg(feature = "policy_v2")]
+    let mut transport = transport;
 
-    if info.migration_source == 1 {
+    if mig_info.migration_source == 1 {
+        #[cfg(feature = "policy_v2")]
         let peer_data = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
             pre_session_data_exchange(&mut transport),
@@ -101,19 +131,16 @@ pub async fn start_rebinding(
             e
         })?;
 
-        #[cfg(not(feature = "spdm_attestation"))]
-        rebinding_old_prepare(transport, info, data, peer_data).await?;
-
-        #[cfg(feature = "spdm_attestation")]
         rebinding_old_prepare(
             transport,
-            info,
+            mig_info,
             data,
             #[cfg(feature = "policy_v2")]
             peer_data,
         )
         .await?;
     } else {
+        #[cfg(feature = "policy_v2")]
         let peer_data = Box::pin(with_timeout(
             PRE_SESSION_TIMEOUT,
             pre_session_data_exchange(&mut transport),
@@ -134,13 +161,9 @@ pub async fn start_rebinding(
             e
         })?;
 
-        #[cfg(not(feature = "spdm_attestation"))]
-        rebinding_new_prepare(transport, info, data, peer_data).await?;
-
-        #[cfg(feature = "spdm_attestation")]
         rebinding_new_prepare(
             transport,
-            info,
+            mig_info,
             data,
             #[cfg(feature = "policy_v2")]
             peer_data,
@@ -154,14 +177,32 @@ pub async fn start_rebinding(
         entrylog(
             &format!("Complete rebinding and report status\n").into_bytes(),
             log::Level::Info,
-            info.mig_request_id,
+            mig_info.mig_request_id,
         );
         log::info!("Complete rebinding and report status\n");
     }
     Ok(())
 }
 
-#[cfg(feature = "spdm_attestation")]
+#[cfg(all(
+    feature = "spdm_attestation",
+    not(all(feature = "policy_v2", feature = "vmcall-raw"))
+))]
+pub async fn start_rebinding(
+    _info: &MigrationInformation,
+    _data: &mut Vec<u8>,
+) -> Result<(), MigrationResult> {
+    log::error!(
+        "SPDM rebinding requires the policy_v2 and vmcall-raw features; use RA-TLS for virtio rebinding\n"
+    );
+    Err(MigrationResult::UnsupportedOperationError)
+}
+
+#[cfg(all(
+    feature = "spdm_attestation",
+    feature = "policy_v2",
+    feature = "vmcall-raw"
+))]
 pub async fn rebinding_old_prepare(
     transport: TransportType,
     info: &MigtdMigrationInformation,
@@ -240,7 +281,11 @@ pub async fn rebinding_old_prepare(
     Ok(())
 }
 
-#[cfg(feature = "spdm_attestation")]
+#[cfg(all(
+    feature = "spdm_attestation",
+    feature = "policy_v2",
+    feature = "vmcall-raw"
+))]
 pub async fn rebinding_new_prepare(
     transport: TransportType,
     info: &MigtdMigrationInformation,
@@ -321,31 +366,37 @@ pub async fn rebinding_new_prepare(
 }
 
 #[cfg(not(feature = "spdm_attestation"))]
+#[cfg_attr(not(feature = "vmcall-raw"), allow(unused_variables))]
 async fn rebinding_old_prepare(
     transport: TransportType,
     info: &MigtdMigrationInformation,
     data: &mut Vec<u8>,
-    peer_data: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<(), MigrationResult> {
     let servtd_ext = read_servtd_ext(info.binding_handle, &info.target_td_uuid)?;
 
     // TLS client
-    let mut ratls_client =
-        ratls::client_rebinding(transport, peer_data, &servtd_ext).map_err(|_| {
-            #[cfg(feature = "vmcall-raw")]
-            data.extend_from_slice(
-                &format!(
-                    "Error: rebinding_old(): Failed in ratls transport. Migration ID: {:x}\n",
-                    info.mig_request_id,
-                )
-                .into_bytes(),
-            );
-            log::error!(
-                "rebinding_old(): Failed in ratls transport. Migration ID: {}\n",
-                info.mig_request_id
-            );
-            MigrationResult::SecureSessionError
-        })?;
+    let mut ratls_client = ratls::client_rebinding(
+        transport,
+        #[cfg(feature = "policy_v2")]
+        peer_data,
+        &servtd_ext,
+    )
+    .map_err(|_| {
+        #[cfg(feature = "vmcall-raw")]
+        data.extend_from_slice(
+            &format!(
+                "Error: rebinding_old(): Failed in ratls transport. Migration ID: {:x}\n",
+                info.mig_request_id,
+            )
+            .into_bytes(),
+        );
+        log::error!(
+            "rebinding_old(): Failed in ratls transport. Migration ID: {}\n",
+            info.mig_request_id
+        );
+        MigrationResult::SecureSessionError
+    })?;
 
     let rebind_token = create_rebind_token()?;
     tls_send_rebind_token(&mut ratls_client, &rebind_token).await?;
@@ -357,14 +408,20 @@ async fn rebinding_old_prepare(
 }
 
 #[cfg(not(feature = "spdm_attestation"))]
+#[cfg_attr(not(feature = "vmcall-raw"), allow(unused_variables))]
 async fn rebinding_new_prepare(
     transport: TransportType,
     info: &MigtdMigrationInformation,
     data: &mut Vec<u8>,
-    peer_data: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<(), MigrationResult> {
     // TLS server
-    let mut ratls_server = ratls::server_rebinding(transport, peer_data).map_err(|e| {
+    let mut ratls_server = ratls::server_rebinding(
+        transport,
+        #[cfg(feature = "policy_v2")]
+        peer_data,
+    )
+    .map_err(|e| {
         #[cfg(feature = "vmcall-raw")]
         data.extend_from_slice(
             &format!(
@@ -444,6 +501,7 @@ pub fn create_rebind_token() -> Result<RebindingToken, MigrationResult> {
     Ok(RebindingToken { token })
 }
 
+#[cfg(not(feature = "spdm_attestation"))]
 async fn tls_send_rebind_token(
     tls_session: &mut SecureChannel<TransportType>,
     rebind_token: &RebindingToken,
@@ -471,6 +529,7 @@ async fn tls_send_rebind_token(
     Ok(())
 }
 
+#[cfg(not(feature = "spdm_attestation"))]
 async fn tls_receive_rebind_token(
     tls_session: &mut SecureChannel<TransportType>,
 ) -> Result<RebindingToken, MigrationResult> {
@@ -498,6 +557,7 @@ async fn tls_receive_rebind_token(
     Ok(rebind_token)
 }
 
+#[cfg(not(feature = "spdm_attestation"))]
 async fn tls_session_write_all(
     tls_session: &mut SecureChannel<TransportType>,
     data: &[u8],
@@ -513,6 +573,7 @@ async fn tls_session_write_all(
     Ok(())
 }
 
+#[cfg(not(feature = "spdm_attestation"))]
 async fn tls_session_read_exact(
     tls_session: &mut SecureChannel<TransportType>,
     data: &mut [u8],
