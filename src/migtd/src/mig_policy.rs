@@ -716,6 +716,9 @@ mod v2 {
         assert!(
             verify_continuity_order(&mapping, &[0x11; 48], &[0; 8], &[0x22; 48], &[0; 8],).is_ok()
         );
+        assert!(
+            verify_continuity_order(&mapping, &[0x11; 48], &[0; 8], &[0x11; 48], &[0; 8],).is_ok()
+        );
         assert!(matches!(
             verify_continuity_order(&mapping, &[0x22; 48], &[0; 8], &[0x11; 48], &[0; 8],),
             Err(PolicyError::SvnMismatch)
