@@ -50,19 +50,33 @@ jobs:
             test-command: "./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --features igvm-attest --both --no-sudo --log-level info"
             artifact-name: "policy-v2-igvm-test-logs"
 
-          - test-name: "Rebind Prepare (Skip RA)"
-            test-type: "rebind-skip-ra"
+          - test-name: "Policy v2 Rebind Prepare (Skip RA)"
+            test-type: "rebind-v2-skip-ra"
             install-jq: 'true'
             timeout-seconds: 300
-            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --both --no-sudo --log-level info"
-            artifact-name: "rebind-skip-ra-test-logs"
+            test-command: "./migtdemu.sh --operation rebind-prepare --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --both --no-sudo --log-level info"
+            artifact-name: "rebind-v2-skip-ra-test-logs"
 
-          - test-name: "Rebind Prepare (Mock Report)"
-            test-type: "rebind-mock"
+          - test-name: "Policy v2 Rebind Prepare (Mock Report)"
+            test-type: "rebind-v2-mock"
             install-jq: 'true'
             timeout-seconds: 900
-            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both --no-sudo --log-level info"
-            artifact-name: "rebind-mock-test-logs"
+            test-command: "./migtdemu.sh --operation rebind-prepare --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both --no-sudo --log-level info"
+            artifact-name: "rebind-v2-mock-test-logs"
+
+          - test-name: "Policy v1 Rebind Prepare (Skip RA)"
+            test-type: "rebind-v1-skip-ra"
+            install-jq: 'false'
+            timeout-seconds: 300
+            test-command: "./migtdemu.sh --operation rebind-prepare --skip-ra --debug --both --no-sudo --log-level info"
+            artifact-name: "rebind-v1-skip-ra-test-logs"
+
+          - test-name: "Policy v1 Rebind Prepare (Mock Report)"
+            test-type: "rebind-v1-mock"
+            install-jq: 'false'
+            timeout-seconds: 900
+            test-command: "./migtdemu.sh --operation rebind-prepare --mock-report --both --no-sudo --log-level info"
+            artifact-name: "rebind-v1-mock-test-logs"
 
           - test-name: "SPDM Migration (Skip RA)"
             test-type: "spdm-skip-ra"
@@ -78,11 +92,11 @@ jobs:
             test-command: "./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-policy-v2-test-logs"
 
-          - test-name: "SPDM Rebind Prepare (Skip RA)"
+          - test-name: "Policy v2 SPDM Rebind Prepare (Skip RA)"
             test-type: "spdm-rebind-skip-ra"
             install-jq: 'true'
             timeout-seconds: 300
-            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --features spdm_attestation --both --no-sudo --log-level info"
+            test-command: "./migtdemu.sh --operation rebind-prepare --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-rebind-skip-ra-test-logs"
 
           - test-name: "Mock Quote Retry"
@@ -150,11 +164,17 @@ jobs:
           echo "Building MigTD with AzCVMEmu and test features for emulation testing..."
           cargo build --features "AzCVMEmu,test_disable_ra_and_accept_all" --no-default-features
 
-      - name: Build MigTD for rebind skip-ra test
-        if: matrix.test-type == 'rebind-skip-ra'
+      - name: Build MigTD for Policy v2 rebind skip-ra test
+        if: matrix.test-type == 'rebind-v2-skip-ra'
         run: |
           echo "Building MigTD with AzCVMEmu, policy_v2, and skip-RA features for rebind testing..."
           cargo build --features "AzCVMEmu,policy_v2,test_disable_ra_and_accept_all" --no-default-features
+
+      - name: Build MigTD for Policy v1 rebind skip-ra test
+        if: matrix.test-type == 'rebind-v1-skip-ra'
+        run: |
+          echo "Building MigTD with AzCVMEmu and skip-RA features for Policy v1 rebind testing..."
+          cargo build --features "AzCVMEmu,test_disable_ra_and_accept_all" --no-default-features
 
       - name: Build MigTD for SPDM skip-ra test
         if: matrix.test-type == 'spdm-skip-ra'
@@ -171,7 +191,7 @@ jobs:
           cargo build --features "AzCVMEmu,policy_v2,test_disable_ra_and_accept_all,spdm_attestation" --no-default-features
 
       - name: Verify emulation script
-        if: matrix.test-type == 'skip-ra' || matrix.test-type == 'rebind-skip-ra' || matrix.test-type == 'spdm-skip-ra' || matrix.test-type == 'spdm-rebind-skip-ra'
+        if: matrix.test-type == 'skip-ra' || matrix.test-type == 'rebind-v1-skip-ra' || matrix.test-type == 'rebind-v2-skip-ra' || matrix.test-type == 'spdm-skip-ra' || matrix.test-type == 'spdm-rebind-skip-ra'
         run: |
           if [[ ! -f "./migtdemu.sh" ]]; then
             echo "Error: migtdemu.sh not found"

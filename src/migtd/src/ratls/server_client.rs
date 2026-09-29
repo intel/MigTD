@@ -19,7 +19,8 @@ use tdx_tdcall::tdreport::TdxReport;
 use super::*;
 use crate::event_log::get_event_log;
 #[cfg(feature = "policy_v2")]
-use crate::{migration::pre_session_data::local_peer_data, migration::servtd_ext::ServtdExt};
+use crate::migration::pre_session_data::local_peer_data;
+use crate::migration::servtd_ext::ServtdExt;
 use verify::*;
 
 type Result<T> = core::result::Result<T, RatlsError>;
@@ -146,6 +147,34 @@ pub fn client<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 // TLS server for rebinding new
+#[cfg(not(feature = "policy_v2"))]
+pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChannel<T>> {
+    let signing_key = EcdsaPk::new().map_err(|e| {
+        log::error!(
+            "server rebinding EcdsaPk::new() failed with error {:?}\n",
+            e
+        );
+        e
+    })?;
+    let (cert, quote) = create_certificate_for_server(&signing_key).map_err(|e| {
+        log::error!("server rebinding gen_cert() failed with error {:?}\n", e);
+        e
+    })?;
+
+    let config = TlsConfig::new(vec![cert], signing_key, verify_rebinding_old_cert, quote)
+        .map_err(|e| {
+            log::error!(
+                "server rebinding TlsConfig::new() failed with error {:?}\n",
+                e
+            );
+            e
+        })?;
+    config.tls_server(stream).map_err(|e| {
+        log::error!("server rebinding tls_server() failed with error {:?}\n", e);
+        e.into()
+    })
+}
+
 #[cfg(feature = "policy_v2")]
 pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
@@ -179,6 +208,38 @@ pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
 }
 
 // TLS client for rebinding old
+#[cfg(not(feature = "policy_v2"))]
+pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
+    stream: T,
+    servtd_ext: &ServtdExt,
+) -> Result<SecureChannel<T>> {
+    let signing_key = EcdsaPk::new().map_err(|e| {
+        log::error!(
+            "client rebinding EcdsaPk::new() failed with error {:?}\n",
+            e
+        );
+        e
+    })?;
+    let (cert, quote) =
+        create_certificate_for_rebinding_old(&signing_key, servtd_ext).map_err(|e| {
+            log::error!("client rebinding gen_cert() failed with error {:?}\n", e);
+            e
+        })?;
+
+    let config = TlsConfig::new(vec![cert], signing_key, verify_rebinding_new_cert, quote)
+        .map_err(|e| {
+            log::error!(
+                "client rebinding TlsConfig::new() failed with error {:?}\n",
+                e
+            );
+            e
+        })?;
+    config.tls_client(stream).map_err(|e| {
+        log::error!("client rebinding tls_client() failed with error {:?}\n", e);
+        e.into()
+    })
+}
+
 #[cfg(feature = "policy_v2")]
 pub fn client_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
@@ -246,7 +307,10 @@ pub fn gen_tdreport(public_key: &[u8]) -> Result<TdxReport> {
     })
 }
 
-fn create_certificate_for_server(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
+fn create_quote_certificate(
+    signing_key: &EcdsaPk,
+    servtd_ext: Option<&ServtdExt>,
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let pub_key = signing_key.public_key().map_err(|e| {
         log::error!(
             "gen_cert signing_key.public_key() failed with error {:?}\n",
@@ -321,87 +385,51 @@ fn create_certificate_for_server(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<
             e
         })?;
 
+    let x509_builder = if let Some(servtd_ext) = servtd_ext {
+        x509_builder
+            .add_extension(
+                Extension::new(
+                    EXTNID_MIGTD_SERVTD_EXT,
+                    Some(false),
+                    Some(servtd_ext.as_bytes()),
+                )
+                .map_err(|e| {
+                    log::error!(
+                        "gen_cert Extension::new for EXTNID_MIGTD_SERVTD_EXT failed with error {:?}\n",
+                        e
+                    );
+                    e
+                })?,
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert add_extension for EXTNID_MIGTD_SERVTD_EXT failed with error {:?}\n",
+                    e
+                );
+                e
+            })?
+    } else {
+        x509_builder
+    };
+
     let x509_cert_der = sign_tls_tbs(x509_builder, &signing_key)?;
     Ok((x509_cert_der, quote))
 }
 
+fn create_certificate_for_server(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
+    create_quote_certificate(signing_key, None)
+}
+
+#[cfg(not(feature = "policy_v2"))]
+fn create_certificate_for_rebinding_old(
+    signing_key: &EcdsaPk,
+    servtd_ext: &ServtdExt,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    create_quote_certificate(signing_key, Some(servtd_ext))
+}
+
 fn create_certificate_for_client(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
-    let pub_key = signing_key.public_key().map_err(|e| {
-        log::error!(
-            "gen_cert signing_key.public_key() failed with error {:?}\n",
-            e
-        );
-        e
-    })?;
-    let quote = gen_quote(&pub_key).map_err(|e| {
-        log::error!("gen_cert gen_quote() failed with error {:?}\n", e);
-        e
-    })?;
-
-    #[cfg(feature = "policy_v2")]
-    let policy_hash = {
-        let blob = local_peer_data().ok_or_else(|| {
-            log::error!(
-                "gen_cert client policy_v2 Failed to build peer_data blob for policy hash.\n"
-            );
-            RatlsError::InvalidPolicy
-        })?;
-        digest_sha384(&blob)
-    }
-    .map_err(|e| {
-        log::error!("gen_cert digest_sha384() failed with error {:?}\n", e);
-        e
-    })?;
-
-    let eku = create_eku()?;
-    let key_usage = create_key_usage()?;
-
-    let x509_builder = create_tls_tbs_common(&pub_key, &key_usage, &eku)?.add_extension(
-            Extension::new(
-                EXTNID_MIGTD_QUOTE_REPORT,
-                Some(false),
-                Some(quote.as_slice()),
-            )
-            .map_err(|e| {
-                log::error!(
-                    "gen_cert Extension::new for EXTNID_MIGTD_QUOTE_REPORT failed with error {:?}\n",
-                    e
-                );
-                e
-            })?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert add_extension for EXTNID_MIGTD_QUOTE_REPORT failed with error {:?}\n",
-                e
-            );
-            e
-        })?;
-
-    // If policy_v2 feature is enabled, add policy extension
-    #[cfg(feature = "policy_v2")]
-    let x509_builder = x509_builder
-        .add_extension(
-            Extension::new(EXTNID_MIGTD_POLICY_HASH, Some(false), Some(&policy_hash)).map_err(
-                |e| {
-                    log::error!(
-                        "gen_cert policy_v2 add_extension failed with error {:?}.\n",
-                        e
-                    );
-                    e
-                },
-            )?,
-        )
-        .map_err(|e| {
-            log::error!(
-                "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.\n",
-                e
-            );
-            e
-        })?;
-
-    let x509_cert_der = sign_tls_tbs(x509_builder, &signing_key)?;
-    Ok((x509_cert_der, quote))
+    create_quote_certificate(signing_key, None)
 }
 
 #[cfg(feature = "policy_v2")]
@@ -842,6 +870,41 @@ mod verify {
                 MUTUAL_ATTESTATION_ERROR.to_string(),
             ))
         }
+    }
+
+    #[cfg(not(feature = "policy_v2"))]
+    pub fn verify_rebinding_old_cert(
+        cert: &[u8],
+        quote_local: &[u8],
+    ) -> core::result::Result<(), CryptoError> {
+        let parsed = Certificate::from_der(cert).map_err(|e| {
+            log::error!("Failed to parse rebinding certificate from DER: {:?}\n", e);
+            CryptoError::ParseCertificate
+        })?;
+        let extensions = parsed.tbs_certificate.extensions.as_ref().ok_or_else(|| {
+            log::error!("Failed to get rebinding certificate extensions.\n");
+            CryptoError::ParseCertificate
+        })?;
+        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
+            log::error!("Failed to find SERVTD_EXT in old MigTD certificate.\n");
+            CryptoError::ParseCertificate
+        })?;
+        if servtd_ext.len() != core::mem::size_of::<ServtdExt>()
+            || ServtdExt::read_from_bytes(servtd_ext).is_none()
+        {
+            log::error!("Invalid SERVTD_EXT in old MigTD certificate.\n");
+            return Err(CryptoError::ParseCertificate);
+        }
+
+        verify_peer_cert(false, cert, quote_local)
+    }
+
+    #[cfg(not(feature = "policy_v2"))]
+    pub fn verify_rebinding_new_cert(
+        cert: &[u8],
+        quote_local: &[u8],
+    ) -> core::result::Result<(), CryptoError> {
+        verify_peer_cert(true, cert, quote_local)
     }
 
     #[cfg(feature = "policy_v2")]

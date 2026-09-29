@@ -45,6 +45,40 @@ impl LibraryCrates {
                 cmd!(sh, "cargo test")
                     .args(["-p", name.as_str(), "--features", "policy_v2"])
                     .run()?;
+                // Cover Policy v1 rebinding over both legacy virtio
+                // transports.
+                cmd!(sh, "cargo test")
+                    .args([
+                        "--lib",
+                        "-p",
+                        name.as_str(),
+                        "--no-default-features",
+                        "--features",
+                        "main,virtio-vsock",
+                    ])
+                    .run()?;
+                cmd!(sh, "cargo test")
+                    .args([
+                        "--lib",
+                        "-p",
+                        name.as_str(),
+                        "--no-default-features",
+                        "--features",
+                        "main,virtio-serial",
+                    ])
+                    .run()?;
+                // Cover Policy v2 rebinding over the legacy Service.MigTD
+                // request path and its default virtio-vsock transport.
+                cmd!(sh, "cargo test")
+                    .args([
+                        "--lib",
+                        "-p",
+                        name.as_str(),
+                        "--no-default-features",
+                        "--features",
+                        "main,policy_v2,virtio-vsock",
+                    ])
+                    .run()?;
                 // Cover the vmcall-raw transport layout (incompatible with the
                 // default virtio-vsock feature) so the rebinding module and the
                 // vmcall-raw variant of MigtdMigrationInformation are exercised.
