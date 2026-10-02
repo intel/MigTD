@@ -77,7 +77,7 @@ pub(crate) struct BuildArgs {
     /// Path of the configuration file for td-shim image layout
     #[clap(long)]
     image_layout: Option<PathBuf>,
-    /// Log level control in migtd, default value is `off` for release and `info` for debug
+    /// Log level for MigTD and dependencies, capped at `info`; defaults to `off` for release and `info` for debug
     #[clap(short, long)]
     log_level: Option<LogLevel>,
     /// MMIO space layout configuration for migtd
@@ -121,9 +121,7 @@ impl LogLevel {
             LogLevel::Off => "log/max_level_off",
             LogLevel::Error => "log/max_level_error",
             LogLevel::Warn => "log/max_level_warn",
-            LogLevel::Info => "log/max_level_info",
-            LogLevel::Debug => "log/max_level_debug",
-            LogLevel::Trace => "log/max_level_trace",
+            LogLevel::Info | LogLevel::Debug | LogLevel::Trace => "log/max_level_info",
         }
     }
 
@@ -132,9 +130,7 @@ impl LogLevel {
             LogLevel::Off => "log/release_max_level_off",
             LogLevel::Error => "log/release_max_level_error",
             LogLevel::Warn => "log/release_max_level_warn",
-            LogLevel::Info => "log/release_max_level_info",
-            LogLevel::Debug => "log/release_max_level_debug",
-            LogLevel::Trace => "log/release_max_level_trace",
+            LogLevel::Info | LogLevel::Debug | LogLevel::Trace => "log/release_max_level_info",
         }
     }
 }
@@ -464,70 +460,10 @@ impl BuildArgs {
         features.push_str(",");
         if self.debug {
             println!("Building debug MigTD");
-            match self.log_level {
-                Some(loglevel) => match loglevel {
-                    LogLevel::Off => {
-                        println!("Building debug MigTD found loglevel=Off), overriding to Info");
-                        features.push_str(LogLevel::Info.debug_feature());
-                    }
-                    LogLevel::Error => {
-                        println!("Building debug MigTD found loglevel=Error");
-                        features.push_str(loglevel.debug_feature());
-                    }
-                    LogLevel::Warn => {
-                        println!("Building debug MigTD found loglevel=Warn");
-                        features.push_str(loglevel.debug_feature());
-                    }
-                    LogLevel::Info => {
-                        println!("Building debug MigTD found loglevel=Info");
-                        features.push_str(loglevel.debug_feature());
-                    }
-                    LogLevel::Debug => {
-                        println!("Building debug MigTD found loglevel=Debug");
-                        features.push_str(loglevel.debug_feature());
-                    }
-                    LogLevel::Trace => {
-                        println!("Building debug MigTD found loglevel=Trace");
-                        features.push_str(loglevel.debug_feature());
-                    }
-                },
-                _ => {
-                    println!("Building debug MigTD found None(loglevel)");
-                }
-            }
+            features.push_str(self.log_level.unwrap_or(LogLevel::Info).debug_feature());
         } else {
             println!("Building release MigTD");
-            match self.log_level {
-                Some(loglevel) => match loglevel {
-                    LogLevel::Off => {
-                        println!("Building release MigTD found loglevel=Off), overriding to Info");
-                        features.push_str(LogLevel::Info.release_feature());
-                    }
-                    LogLevel::Error => {
-                        println!("Building release MigTD found loglevel=Error");
-                        features.push_str(loglevel.release_feature());
-                    }
-                    LogLevel::Warn => {
-                        println!("Building release MigTD found loglevel=Warn");
-                        features.push_str(loglevel.release_feature());
-                    }
-                    LogLevel::Info => {
-                        println!("Building release MigTD found loglevel=Info");
-                        features.push_str(loglevel.release_feature());
-                    }
-                    LogLevel::Debug => {
-                        println!("Building release MigTD found loglevel=Debug");
-                        features.push_str(loglevel.release_feature());
-                    }
-                    LogLevel::Trace => {
-                        println!("Building release MigTD found loglevel=Trace");
-                        features.push_str(loglevel.release_feature());
-                    }
-                },
-                _ => {
-                    println!("Building release MigTD found None(loglevel)");
-                }
-            }
+            features.push_str(self.log_level.unwrap_or(LogLevel::Off).release_feature());
         }
 
         features
@@ -610,5 +546,58 @@ impl BuildArgs {
         };
         let path = self.image_layout.as_deref().unwrap_or(default);
         fs::canonicalize(path).map_err(|e| e.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BuildArgs;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct TestArgs {
+        #[clap(flatten)]
+        build: BuildArgs,
+    }
+
+    #[test]
+    fn log_level_features() {
+        for debug in [false, true] {
+            for level in [
+                None,
+                Some("off"),
+                Some("error"),
+                Some("warn"),
+                Some("info"),
+                Some("debug"),
+                Some("trace"),
+            ] {
+                let mut args = vec!["test"];
+                if debug {
+                    args.push("--debug");
+                }
+                if let Some(level) = level {
+                    args.extend(["--log-level", level]);
+                }
+                let build = TestArgs::parse_from(args).build;
+                let prefix = if debug {
+                    "max_level"
+                } else {
+                    "release_max_level"
+                };
+                let expected_level = level.unwrap_or(if debug { "info" } else { "off" });
+                let expected_level = match expected_level {
+                    "debug" | "trace" => "info",
+                    level => level,
+                };
+                let expected = format!("log/{prefix}_{expected_level}");
+                let features = build.features();
+                let log_features: Vec<_> = features
+                    .split(',')
+                    .filter(|feature| feature.starts_with("log/"))
+                    .collect();
+                assert_eq!(log_features, vec![expected.as_str()]);
+            }
+        }
     }
 }

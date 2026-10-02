@@ -275,6 +275,7 @@ pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u
     }
 
     if let Some(_log_level) = u8_to_loglevel(log_max_level) {
+        let log_max_level = log_max_level.min(loglevel_to_u8(Level::Info));
         LOGGING_INFORMATION
             .maxloglevel
             .store(log_max_level, Ordering::SeqCst);
@@ -361,6 +362,9 @@ pub async fn enable_logarea(log_max_level: u8, request_id: u64, data: &mut Vec<u
 }
 
 pub fn entrylog(msg: &Vec<u8>, loglevel: Level, request_id: u64) {
+    if loglevel > Level::Info {
+        return;
+    }
     let logarea_initialized: bool = LOGGING_INFORMATION
         .logarea_initialized
         .load(Ordering::SeqCst);
@@ -642,24 +646,13 @@ impl log::Log for VmmLoggerBackend {
             log_max_level =
                 u8_to_levelfilter(LOGGING_INFORMATION.maxloglevel.load(Ordering::SeqCst));
         } else if provisional_logs_enabled {
-            // Provisional records are captured into private buffers and copied into
-            // the VMM-readable shared area when EnableLogArea succeeds. In release
-            // images cap the provisional level at Info as well, so sensitive
-            // Debug/Trace material cannot reach the shared area through this path.
-            #[cfg(debug_assertions)]
-            {
-                log_max_level = LevelFilter::Trace;
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                log_max_level = LevelFilter::Info;
-            }
+            log_max_level = LevelFilter::Info;
         } else {
             log_max_level = log::max_level();
         }
 
         let log_level = metadata.level();
-        log_level <= log_max_level
+        log_level <= log_max_level.min(LevelFilter::Info)
     }
 
     fn log(&self, record: &Record) {
@@ -706,7 +699,7 @@ static VM_LOGGER_BACKEND: VmmLoggerBackend = VmmLoggerBackend;
 
 /// Initialize the VMM logger as the global logger
 pub fn init_vmm_logger() -> core::result::Result<(), SetLoggerError> {
-    log::set_logger(&VM_LOGGER_BACKEND).map(|()| log::set_max_level(LevelFilter::Trace))
+    log::set_logger(&VM_LOGGER_BACKEND).map(|()| log::set_max_level(LevelFilter::Info))
 }
 
 #[cfg(test)]
@@ -751,6 +744,14 @@ mod test {
         assert!(logarea_created);
         assert!(provisional_logs_enabled);
         assert!(!logarea_initialized);
+
+        for level in [Level::Info, Level::Debug, Level::Trace] {
+            let metadata = Metadata::builder().level(level).build();
+            assert_eq!(
+                log::Log::enabled(&VM_LOGGER_BACKEND, &metadata),
+                level == Level::Info
+            );
+        }
 
         // Test utility functions
         assert_eq!(loglevel_to_u8(Level::Error), 1);
@@ -805,6 +806,15 @@ mod test {
             .load(Ordering::SeqCst);
         assert!(!provisional_logs_enabled);
         assert!(logarea_initialized);
+        assert_eq!(log::max_level(), LevelFilter::Info);
+        assert_eq!(LOGGING_INFORMATION.maxloglevel.load(Ordering::SeqCst), 3);
+        for level in [Level::Info, Level::Debug, Level::Trace] {
+            let metadata = Metadata::builder().level(level).build();
+            assert_eq!(
+                log::Log::enabled(&VM_LOGGER_BACKEND, &metadata),
+                level == Level::Info
+            );
+        }
 
         let mut logareavector = LOGAREAPTR.lock();
         let data_buffer = logareavector[0];
@@ -849,9 +859,16 @@ mod test {
         assert!(result.is_ok());
 
         // Add a log entry
+        for level in [Level::Debug, Level::Trace] {
+            entrylog(&b"Suppressed provisional log\n".to_vec(), level, u64::MAX);
+        }
+        assert_eq!(
+            LOGGING_INFORMATION.logentry_id.load(Ordering::SeqCst),
+            initial_entry_id
+        );
         entrylog(
             &"Test provisional log\n".to_string().into_bytes(),
-            Level::Trace,
+            Level::Info,
             u64::MAX,
         );
 
@@ -888,7 +905,7 @@ mod test {
 
         assert_eq!(log_entry_id, 1);
         assert_eq!(mig_request_id, u64::MAX);
-        assert_eq!(loglevel, loglevel_to_u8(Level::Trace));
+        assert_eq!(loglevel, loglevel_to_u8(Level::Info));
         assert_eq!(length, "Test provisional log\n".len() as u32);
 
         logareavector.clear();
@@ -938,9 +955,16 @@ mod test {
         assert!(result.is_ok());
 
         // Add a log entry
+        for level in [Level::Debug, Level::Trace] {
+            entrylog(&b"Suppressed shared log\n".to_vec(), level, u64::MAX);
+        }
+        assert_eq!(
+            LOGGING_INFORMATION.logentry_id.load(Ordering::SeqCst),
+            initial_entry_id
+        );
         entrylog(
             &"Test message\n".to_string().into_bytes(),
-            Level::Trace,
+            Level::Info,
             u64::MAX,
         );
 
@@ -977,7 +1001,7 @@ mod test {
 
         assert_eq!(log_entry_id, 1);
         assert_eq!(mig_request_id, u64::MAX);
-        assert_eq!(loglevel, loglevel_to_u8(Level::Trace));
+        assert_eq!(loglevel, loglevel_to_u8(Level::Info));
         assert_eq!(length, "Test message\n".len() as u32);
 
         logareavector.clear();
@@ -1025,7 +1049,7 @@ mod test {
         let provisional_msg = "Test provisional log\n";
         entrylog(
             &provisional_msg.to_string().into_bytes(),
-            Level::Trace,
+            Level::Info,
             u64::MAX,
         );
         assert_eq!(LOGGING_INFORMATION.logentry_id.load(Ordering::SeqCst), 1);
@@ -1053,7 +1077,7 @@ mod test {
 
             assert_eq!(entry_log_entry_id, 1);
             assert_eq!(entry_mig_request_id, u64::MAX);
-            assert_eq!(entry_loglevel, loglevel_to_u8(Level::Trace));
+            assert_eq!(entry_loglevel, loglevel_to_u8(Level::Info));
             assert_eq!(entry_length, provisional_msg.len() as u32);
         }
 
@@ -1096,7 +1120,7 @@ mod test {
 
         assert_eq!(first_entry_log_entry_id, 1);
         assert_eq!(first_entry_mig_request_id, u64::MAX);
-        assert_eq!(first_entry_loglevel, loglevel_to_u8(Level::Trace));
+        assert_eq!(first_entry_loglevel, loglevel_to_u8(Level::Info));
         assert_eq!(first_entry_length, provisional_msg.len() as u32);
         assert_eq!(
             core::str::from_utf8(&data_buffer[first_msg_start..first_msg_end]).unwrap(),

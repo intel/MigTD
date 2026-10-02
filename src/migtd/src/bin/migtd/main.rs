@@ -102,7 +102,7 @@ pub fn runtime_main() {
     {
         // Initialize logging with level filter. The actual log level is determined by
         // compile-time feature flags.
-        let _ = td_logger::init(log::LevelFilter::Trace);
+        let _ = td_logger::init(log::LevelFilter::Info);
     }
 
     // Create LogArea per vCPU
