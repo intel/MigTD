@@ -8,9 +8,15 @@ use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 mod servtd_collateral;
 pub use servtd_collateral::*;
 mod collaterals;
+pub use crate::measurement::*;
 pub use collaterals::*;
 mod policy;
+pub use crate::measurement;
 pub use policy::*;
+#[cfg(feature = "servtd_corim")]
+mod servtd_corim;
+#[cfg(feature = "servtd_corim")]
+pub use servtd_corim::*;
 
 impl<'a> Report<'a> {
     pub fn new(report: &'a [u8]) -> Result<Self, PolicyError> {
