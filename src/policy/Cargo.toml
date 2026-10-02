@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 cc-measurement = { path = "../../deps/td-shim/cc-measurement"}
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+corim = { version = "0.1.3", default-features = false, features = ["profile-intel"], optional = true }
 crypto = { path = "../crypto" }
 log = { version = "0.4.13", optional = true }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"]}
@@ -20,3 +21,7 @@ td-shim-interface = { path = "../../deps/td-shim/td-shim-interface"}
 std = []
 AzCVMEmu = []
 policy_v2 = []
+# Opt-in CoRIM-encoded servtd collateral (TCB Mapping + TD Identity), keyed by
+# the same tdinfo_hash as the legacy JSON collateral. Decode + match only;
+# signature verification of the COSE envelope is the caller's responsibility.
+servtd_corim = ["dep:corim"]

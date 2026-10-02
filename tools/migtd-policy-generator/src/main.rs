@@ -47,6 +47,11 @@ struct V2Command {
     #[arg(long, value_name = "FILE")]
     servtd_collateral: Option<PathBuf>,
 
+    /// Locally-authoritative PEM CRL for servTD signer chains. This can be
+    /// supplied without --servtd-collateral for CoRIM-only policies.
+    #[arg(long, value_name = "FILE")]
+    servtd_crl: Option<PathBuf>,
+
     /// Output file path
     #[arg(long, short, value_name = "FILE")]
     output: PathBuf,
@@ -79,18 +84,19 @@ async fn main() {
                 eprintln!("error: the required arguments were not provided: --collaterals <FILE>");
                 exit(1);
             });
-            let servtd_collateral_path = cmd.servtd_collateral.as_ref().unwrap_or_else(|| {
-                eprintln!(
-                    "error: the required arguments were not provided: --servtd-collateral <FILE>"
-                );
+            // `--servtd-collateral` is optional: when omitted, a CoRIM-only
+            // policy (no `servtdCollateral`) is produced and the servtd
+            // endorsement is delivered as a separately-enrolled CoRIM.
+            let merged = build_v2_policy_data(
+                &cmd.policy_data,
+                collateral_path,
+                cmd.servtd_collateral.as_deref(),
+                cmd.servtd_crl.as_deref(),
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to generate v2 policy data: {}", e);
                 exit(1);
             });
-            let merged =
-                build_v2_policy_data(&cmd.policy_data, collateral_path, servtd_collateral_path)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Failed to generate v2 policy data: {}", e);
-                        exit(1);
-                    });
             if let Err(e) = fs::write(&cmd.output, merged) {
                 eprintln!("Failed to write output file: {}", e);
                 exit(1);

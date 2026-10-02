@@ -150,9 +150,46 @@ pub fn init_file_based_emulation_with_policy_chain(
     policy_path: &str,
     policy_issuer_chain_path: &str,
 ) -> bool {
-    crate::td_uefi_pi::fv::set_file_reader(real_file_reader);
-    let policy_loaded = crate::td_uefi_pi::fv::load_policy_from_file(policy_path);
-    let chain_loaded =
-        crate::td_uefi_pi::fv::load_policy_issuer_chain_from_file(policy_issuer_chain_path);
-    policy_loaded && chain_loaded
+    init_file_based_emulation_with_policy_endorsements(
+        policy_path,
+        Some(policy_issuer_chain_path),
+        None,
+        None,
+    )
+    .is_ok()
+}
+
+/// Load policy v2 artifacts, preferring a direct anchor over a PEM issuer chain.
+/// CoRIM bytes are authenticated by MigTD, not by the file-loading layer.
+#[cfg(feature = "policy_v2")]
+pub fn init_file_based_emulation_with_policy_endorsements(
+    policy_path: &str,
+    policy_issuer_chain_path: Option<&str>,
+    signer_anchor_path: Option<&str>,
+    servtd_corim_path: Option<&str>,
+) -> Result<(), &'static str> {
+    use crate::td_uefi_pi::fv;
+
+    fv::reset_policy_endorsements();
+    fv::set_file_reader(real_file_reader);
+    if !fv::load_policy_from_file(policy_path) {
+        return Err("Failed to load policy file (maximum size: 1 MiB)");
+    }
+    if let Some(path) = signer_anchor_path {
+        if !fv::load_signer_anchor_from_file(path) {
+            return Err("Failed to load signer anchor (expected exactly 48 raw bytes)");
+        }
+    } else if let Some(path) = policy_issuer_chain_path {
+        if !fv::load_policy_issuer_chain_from_file(path) {
+            return Err("Failed to load policy issuer chain file");
+        }
+    } else {
+        return Err("Policy v2 requires a signer anchor or policy issuer chain");
+    }
+    if let Some(path) = servtd_corim_path {
+        if !fv::load_servtd_corim_from_file(path) {
+            return Err("Failed to load servtd CoRIM (must be nonempty and at most 1 MiB)");
+        }
+    }
+    Ok(())
 }
