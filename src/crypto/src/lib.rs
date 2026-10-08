@@ -8,7 +8,8 @@
 extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
-use der::{Decode, Encode, Sequence};
+use der::asn1::{AnyRef, BitStringRef};
+use der::{Decode, Encode, Sequence, Tag, TagNumber, Tagged};
 use pki_types::{pem::PemObject, CertificateDer};
 
 cfg_if::cfg_if! {
@@ -119,7 +120,24 @@ pub fn get_policy_signer_key_hash(cert_chain_pem: &[u8]) -> Result<[u8; SHA384_D
     Ok(hash)
 }
 
-/// Verifies a certificate chain and then verifies a message signature
+pub fn split_chain_pem_to_leaf_and_root_der(cert_chain_pem: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf = chain[0].as_ref().to_vec();
+    let root = chain.last().unwrap().as_ref().to_vec();
+    Ok((leaf, root))
+}
+
+pub fn extract_leaf_subject_der_from_chain_pem(cert_chain_pem: &[u8]) -> Result<Vec<u8>> {
+    let chain = extract_cert_chain_from_pem(cert_chain_pem)?;
+    let leaf_der = chain[0].as_ref();
+    let cert = x509::Certificate::from_der(leaf_der).map_err(|_| Error::ParseCertificate)?;
+    cert.tbs_certificate
+        .subject
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)
+}
+
+/// Verifies a certificate chain and then verifies a message signature.
 pub fn verify_cert_chain_and_signature(
     cert_chain_pem: &[u8],
     message: &[u8],
@@ -128,11 +146,126 @@ pub fn verify_cert_chain_and_signature(
     let cert_chain = extract_cert_chain_from_pem(cert_chain_pem)?;
 
     verify_certificate_chain(&cert_chain)?;
+    verify_issuer_ca_constraints(&cert_chain)?;
 
     // Extract public key from the leaf certificate and verify signature
     let leaf_cert = &cert_chain[0];
     verify_signature_with_cert(leaf_cert, message, signature)?;
 
+    Ok(())
+}
+
+/// Authenticate CRL metadata without applying its revocation entries.
+/// The caller must first authenticate the signer chain against its anchor.
+pub fn verify_signer_crl(chain_pem: &[u8], crl_pem: &[u8]) -> Result<()> {
+    let chain_der = extract_cert_chain_from_pem(chain_pem)?;
+    verify_signer_crl_with_chain(&chain_der, crl_pem)
+}
+
+fn verify_signer_crl_with_chain(chain: &[CertificateDer<'_>], crl_pem: &[u8]) -> Result<()> {
+    if chain.len() < 3 || chain[1].as_ref() == chain.last().unwrap().as_ref() {
+        return Err(Error::CertChainVerification(
+            "servTD CRL requires a non-root signing-leaf issuer".into(),
+        ));
+    }
+    let leaf =
+        x509::Certificate::from_der(chain[0].as_ref()).map_err(|_| Error::ParseCertificate)?;
+    let issuer =
+        x509::Certificate::from_der(chain[1].as_ref()).map_err(|_| Error::ParseCertificate)?;
+    if leaf.tbs_certificate.issuer != issuer.tbs_certificate.subject
+        || is_ca_certificate(&leaf)?
+        || !is_ca_certificate(&issuer)?
+        || !can_sign_crls(&issuer)?
+    {
+        return Err(Error::CertChainVerification(
+            "servTD CRL issuer must be the signing leaf's intermediate CA with cRLSign".into(),
+        ));
+    }
+    validate_direct_crl_distribution_points(&leaf)?;
+    let issuer_name = issuer
+        .tbs_certificate
+        .subject
+        .to_der()
+        .map_err(|_| Error::ParseCertificate)?;
+    if crl::get_crl_issuer_der(crl_pem)? != issuer_name {
+        return Err(Error::CertChainVerification(
+            "CRL issuer does not match the signing leaf's intermediate CA".into(),
+        ));
+    }
+    crl::verify_crl_signature(crl_pem, &extract_public_key_from_cert(&issuer)?)?;
+    crl::validate_servtd_crl_profile(crl_pem)
+}
+
+/// Apply an authenticated intermediate-issued CRL to its signing leaf only.
+pub fn verify_signer_chain_not_revoked(chain_pem: &[u8], crl_pem: &[u8]) -> Result<()> {
+    let chain = extract_cert_chain_from_pem(chain_pem)?;
+    verify_signer_crl_with_chain(&chain, crl_pem)?;
+    let leaf =
+        x509::Certificate::from_der(chain[0].as_ref()).map_err(|_| Error::ParseCertificate)?;
+    if crl::is_serial_revoked(crl_pem, leaf.tbs_certificate.serial_number.as_bytes())? {
+        return Err(Error::CertChainVerification(
+            "the signing leaf is revoked".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn can_sign_crls(cert: &x509::Certificate<'_>) -> Result<bool> {
+    const KEY_USAGE_OID: x509::ObjectIdentifier = x509::ObjectIdentifier::new_unwrap("2.5.29.15");
+    let mut permitted = None;
+    for extension in cert.tbs_certificate.extensions.iter().flat_map(|e| e.get()) {
+        if extension.extn_id != KEY_USAGE_OID {
+            continue;
+        }
+        if permitted.is_some() {
+            return Err(Error::ParseCertificate);
+        }
+        let value = extension.extn_value.ok_or(Error::ParseCertificate)?;
+        let usage =
+            BitStringRef::from_der(value.as_bytes()).map_err(|_| Error::ParseCertificate)?;
+        if usage.bit_len() > 9 {
+            return Err(Error::ParseCertificate);
+        }
+        permitted = Some(
+            usage
+                .raw_bytes()
+                .first()
+                .is_some_and(|byte| byte & 0x02 != 0),
+        );
+    }
+    Ok(permitted.unwrap_or(false))
+}
+
+fn validate_direct_crl_distribution_points(leaf: &x509::Certificate<'_>) -> Result<()> {
+    const CRL_DISTRIBUTION_POINTS_OID: x509::ObjectIdentifier =
+        x509::ObjectIdentifier::new_unwrap("2.5.29.31");
+    let mut seen = false;
+    for extension in leaf.tbs_certificate.extensions.iter().flat_map(|e| e.get()) {
+        if extension.extn_id != CRL_DISTRIBUTION_POINTS_OID {
+            continue;
+        }
+        if seen {
+            return Err(Error::ParseCertificate);
+        }
+        seen = true;
+        let value = extension.extn_value.ok_or(Error::ParseCertificate)?;
+        let points = Vec::<Vec<AnyRef<'_>>>::from_der(value.as_bytes())
+            .map_err(|_| Error::ParseCertificate)?;
+        if points.is_empty()
+            || points.iter().any(|point| {
+                point.len() != 1
+                    || point[0].tag()
+                        != (Tag::ContextSpecific {
+                            constructed: true,
+                            number: TagNumber::new(0),
+                        })
+            })
+        {
+            return Err(Error::CertChainVerification(
+                "servTD does not support reason-scoped or delegated CRL distribution points".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -176,6 +309,19 @@ fn verify_certificate_chain(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
         verify_cert_signature(&subject_cert, &issuer_cert)?;
     }
 
+    Ok(())
+}
+
+fn verify_issuer_ca_constraints(cert_chain: &[CertificateDer<'_>]) -> Result<()> {
+    for cert_der in cert_chain.iter().skip(1) {
+        let issuer =
+            x509::Certificate::from_der(cert_der.as_ref()).map_err(|_| Error::ParseCertificate)?;
+        if !is_ca_certificate(&issuer)? {
+            return Err(Error::CertChainVerification(
+                "certificate chain contains a non-CA issuer".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -385,8 +531,14 @@ fn check_root_ca_match(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
+#[path = "../test/crl/fixtures.rs"]
+mod crl_test_data;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crl_test_data as fixtures;
 
     // Full 3-cert chain from key_gen.sh (leaf-to-root).
     // - Leaf:         CN=MigTD Info Issuer (NOT a CA — KeyUsage=digitalSignature only).
@@ -566,6 +718,169 @@ m07Y31+o+LpsZuEnlIETx/zemHA=
     fn test_cert_chain_verification() {
         let cert_chain = extract_cert_chain_from_pem(test_chain()).unwrap();
         assert!(verify_certificate_chain(&cert_chain).is_ok());
+    }
+
+    #[test]
+    fn test_signer_crl_accepts_unrevoked_chains() {
+        for (chain, crl) in [
+            (fixtures::POLICY_CHAIN, fixtures::EMPTY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::EMPTY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_POLICY_CRL),
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_IDENTITY_CRL),
+        ] {
+            verify_signer_chain_not_revoked(chain, crl).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_signer_crl_rejects_revoked_leaf() {
+        for (chain, crl) in [
+            (fixtures::POLICY_CHAIN, fixtures::REVOKED_POLICY_CRL),
+            (fixtures::IDENTITY_CHAIN, fixtures::REVOKED_IDENTITY_CRL),
+        ] {
+            let result = verify_signer_chain_not_revoked(chain, crl);
+            assert!(
+                matches!(&result, Err(Error::CertChainVerification(message))
+                    if message.contains("is revoked")),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_signer_crl_rejects_untrusted_crls() {
+        for crl in [
+            fixtures::UNRELATED_CRL,
+            fixtures::NON_CA_CRL,
+            fixtures::ROOT_EMPTY_CRL,
+            fixtures::REVOKED_ISSUER_CRL,
+        ] {
+            let result = verify_signer_chain_not_revoked(fixtures::POLICY_CHAIN, crl);
+            assert!(
+                matches!(&result, Err(Error::CertChainVerification(message))
+                    if message.contains("CRL issuer does not match")),
+                "{result:?}"
+            );
+        }
+        assert!(matches!(
+            verify_signer_chain_not_revoked(fixtures::POLICY_CHAIN, fixtures::TAMPERED_CRL,),
+            Err(Error::EcdsaVerify)
+        ));
+        assert!(matches!(
+            verify_signer_chain_not_revoked(
+                fixtures::IDENTITY_OTHER_ISSUER_CHAIN,
+                fixtures::EMPTY_CRL,
+            ),
+            Err(Error::CertChainVerification(_))
+        ));
+    }
+
+    #[test]
+    fn test_servtd_profile_uses_only_issuer_scoped_leaf_serial() {
+        let chain = include_bytes!("../test/crl/profile_chain.pem");
+        verify_signer_chain_not_revoked(
+            chain,
+            include_bytes!("../test/crl/profile_collision_crl.pem"),
+        )
+        .unwrap();
+        for crl in [
+            include_bytes!("../test/crl/profile_revoked_crl.pem").as_slice(),
+            include_bytes!("../test/crl/profile_key_compromise_crl.pem"),
+        ] {
+            verify_signer_crl(chain, crl).unwrap();
+            assert!(matches!(
+                verify_signer_chain_not_revoked(chain, crl),
+                Err(Error::CertChainVerification(message)) if message.contains("is revoked")
+            ));
+        }
+    }
+
+    #[test]
+    fn test_servtd_profile_requires_intermediate_crl_sign_permission() {
+        let crl = include_bytes!("../test/crl/profile_empty_crl.pem");
+        for chain in [
+            include_bytes!("../test/crl/profile_no_crl_sign_chain.pem").as_slice(),
+            include_bytes!("../test/crl/profile_missing_key_usage_chain.pem"),
+            include_bytes!("../test/crl/profile_malformed_key_usage_chain.pem"),
+            include_bytes!("../test/crl/profile_duplicate_key_usage_chain.pem"),
+            include_bytes!("../test/crl/profile_root_issued_chain.pem"),
+        ] {
+            verify_certificate_chain(&extract_cert_chain_from_pem(chain).unwrap()).unwrap();
+            assert!(verify_signer_crl(chain, crl).is_err());
+        }
+    }
+
+    #[test]
+    fn test_servtd_profile_rejects_same_name_different_issuer_key() {
+        let chain = include_bytes!("../test/crl/profile_chain.pem");
+        let other = include_bytes!("../test/crl/profile_other_issuer_chain.pem");
+        let crl = include_bytes!("../test/crl/profile_empty_crl.pem");
+        let other_crl = include_bytes!("../test/crl/profile_other_issuer_crl.pem");
+        validate_peer_cert_chain(chain, other).unwrap();
+        verify_signer_crl(chain, crl).unwrap();
+        verify_signer_crl(other, other_crl).unwrap();
+        assert!(matches!(
+            verify_signer_crl(other, crl),
+            Err(Error::EcdsaVerify)
+        ));
+        assert!(matches!(
+            verify_signer_crl(chain, other_crl),
+            Err(Error::EcdsaVerify)
+        ));
+    }
+
+    #[test]
+    fn test_servtd_profile_requires_complete_direct_issuer_wide_crl() {
+        let chain = include_bytes!("../test/crl/profile_chain.pem");
+        let issuer = pem_cert_to_der(include_bytes!("../test/crl/profile_issuer.pem")).unwrap();
+        let issuer = x509::Certificate::from_der(issuer.as_ref()).unwrap();
+        let key = extract_public_key_from_cert(&issuer).unwrap();
+        for crl in [
+            include_bytes!("../test/crl/profile_delta_crl.pem").as_slice(),
+            include_bytes!("../test/crl/profile_noncritical_delta_crl.pem"),
+            include_bytes!("../test/crl/profile_partitioned_crl.pem"),
+            include_bytes!("../test/crl/profile_unknown_critical_crl.pem"),
+            include_bytes!("../test/crl/profile_indirect_entry_crl.pem"),
+            include_bytes!("../test/crl/profile_remove_entry_crl.pem"),
+            include_bytes!("../test/crl/profile_duplicate_number_crl.pem"),
+        ] {
+            crl::verify_crl_signature(crl, &key).unwrap();
+            assert!(verify_signer_crl(chain, crl).is_err());
+        }
+        verify_signer_chain_not_revoked(
+            chain,
+            include_bytes!("../test/crl/profile_unknown_noncritical_crl.pem"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_servtd_profile_rejects_scoped_or_delegated_distribution_points() {
+        let crl = include_bytes!("../test/crl/profile_empty_crl.pem");
+        verify_signer_crl(include_bytes!("../test/crl/profile_direct_chain.pem"), crl).unwrap();
+        for chain in [
+            include_bytes!("../test/crl/profile_reason_scoped_chain.pem").as_slice(),
+            include_bytes!("../test/crl/profile_delegated_chain.pem"),
+        ] {
+            assert!(verify_signer_crl(chain, crl).is_err());
+        }
+    }
+
+    #[test]
+    fn test_signer_verification_rejects_non_ca_issuers() {
+        let valid = extract_cert_chain_from_pem(test_chain()).unwrap();
+        verify_issuer_ca_constraints(&valid).unwrap();
+
+        let invalid = extract_cert_chain_from_pem(attacker_chain()).unwrap();
+        verify_certificate_chain(&invalid).unwrap();
+        assert!(matches!(
+            verify_issuer_ca_constraints(&invalid),
+            Err(Error::CertChainVerification(message)) if message.contains("non-CA issuer")
+        ));
+        assert!(matches!(
+            verify_cert_chain_and_signature(attacker_chain(), b"test", b""),
+            Err(Error::CertChainVerification(message)) if message.contains("non-CA issuer")
+        ));
     }
 
     #[test]
