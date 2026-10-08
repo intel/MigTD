@@ -31,3 +31,10 @@ popd
   ```
   ./target/debug/migtd-policy-generator v2 --policy-data /path/to/policy_data.json --collaterals config/collateral_pre_production_fmspc.json --servtd-collateral /path/to/servtd_collateral.json -o policy_data_full.json
   ```
+
+Omitting `--servtd-collateral` removes any existing `servtdCollateral` from the
+input, for use with a separately enrolled CoRIM. A numbered servTD CRL is still
+required: `--servtd-crl` takes precedence over an existing top-level `servtdCrl`.
+If neither is present, the CRL from the removed collateral is promoted to the top level.
+Generation fails if no valid numbered CRL remains. When JSON collateral is
+retained, its CRL and any top-level CRL must agree.

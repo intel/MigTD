@@ -54,6 +54,10 @@ pub mod quote;
 pub mod ratls;
 pub mod spdm;
 
+// Re-export the policy crate so external consumers (e.g. the migtd bin) can
+// reach v2 measurement primitives without depending on `policy` directly.
+pub use ::policy;
+
 pub const STACK_SIZE: usize = 0x20_0000;
 pub const HEAP_SIZE: usize = 0x70_0000;
 

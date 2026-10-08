@@ -13,6 +13,10 @@ pub use v1::*;
 mod v2;
 #[cfg(feature = "policy_v2")]
 pub use v2::*;
+#[path = "v2/measurement.rs"]
+pub mod measurement;
+#[cfg(not(feature = "policy_v2"))]
+pub use measurement::*;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use cc_measurement::CcEventHeader;
@@ -54,6 +58,15 @@ pub enum PolicyError {
     QuoteGeneration,
     GetTdxReport,
     PeerCertChainValidation,
+    /// The `servtdTcbMappingIssuerChain` does not resolve to the RTMR1 signer
+    /// anchor enrolled directly or derived from the CFV policy issuer chain.
+    /// Because the chain bytes are redacted from RTMR2, this root+subject binding
+    /// ensures the mapping signer matches the measured root of trust.
+    SignerAnchorMismatch,
+    /// A certificate in the servtd signer chain (TCB mapping or identity) is
+    /// listed in the authoritative signer CRL (`servtdCrl`), or that CRL
+    /// failed authentication. Fail-closed.
+    SignerRevoked,
 }
 
 pub struct Report<'a> {
@@ -189,6 +202,8 @@ pub enum EventName {
     MigTdPolicy,
     SgxRootKey,
     MigTdPolicySigner,
+    /// Canonical policyData bytes with the updateable mapping and chain removed.
+    MigTdPolicyData,
     Unknown,
 }
 
@@ -201,6 +216,7 @@ impl From<&str> for EventName {
             "Digest.MigTdCoreSvn" => Self::MigTdCoreSvn,
             "Digest.MigTdPolicy" => Self::MigTdPolicy,
             "Digest.MigTdSgxRootKey" => Self::SgxRootKey,
+            "Digest.MigTdPolicyData" => Self::MigTdPolicyData,
             _ => Self::Unknown,
         }
     }
