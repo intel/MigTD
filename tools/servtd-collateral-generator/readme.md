@@ -19,5 +19,5 @@ popd
 
 - Generate servtd collateral:
   ```
-  ./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json --mapping-chain /path/to/identity_issuer_chain.pem -o servtd_collateral.json
+  ./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json -o servtd_collateral.json
   ```

@@ -10,6 +10,56 @@ use serde::{Deserialize, Serialize};
 
 use crate::{v2::bytes_to_hex_string, PolicyError};
 
+pub fn verify_migtd_servtd_hash(quote: &[u8]) -> Result<(), PolicyError> {
+    const QUOTE_HEADER_SIZE: usize = 48;
+    const QUOTE_V5_BODY_HEADER_SIZE: usize = 6;
+    const TD_REPORT_15_BODY_TYPE: u16 = 3;
+    const TD_REPORT_15_BODY_SIZE: usize = 648;
+    const MR_SERVICETD_OFFSET: usize = 600;
+    const MR_SERVICETD_SIZE: usize = 48;
+
+    let version = quote
+        .get(..2)
+        .and_then(|value| value.try_into().ok())
+        .map(u16::from_le_bytes)
+        .ok_or(PolicyError::InvalidQuote)?;
+    if version != 5 {
+        return Ok(());
+    }
+
+    let body_type = quote
+        .get(QUOTE_HEADER_SIZE..QUOTE_HEADER_SIZE + 2)
+        .and_then(|value| value.try_into().ok())
+        .map(u16::from_le_bytes)
+        .ok_or(PolicyError::InvalidQuote)?;
+    if body_type != TD_REPORT_15_BODY_TYPE {
+        return Ok(());
+    }
+
+    let body_size = quote
+        .get(QUOTE_HEADER_SIZE + 2..QUOTE_HEADER_SIZE + QUOTE_V5_BODY_HEADER_SIZE)
+        .and_then(|value| value.try_into().ok())
+        .map(u32::from_le_bytes)
+        .map(|value| value as usize)
+        .ok_or(PolicyError::InvalidQuote)?;
+    if body_size != TD_REPORT_15_BODY_SIZE {
+        return Err(PolicyError::InvalidQuote);
+    }
+
+    let body_offset = QUOTE_HEADER_SIZE + QUOTE_V5_BODY_HEADER_SIZE;
+    let mr_servicetd = quote
+        .get(
+            body_offset + MR_SERVICETD_OFFSET
+                ..body_offset + MR_SERVICETD_OFFSET + MR_SERVICETD_SIZE,
+        )
+        .ok_or(PolicyError::InvalidQuote)?;
+    if mr_servicetd.iter().any(|value| *value != 0) {
+        return Err(PolicyError::UnqualifiedMigTdInfo);
+    }
+
+    Ok(())
+}
+
 pub fn get_fmspc_from_quote(quote: &[u8]) -> Result<[u8; 6], PolicyError> {
     const PEM_CERT_BEGIN: &str = "-----BEGIN CERTIFICATE-----\n";
     const PEM_CERT_END: &str = "-----END CERTIFICATE-----\n";
@@ -180,6 +230,25 @@ pub fn get_tcb_evaluation_number_from_collateral(
 #[cfg(test)]
 mod test {
     use super::*;
+    use alloc::vec;
+
+    #[test]
+    fn reject_nonzero_migtd_servtd_hash() {
+        const BODY_OFFSET: usize = 54;
+        const MR_SERVICETD_OFFSET: usize = 600;
+
+        let mut quote = vec![0u8; BODY_OFFSET + 648];
+        quote[..2].copy_from_slice(&5u16.to_le_bytes());
+        quote[48..50].copy_from_slice(&3u16.to_le_bytes());
+        quote[50..54].copy_from_slice(&648u32.to_le_bytes());
+        assert!(verify_migtd_servtd_hash(&quote).is_ok());
+
+        quote[BODY_OFFSET + MR_SERVICETD_OFFSET] = 1;
+        assert!(matches!(
+            verify_migtd_servtd_hash(&quote),
+            Err(PolicyError::UnqualifiedMigTdInfo)
+        ));
+    }
 
     #[test]
     fn test_deserialize_collaterals() {
