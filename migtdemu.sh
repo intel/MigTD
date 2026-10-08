@@ -95,8 +95,8 @@ show_usage() {
     echo "    the actual migration, ensuring logging is enabled and a TD report is generated."
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
-    echo "  - Rebinding operations (rebind-prepare, rebind-finalize) always require policy_v2, which"
-    echo "    is enabled automatically. You must explicitly specify --policy-file and --policy-issuer-chain-file."
+    echo "  - Rebinding supports the default Policy v1 mode and Policy v2. Pass --policy-v2 with"
+    echo "    --policy-file and --policy-issuer-chain-file to select Policy v2."
     echo "  - The 'rebind-prepare' operation performs the actual rebinding handshake (TLS,"
     echo "    token exchange, and approval). 'rebind-finalize' clears the session token."
     echo
@@ -121,12 +121,13 @@ show_usage() {
     echo "  $0 --num-cpus 4 --both               # Run with 4 CPUs (0-3)"
     echo "  $0 --num-cpus 3 --both               # Run with 3 CPUs (0-2)"
     echo
-    echo "  # Rebinding examples (--policy-file and --policy-issuer-chain-file are always required):"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
-    echo "  $0 --operation rebind-finalize --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --role destination --mock-report"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --log-level trace --mock-report --both"
+    echo "  # Rebinding examples:"
+    echo "  $0 --operation rebind-prepare --skip-ra --both"
+    echo "  $0 --operation rebind-prepare --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
+    echo "  $0 --operation rebind-prepare --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
+    echo "  $0 --operation rebind-finalize --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
+    echo "  $0 --operation rebind-prepare --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --role destination --mock-report"
+    echo "  $0 --operation rebind-prepare --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --log-level trace --mock-report --both"
 }
 
 # Function to check if file exists
@@ -361,8 +362,6 @@ fi
 IS_REBIND=false
 if [[ "$OPERATION" == "rebind-prepare" || "$OPERATION" == "rebind-finalize" ]]; then
     IS_REBIND=true
-    # Rebinding always requires policy_v2
-    USE_POLICY_V2=true
 fi
 
 # Automatically enable mock-report mode when mock-quote-file is specified

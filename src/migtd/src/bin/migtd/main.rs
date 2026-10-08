@@ -18,9 +18,6 @@ use log::info;
 use log::{debug, Level};
 use migtd::driver::vmcall_raw::panic_with_guest_crash_reg_report;
 use migtd::event_log::*;
-#[cfg(not(feature = "vmcall-raw"))]
-use migtd::migration::data::MigrationInformation;
-#[cfg(feature = "vmcall-raw")]
 use migtd::migration::data::WaitForRequestResponse;
 #[cfg(feature = "vmcall-raw")]
 use migtd::migration::logging::*;
@@ -420,10 +417,6 @@ fn initialize_policy() -> String {
 fn handle_pre_mig() {
     const MAX_CONCURRENCY_REQUESTS: usize = 12;
 
-    #[cfg(not(feature = "vmcall-raw"))]
-    // Set by `wait_for_request` async task when getting new request from VMM.
-    static PENDING_REQUEST: Mutex<Option<MigrationInformation>> = Mutex::new(None);
-    #[cfg(feature = "vmcall-raw")]
     // Set by `wait_for_request` async task when getting new request from VMM.
     static PENDING_REQUEST: Mutex<Option<WaitForRequestResponse>> = Mutex::new(None);
 
@@ -462,20 +455,49 @@ fn handle_pre_mig() {
             async_runtime::add_task(async move {
                 #[cfg(not(feature = "vmcall-raw"))]
                 {
-                    let status = exchange_msk(&request)
-                        .await
-                        .map(|_| MigrationResult::Success)
-                        .unwrap_or_else(|e| e);
+                    match request {
+                        WaitForRequestResponse::StartMigration(info) => {
+                            let status = exchange_msk(&info)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
+                            let _ = report_status(
+                                status as u8,
+                                info.mig_info.mig_request_id,
+                                DataStatusOperation::StartMigration,
+                            )
+                            .map_err(|e| {
+                                log::error!(
+                                    "Failed to report status for mig_request_id {}: {:?}\n",
+                                    info.mig_info.mig_request_id,
+                                    e
+                                );
+                            });
+                            REQUESTS.lock().remove(&info.mig_info.mig_request_id);
+                        }
+                        WaitForRequestResponse::StartRebinding(info) => {
+                            use migtd::migration::rebinding::start_rebinding;
 
-                    let _ =
-                        report_status(status as u8, request.mig_info.mig_request_id).map_err(|e| {
-                            log::error!(
-                                "Failed to report status for mig_request_id {}: {:?}\n",
-                                request.mig_info.mig_request_id,
-                                e
-                            );
-                        });
-                    REQUESTS.lock().remove(&request.mig_info.mig_request_id);
+                            let mut data = Vec::new();
+                            let status = start_rebinding(&info, &mut data)
+                                .await
+                                .map(|_| MigrationResult::Success)
+                                .unwrap_or_else(|e| e);
+                            let _ = report_status(
+                                status as u8,
+                                info.mig_info.mig_request_id,
+                                DataStatusOperation::StartRebinding,
+                            )
+                            .map_err(|e| {
+                                log::error!(
+                                    "Failed to report rebinding status for mig_request_id {}: {:?}\n",
+                                    info.mig_info.mig_request_id,
+                                    e
+                                );
+                            });
+                            REQUESTS.lock().remove(&info.mig_info.mig_request_id);
+                        }
+                    }
                 }
                 #[cfg(feature = "vmcall-raw")]
                 {
@@ -507,11 +529,10 @@ fn handle_pre_mig() {
                             log::trace!(migration_request_id = wfr_info.mig_info.mig_request_id; "ReportStatus for key exchange completed\n");
                             REQUESTS.lock().remove(&wfr_info.mig_info.mig_request_id);
                         }
-                        #[cfg(feature = "policy_v2")]
                         WaitForRequestResponse::StartRebinding(rebinding_info) => {
                             use migtd::migration::rebinding::start_rebinding;
 
-                            log::trace!(migration_request_id = rebinding_info.mig_request_id; "Processing StartRebinding request\n");
+                            log::trace!(migration_request_id = rebinding_info.mig_info.mig_request_id; "Processing StartRebinding request\n");
                             let status = start_rebinding(&rebinding_info, &mut data)
                                 .await
                                 .map(|_| MigrationResult::Success)
@@ -519,27 +540,32 @@ fn handle_pre_mig() {
                             if status == MigrationResult::Success {
                                 log::trace!("Successfully completed key exchange\n");
                                 log::trace!(
-                                    migration_request_id = rebinding_info.mig_request_id; "Successfully completed rebinding\n",
+                                    migration_request_id = rebinding_info.mig_info.mig_request_id; "Successfully completed rebinding\n",
                                 );
                             } else {
                                 log::error!(
-                                    migration_request_id = rebinding_info.mig_request_id; "Failure during rebinding status code: {:x}\n", status.clone() as u8);
+                                    migration_request_id = rebinding_info.mig_info.mig_request_id; "Failure during rebinding status code: {:x}\n", status.clone() as u8);
                             }
-                            let _ =
-                                report_status(status as u8, rebinding_info.mig_request_id, &data)
-                                    .await
-                                    .map_err(|e| {
-                                        log::error!(
-                                            migration_request_id = rebinding_info.mig_request_id;
-                                            "Failed to report status for StartRebinding: {:?}\n",
-                                            e
-                                        );
-                                    });
+                            let _ = report_status(
+                                status as u8,
+                                rebinding_info.mig_info.mig_request_id,
+                                &data,
+                            )
+                            .await
+                            .map_err(|e| {
+                                log::error!(
+                                    migration_request_id = rebinding_info.mig_info.mig_request_id;
+                                    "Failed to report status for StartRebinding: {:?}\n",
+                                    e
+                                );
+                            });
                             log::trace!(
-                                migration_request_id = rebinding_info.mig_request_id;
+                                migration_request_id = rebinding_info.mig_info.mig_request_id;
                                 "ReportStatus for rebinding completed\n"
                             );
-                            REQUESTS.lock().remove(&rebinding_info.mig_request_id);
+                            REQUESTS
+                                .lock()
+                                .remove(&rebinding_info.mig_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
                             log::trace!(migration_request_id = wfr_info.mig_request_id; "Processing GetTdReport request\n");
