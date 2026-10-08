@@ -11,7 +11,7 @@
 #   - Extracts mock TD measurements from hard coded quote data.
 #   - Updates policy templates with extracted measurements
 #   - Generates certificate chain for signing
-#   - Signs all components (td_identity, tcb_mapping, final policy)
+#   - Signs td_identity and tcb_mapping, then emits an unsigned policy envelope
 #   - Creates test-ready signed policy
 #   - Optionally tests the generated policy with migtdemu.sh
 #
@@ -44,7 +44,7 @@
 #      json-signer, servtd-collateral-generator, migtd-policy-generator)
 #   3. Extracts report data from mock data
 #   4. Updates td_identity.json template with extracted measurements
-#   5. Updates tcb_mapping.json template with extracted measurements
+#   5. Updates tcb_mapping.json with the complete TDINFO hash
 #   6. Generates certificate chain (root CA + policy signing cert)
 #   7. Signs td_identity.json with policy signing key (testing only)
 #   8. Signs tcb_mapping.json with policy signing key (testing only)
@@ -134,13 +134,14 @@ get_hash_algorithm() {
 #   $2 - key_type: Key type (only P384 is currently supported)
 #   $3 - cert_validity_days: Certificate validity in days (uses default 365 if not provided)
 #   $4 - root_ca_subject: Root CA subject string (uses default "/CN=MigTD Root CA/O=Intel Corporation" if not provided)
-#   $5 - leaf_subject: Leaf certificate subject string (uses default "/CN=MigTD Policy Issuer/O=Intel Corporation" if not provided)
+#   $5 - leaf_subject: Leaf certificate Subject DN (uses default "/CN=MigTD Policy Issuer/O=Intel Corporation" if not provided)
 generate_certificates() {
     local output_dir="$1"
     local key_type="$2"
     local cert_validity_days="${3:-365}"
     local root_ca_subject="${4:-/CN=MigTD Root CA/O=Microsoft Corporation}"
     local leaf_subject="${5:-/CN=MigTD Policy Issuer/O=Microsoft Corporation}"
+    local signer_eku_oid="${MIGTD_SIGNER_EKU_OID:-1.3.6.1.4.1.32473.1.1}"
 
     # Validate key type first
     if [ "$key_type" != "P384" ]; then
@@ -166,6 +167,16 @@ generate_certificates() {
         -subj "$root_ca_subject" \
         -$hash_algo
 
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name \
+        -out "$output_dir/intermediate_ca.key"
+    openssl req -new -key "$output_dir/intermediate_ca.key" \
+        -out "$output_dir/intermediate_ca.csr" -subj "/CN=MigTD Intermediate CA/O=Microsoft Corporation"
+    openssl x509 -req -in "$output_dir/intermediate_ca.csr" \
+        -CA "$output_dir/root_ca.pem" -CAkey "$output_dir/root_ca.key" -CAcreateserial \
+        -out "$output_dir/intermediate_ca.pem" -days $cert_validity_days -$hash_algo \
+        -extfile <(printf 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n')
+    rm -f "$output_dir/intermediate_ca.csr"
+
     echo "3. Generating policy signing private key..."
     openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:$curve_name -out "$output_dir/policy_signing.key"
 
@@ -181,21 +192,24 @@ generate_certificates() {
         -out "$output_dir/policy_signing.csr" \
         -subj "$leaf_subject"
 
-    echo "6. Signing leaf certificate with root CA..."
+    echo "6. Signing leaf certificate with intermediate CA..."
     openssl x509 -req \
         -in "$output_dir/policy_signing.csr" \
-        -CA "$output_dir/root_ca.pem" \
-        -CAkey "$output_dir/root_ca.key" \
+        -CA "$output_dir/intermediate_ca.pem" \
+        -CAkey "$output_dir/intermediate_ca.key" \
         -CAcreateserial \
         -out "$output_dir/policy_signing.pem" \
         -days $cert_validity_days \
         -$hash_algo \
         -extensions v3_ca \
-        -extfile <(echo -e "[v3_ca]\nkeyUsage = digitalSignature")
+        -extfile <(printf '[v3_ca]\nkeyUsage = digitalSignature\nextendedKeyUsage = %s\n' "$signer_eku_oid")
 
-    # Create certificate chain (leaf + root)
+    # Create certificate chain (leaf + intermediate + root)
     echo "7. Creating certificate chain..."
-    cat "$output_dir/policy_signing.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain.pem"
+    cat "$output_dir/policy_signing.pem" "$output_dir/intermediate_ca.pem" "$output_dir/root_ca.pem" > "$output_dir/policy_issuer_chain.pem"
+    bash "$PROJECT_ROOT/sh_script/test/generate_empty_servtd_crl.sh" \
+        "$output_dir/intermediate_ca.pem" "$output_dir/intermediate_ca.key" "$output_dir/servtd.crl.pem"
+    shred -u "$output_dir/intermediate_ca.key"
 
     # Clean up CSR
     rm -f "$output_dir/policy_signing.csr"
@@ -293,8 +307,8 @@ if [ ! -f "$TD_IDENTITY_TEMPLATE" ]; then
 fi
 if [ ! -f "$TCB_MAPPING_TEMPLATE" ]; then
     echo -e "${YELLOW}Generating default tcb_mapping.json template${NC}"
-    printf '{"id":"BB9668CA-4EE8-4523-941A-B3B03BE46E03","version":1,"issueDate":"2025-01-01T00:00:00Z","nextUpdate":"2026-01-01T00:00:00Z","mrSigner":"%s","isvProdId":1,"svnMappings":[{"tdMeasurements":{"mrtd":"%s","rtmr0":"%s","rtmr1":"%s"},"isvsvn":1}]}' \
-        "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" "$(printf '0%.0s' {1..96})" > "$TCB_MAPPING_TEMPLATE"
+    printf '{"id":"BB9668CA-4EE8-4523-941A-B3B03BE46E03","version":1,"issueDate":"2025-01-01T00:00:00Z","nextUpdate":"2026-01-01T00:00:00Z","svnMappings":[]}' \
+        > "$TCB_MAPPING_TEMPLATE"
 fi
 
 # Verify input files exist
@@ -374,6 +388,10 @@ cargo build --release -p servtd-collateral-generator 2>&1 | grep -E "(Compiling|
 echo "Building migtd-policy-generator..."
 cargo build --release -p migtd-policy-generator 2>&1 | grep -E "(Compiling|Finished|error)" || true
 
+# Build migtd-hash
+echo "Building migtd-hash..."
+cargo build --release -p migtd-hash 2>&1 | grep -E "(Compiling|Finished|error)" || true
+
 # Verify tools exist
 # Note: azcvm-extract-report is in a different location
 if [ ! -f "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/release/azcvm-extract-report" ]; then
@@ -381,7 +399,7 @@ if [ ! -f "$PROJECT_ROOT/deps/td-shim-AzCVMEmu/azcvm-extract-report/target/relea
     exit 1
 fi
 
-for tool in json-signer servtd-collateral-generator migtd-policy-generator; do
+for tool in json-signer servtd-collateral-generator migtd-policy-generator migtd-hash; do
     if [ ! -f "$TOOLS_DIR/$tool" ]; then
         echo -e "${RED}Error: Tool '$tool' not found at $TOOLS_DIR/$tool${NC}" >&2
         exit 1
@@ -454,15 +472,15 @@ echo -e "${GREEN}✓ TD Identity updated: $TD_IDENTITY_UPDATED${NC}"
 echo
 
 #
-# Step 4: Update tcb_mapping.json with extracted measurements
-# Make sure no ending newline is added (important for signing)
+# Step 4: Update tcb_mapping.json with the complete TDINFO hash
 #
 echo -e "${BLUE}=== Step 4: Updating TCB Mapping Template ===${NC}"
-jq -c ".svnMappings[0].tdMeasurements.mrtd = \"$MRTD\" | \
-.svnMappings[0].tdMeasurements.rtmr0 = \"$RTMR0\" | \
-.svnMappings[0].tdMeasurements.rtmr1 = \"$RTMR1\" | \
-.svnMappings[0].isvsvn = $ISVSVN" \
-"$TCB_MAPPING_TEMPLATE" | tr -d '\n' > "$TCB_MAPPING_UPDATED"
+"$TOOLS_DIR/migtd-hash" \
+    --policy-v2 \
+    --from-report "$REPORT_DATA_FILE" \
+    --update-tcb-mapping "$TCB_MAPPING_TEMPLATE" \
+    --output-tcb-mapping "$TCB_MAPPING_UPDATED" \
+    --mapping-isvsvn "$ISVSVN"
 
 echo -e "${GREEN}✓ TCB Mapping updated: $TCB_MAPPING_UPDATED${NC}"
 echo
@@ -519,13 +537,13 @@ echo
 #
 echo -e "${BLUE}=== Step 8: Generating ServTD Collateral ===${NC}"
 IDENTITY_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
-MAPPING_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
 
 "$TOOLS_DIR/servtd-collateral-generator" \
     --identity "$TD_IDENTITY_SIGNED" \
     --identity-chain "$IDENTITY_CHAIN" \
     --mapping "$TCB_MAPPING_SIGNED" \
-    --mapping-chain "$MAPPING_CHAIN" \
+    --mapping-chain "$CERT_DIR/policy_issuer_chain.pem" \
+    --servtd-crl "$CERT_DIR/servtd.crl.pem" \
     --output "$SERVTD_COLLATERAL"
 
 echo -e "${GREEN}✓ ServTD Collateral generated: $SERVTD_COLLATERAL${NC}"
@@ -545,17 +563,12 @@ echo -e "${GREEN}✓ Policy data merged: $POLICY_DATA_MERGED${NC}"
 echo
 
 #
-# Step 10: Sign the final policy
+# Step 10: Wrap the final policy without an outer signature
 #
-echo -e "${BLUE}=== Step 10: Signing Final Policy ===${NC}"
-"$TOOLS_DIR/json-signer" \
-    --sign \
-    --name "policyData" \
-    --private-key "$PRIVATE_KEY" \
-    --input "$POLICY_DATA_MERGED" \
-    --output "$OUTPUT_POLICY"
+echo -e "${BLUE}=== Step 10: Wrapping Final Policy ===${NC}"
+jq -c '{policyData: .}' "$POLICY_DATA_MERGED" > "$OUTPUT_POLICY"
 
-echo -e "${GREEN}✓ Policy signed: $OUTPUT_POLICY${NC}"
+echo -e "${GREEN}✓ Policy generated: $OUTPUT_POLICY${NC}"
 echo
 
 #
