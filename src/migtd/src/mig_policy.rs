@@ -114,12 +114,14 @@ mod v2 {
     /// quote and verifying it against the policy collaterals.
     pub fn get_local_tcb_evaluation_info() -> Result<PolicyEvaluationInfo, PolicyError> {
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
-        let (quote, _report) =
+        let (quote, report) =
             crate::quote::get_quote_with_retry(&[0u8; 64]).map_err(|err| match err {
                 crate::quote::QuoteError::ReportGenerationFailed => PolicyError::GetTdxReport,
                 _ => PolicyError::QuoteGeneration,
             })?;
         let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
+        crate::quote::verify_local_report(&suppl_data, &report)
+            .map_err(|_| PolicyError::QuoteVerification)?;
         setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
     }
 
