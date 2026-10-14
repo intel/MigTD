@@ -3586,6 +3586,7 @@ dependencies = [
  "anyhow",
  "clap",
  "lazy_static",
+ "migtd",
  "serde",
  "serde_json",
  "xshell",

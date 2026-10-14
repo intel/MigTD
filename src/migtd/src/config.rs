@@ -8,6 +8,7 @@ use td_shim_interface::td_uefi_pi::{fv, pi};
 
 pub const CONFIG_VOLUME_BASE: usize = TD_SHIM_CONFIG_BASE as usize;
 pub const CONFIG_VOLUME_SIZE: usize = TD_SHIM_CONFIG_SIZE as usize;
+pub const MAX_MIGRATION_CHANNEL_COUNT: u32 = 12;
 
 pub const MIGTD_POLICY_FFS_GUID: Guid = Guid::from_fields(
     0x0BE92DC3,
