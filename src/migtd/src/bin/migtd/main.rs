@@ -418,8 +418,6 @@ fn initialize_policy() -> String {
 }
 
 fn handle_pre_mig() {
-    const MAX_CONCURRENCY_REQUESTS: usize = 12;
-
     #[cfg(not(feature = "vmcall-raw"))]
     // Set by `wait_for_request` async task when getting new request from VMM.
     static PENDING_REQUEST: Mutex<Option<MigrationInformation>> = Mutex::new(None);
@@ -435,7 +433,7 @@ fn handle_pre_mig() {
                 // 2. We haven't reached the maximum concurrency limit
                 if PENDING_REQUEST.lock().is_none() {
                     let current_requests = REQUESTS.lock().len();
-                    if current_requests < MAX_CONCURRENCY_REQUESTS {
+                    if current_requests < migtd::config::MAX_MIGRATION_CHANNEL_COUNT as usize {
                         Poll::Ready(())
                     } else {
                         Poll::Pending

@@ -6,6 +6,7 @@ use crate::config;
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use lazy_static::lazy_static;
+use migtd::config::MAX_MIGRATION_CHANNEL_COUNT;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -18,7 +19,6 @@ const DEFAULT_TDVF_IMAGE_NAME: &str = "migtd.bin";
 const DEFAULT_IGVM_IMAGE_NAME: &str = "migtd.igvm";
 const DEFAULT_IMAGE_FORMAT: &str = "tdvf";
 const MIGTD_TD_INFO_GUID: &str = "dbbdfad7-9cba-4aae-b498-c0fd425860b4";
-const MIGTD_MAX_MIGRATION_CHANNEL_COUNT: u32 = 12;
 const MIGTD_MAX_VCPU_COUNT: u32 = 1;
 
 lazy_static! {
@@ -155,7 +155,7 @@ impl BuildArgs {
 
         let payload_path = bin.with_extension("td-info-payload.bin");
         let mut payload = Vec::with_capacity(8);
-        payload.extend_from_slice(&MIGTD_MAX_MIGRATION_CHANNEL_COUNT.to_le_bytes());
+        payload.extend_from_slice(&MAX_MIGRATION_CHANNEL_COUNT.to_le_bytes());
         payload.extend_from_slice(&MIGTD_MAX_VCPU_COUNT.to_le_bytes());
         fs::write(&payload_path, payload)?;
 
