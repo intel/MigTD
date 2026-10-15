@@ -390,25 +390,33 @@ fn parse_commandline_args() {
             set_emulated_start_migration(mig_request_id, migration_source, td_uuid, binding_handle);
         }
         "rebind-prepare" => {
+            #[cfg(feature = "policy_v2")]
             log::info!(
                 "Setting up rebind-prepare flow (EnableLogArea → GetMigtdData → StartRebinding)\n"
             );
+            #[cfg(not(feature = "policy_v2"))]
+            log::info!("Setting up rebind-prepare flow (EnableLogArea → StartRebinding)\n");
             set_emulated_start_rebinding(
                 mig_request_id,
                 migration_source,
                 0, // MIGTD_REBIND_OP_PREPARE
+                cfg!(feature = "policy_v2"),
                 td_uuid,
                 binding_handle,
             );
         }
         "rebind-finalize" => {
+            #[cfg(feature = "policy_v2")]
             log::info!(
                 "Setting up rebind-finalize flow (EnableLogArea → GetMigtdData → StartRebinding)\n"
             );
+            #[cfg(not(feature = "policy_v2"))]
+            log::info!("Setting up rebind-finalize flow (EnableLogArea → StartRebinding)\n");
             set_emulated_start_rebinding(
                 mig_request_id,
                 migration_source,
                 1, // MIGTD_REBIND_OP_FINALIZE
+                cfg!(feature = "policy_v2"),
                 td_uuid,
                 binding_handle,
             );
@@ -601,11 +609,10 @@ fn handle_pre_mig_emu() -> i32 {
                             log::trace!(migration_request_id = report_info.mig_request_id; "ReportStatus for get TDREPORT completed.\n");
                             // Continue to process next request (migration)
                         }
-                        #[cfg(all(feature = "policy_v2"))]
                         WaitForRequestResponse::StartRebinding(rebinding_info) => {
                             use migtd::migration::rebinding::start_rebinding;
 
-                            log::info!(migration_request_id = rebinding_info.mig_request_id; "Processing StartRebinding request\n");
+                            log::info!(migration_request_id = rebinding_info.mig_info.mig_request_id; "Processing StartRebinding request\n");
                             let mut data = Vec::new();
                             let status = start_rebinding(&rebinding_info, &mut data)
                                 .await
@@ -614,31 +621,31 @@ fn handle_pre_mig_emu() -> i32 {
 
                             let status_code_u8 = status as u8;
                             if status_code_u8 == MigrationResult::Success as u8 {
-                                log::info!(migration_request_id = rebinding_info.mig_request_id; "Successfully completed rebinding\n");
+                                log::info!(migration_request_id = rebinding_info.mig_info.mig_request_id; "Successfully completed rebinding\n");
                             } else {
-                                log::error!(migration_request_id = rebinding_info.mig_request_id;
+                                log::error!(migration_request_id = rebinding_info.mig_info.mig_request_id;
                                     "Failure during rebinding status code: {:x}\n", status_code_u8);
                             }
 
                             let _ = report_status(
                                 status_code_u8,
-                                rebinding_info.mig_request_id,
+                                rebinding_info.mig_info.mig_request_id,
                                 &data,
                             )
                             .await
                             .map_err(|e| {
-                                log::error!(migration_request_id = rebinding_info.mig_request_id;
+                                log::error!(migration_request_id = rebinding_info.mig_info.mig_request_id;
                                     "Failed to report status for StartRebinding: {:?}\n", e);
                             });
-                            log::trace!(migration_request_id = rebinding_info.mig_request_id;
+                            log::trace!(migration_request_id = rebinding_info.mig_info.mig_request_id;
                                 "ReportStatus for rebinding completed\n");
 
                             if status_code_u8 == MigrationResult::Success as u8 {
-                                log::info!(migration_request_id = rebinding_info.mig_request_id; "Rebinding successful!\n");
+                                log::info!(migration_request_id = rebinding_info.mig_info.mig_request_id; "Rebinding successful!\n");
                                 return 0;
                             } else {
                                 let status_code = status_code_u8 as i32;
-                                log::error!(migration_request_id = rebinding_info.mig_request_id;
+                                log::error!(migration_request_id = rebinding_info.mig_info.mig_request_id;
                                     "Rebinding failed with code: {}\n", status_code);
                                 return status_code;
                             }

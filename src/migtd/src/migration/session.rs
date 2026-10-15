@@ -76,7 +76,6 @@ pub fn get_tdreport_reportdata() -> [u8; TD_REPORT_ADDITIONAL_DATA_SIZE] {
 #[cfg(feature = "vmcall-raw")]
 const TDX_VMCALL_VMM_SUCCESS: u8 = 1;
 
-#[cfg(feature = "vmcall-raw")]
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum DataStatusOperation {
@@ -87,7 +86,6 @@ pub enum DataStatusOperation {
     GetMigtdData = 5,
 }
 
-#[cfg(feature = "vmcall-raw")]
 impl TryFrom<u8> for DataStatusOperation {
     type Error = u8;
     fn try_from(value: u8) -> core::result::Result<Self, u8> {
@@ -432,25 +430,9 @@ fn parse_request(
             })
         }
         DataStatusOperation::StartRebinding => {
-            #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-            {
-                decode_and_dispatch!(MigtdMigrationInformation, |info| {
-                    WaitForRequestResponse::StartRebinding(info)
-                })
-            }
-            #[cfg(not(all(feature = "vmcall-raw", feature = "policy_v2")))]
-            {
-                log_request_error!(
-                    request_id,
-                    "wait_for_request: unsupported operation {:?} received\n",
-                    op
-                );
-                reject_request(
-                    pending_error_report,
-                    request_id,
-                    MigrationResult::UnsupportedOperationError,
-                )
-            }
+            decode_and_dispatch!(MigtdMigrationInformation, |info| {
+                WaitForRequestResponse::StartRebinding(MigrationInformation { mig_info: info })
+            })
         }
         DataStatusOperation::GetTDReport => {
             decode_and_dispatch!(ReportInfo, |info| WaitForRequestResponse::GetTdReport(info))
@@ -486,7 +468,7 @@ fn parse_request(
 
 #[cfg(feature = "vmcall-raw")]
 pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
-    let mut reqbufferhdr = RequestDataBufferHeader {
+    let reqbufferhdr = RequestDataBufferHeader {
         datastatus: 0,
         length: 0,
     };
@@ -542,7 +524,7 @@ pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
 }
 
 #[cfg(not(feature = "vmcall-raw"))]
-pub async fn wait_for_request() -> Result<MigrationInformation> {
+pub async fn wait_for_request() -> Result<WaitForRequestResponse> {
     // Allocate shared page for command and response buffer
     let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
     let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
@@ -605,14 +587,27 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
             );
             return Poll::Ready(Err(MigrationResult::InvalidParameter));
         }
-        if wfr.operation == 1 {
+        if wfr.operation == DataStatusOperation::StartMigration as u8
+            || wfr.operation == DataStatusOperation::StartRebinding as u8
+        {
             let mig_info =
                 read_mig_info(&private_mem[24 + size_of::<ServiceMigWaitForReqResponse>()..])
                     .ok_or(MigrationResult::InvalidParameter)?;
             let request_id = mig_info.mig_info.mig_request_id;
 
             if REQUESTS.lock().insert(request_id) {
-                Poll::Ready(Ok(mig_info))
+                match DataStatusOperation::try_from(wfr.operation) {
+                    Ok(DataStatusOperation::StartMigration) => {
+                        Poll::Ready(Ok(WaitForRequestResponse::StartMigration(mig_info)))
+                    }
+                    Ok(DataStatusOperation::StartRebinding) => {
+                        Poll::Ready(Ok(WaitForRequestResponse::StartRebinding(mig_info)))
+                    }
+                    _ => {
+                        REQUESTS.lock().remove(&request_id);
+                        Poll::Ready(Err(MigrationResult::UnsupportedOperationError))
+                    }
+                }
             } else {
                 Poll::Pending
             }
@@ -779,7 +774,7 @@ pub async fn report_status(status: u8, request_id: u64, data: &Vec<u8>) -> Resul
 }
 
 #[cfg(not(feature = "vmcall-raw"))]
-pub fn report_status(status: u8, request_id: u64) -> Result<()> {
+pub fn report_status(status: u8, request_id: u64, operation: DataStatusOperation) -> Result<()> {
     // Allocate shared page for command and response buffer
     let mut cmd_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
     let mut rsp_mem = SharedMemory::new(1).ok_or(MigrationResult::OutOfResource)?;
@@ -791,7 +786,7 @@ pub fn report_status(status: u8, request_id: u64) -> Result<()> {
     let rs = ServiceMigReportStatusCommand {
         version: 0,
         command: MIG_COMMAND_REPORT_STATUS,
-        operation: 1,
+        operation: operation as u8,
         status,
         mig_request_id: request_id,
     };
@@ -1395,9 +1390,9 @@ pub fn set_mig_version(mig_info: &MigtdMigrationInformation, mig_ver: u16) -> Re
 mod test {
     use crate::migration::{session::cal_mig_version, MigrationResult};
 
-    use super::ExchangeInformation;
     #[cfg(feature = "vmcall-raw")]
     use super::{get_tdreport_reportdata, HOST_REQUESTED_REPORTDATA};
+    use super::{DataStatusOperation, ExchangeInformation};
 
     #[test]
     fn test_exchange_information_validate_rejects_non_zero_reserved() {
@@ -1410,6 +1405,20 @@ mod test {
             info.validate(),
             Err(MigrationResult::InvalidParameter)
         ));
+    }
+
+    #[test]
+    fn test_data_status_operation_codes() {
+        assert_eq!(
+            DataStatusOperation::try_from(1),
+            Ok(DataStatusOperation::StartMigration)
+        );
+        assert_eq!(
+            DataStatusOperation::try_from(2),
+            Ok(DataStatusOperation::StartRebinding)
+        );
+        assert_eq!(DataStatusOperation::try_from(0), Err(0));
+        assert_eq!(DataStatusOperation::try_from(6), Err(6));
     }
 
     #[test]

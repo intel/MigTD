@@ -7,7 +7,7 @@ pub mod event;
 pub mod logging;
 #[cfg(feature = "policy_v2")]
 pub mod pre_session_data;
-#[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
+#[cfg(feature = "main")]
 pub mod rebinding;
 pub mod servtd_ext;
 #[cfg(feature = "main")]
