@@ -377,13 +377,11 @@ pub(crate) type PeerData<'a> = (&'a [u8], &'a [u8], Option<&'a [u8]>);
 
 /// Encode `(policy, issuer_chain, servtd_corim)` into the peer-data blob.
 ///
-/// Format: `[u32 LE policy_len][policy][u32 LE chain_len][issuer_chain]
-/// [u32 LE corim_len][servtd_corim]`. The trailing CoRIM field is a
-/// wire-compatible *addition*: `servtd_corim` may be empty (no CoRIM
-/// enrolled locally), in which case `corim_len` is sent as `0` so the
-/// decoder can distinguish "peer build understands the field but has
-/// nothing to send" from "peer build predates the field". Returns `None` if
-/// any length exceeds `u32::MAX`.
+/// Format: `[u32 LE policy_len][policy][u32 LE chain_len][issuer_chain]`
+/// followed by `[u32 LE corim_len][servtd_corim]`. The CoRIM length is always
+/// present, using `0` when no CoRIM is supplied.
+///
+/// Returns `None` if any length exceeds `u32::MAX`.
 pub(crate) fn encode_peer_data(
     policy: &[u8],
     issuer_chain: &[u8],
@@ -405,13 +403,10 @@ pub(crate) fn encode_peer_data(
 
 /// Decode a peer-data blob produced by [`encode_peer_data`].
 ///
-/// Returns borrowed `(policy, issuer_chain, servtd_corim)` slices. The CoRIM
-/// element is `None` both when a peer built before this field existed sent a
-/// blob that ends exactly after `issuer_chain` (legacy 2-field framing) and
-/// when a peer that understands the field sent an explicit empty CoRIM
-/// (`corim_len == 0`, e.g. no CoRIM enrolled locally). A present CoRIM larger
-/// than [`MAX_PEER_SERVTD_CORIM_SIZE`] is rejected before the caller can
-/// allocate/parse it. Rejects trailing bytes in all cases.
+/// Returns borrowed `(policy, issuer_chain, servtd_corim)` slices, with `None`
+/// for `corim_len == 0`. The CoRIM length must always be present, even without
+/// a payload. Rejects truncation, trailing bytes, and CoRIMs larger than
+/// [`MAX_PEER_SERVTD_CORIM_SIZE`] before the caller can allocate/parse them.
 pub(crate) fn decode_peer_data(data: &[u8]) -> Option<PeerData<'_>> {
     if data.len() < 4 {
         return None;
@@ -429,20 +424,10 @@ pub(crate) fn decode_peer_data(data: &[u8]) -> Option<PeerData<'_>> {
     ) as usize;
     let chain_offset = chain_len_offset + 4;
     let chain_end = chain_offset.checked_add(chain_len)?;
-    if data.len() < chain_end {
-        return None;
-    }
-    let issuer_chain = &data[chain_offset..chain_end];
-
-    // Legacy (pre-CoRIM-transport) framing: nothing follows the issuer chain.
-    if data.len() == chain_end {
-        return Some((policy, issuer_chain, None));
-    }
-
-    // New framing: a `u32` corim_len + corim bytes must follow exactly.
     if data.len() < chain_end.checked_add(4)? {
         return None;
     }
+    let issuer_chain = &data[chain_offset..chain_end];
     let corim_len = u32::from_le_bytes(data[chain_end..chain_end + 4].try_into().ok()?) as usize;
     if corim_len > MAX_PEER_SERVTD_CORIM_SIZE {
         return None;
@@ -474,9 +459,8 @@ pub(crate) fn local_peer_data() -> Option<Vec<u8>> {
     // Send our own signed CoRIM (if enrolled) so the peer resolves *our*
     // current/init hashes through *our* authenticated mapping instead of
     // theirs. Absent the `servtd_corim` feature, or when nothing is
-    // enrolled, send an empty field — the peer then falls back to whatever
-    // JSON `servtdCollateral` our policy carries (or fails closed if we ship
-    // neither).
+    // enrolled, send an explicit zero length. The peer must then use our JSON
+    // `servtdCollateral` mapping, or reject us if it is absent.
     #[cfg(feature = "servtd_corim")]
     let servtd_corim = crate::config::get_servtd_corim().unwrap_or(&[]);
     #[cfg(not(feature = "servtd_corim"))]
@@ -544,9 +528,8 @@ mod tests {
 
     #[test]
     fn round_trip_with_empty_corim_is_none() {
-        // A peer that understands the field but has nothing to send still
-        // sends the length-prefixed (empty) field explicitly.
         let blob = encode_peer_data(b"policy", b"chain", b"").unwrap();
+        assert_eq!(blob.as_slice(), b"\x06\0\0\0policy\x05\0\0\0chain\0\0\0\0");
         let (policy, chain, corim) = decode_peer_data(&blob).unwrap();
         assert_eq!(policy, b"policy");
         assert_eq!(chain, b"chain");
@@ -554,18 +537,20 @@ mod tests {
     }
 
     #[test]
-    fn legacy_two_field_blob_decodes_with_no_corim() {
-        // Simulate a pre-#229 peer: no third field at all.
-        let mut legacy = Vec::new();
-        legacy.extend_from_slice(&6u32.to_le_bytes());
-        legacy.extend_from_slice(b"policy");
-        legacy.extend_from_slice(&5u32.to_le_bytes());
-        legacy.extend_from_slice(b"chain");
+    fn missing_or_truncated_corim_length_is_rejected() {
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&6u32.to_le_bytes());
+        blob.extend_from_slice(b"policy");
+        blob.extend_from_slice(&5u32.to_le_bytes());
+        blob.extend_from_slice(b"chain");
 
-        let (policy, chain, corim) = decode_peer_data(&legacy).unwrap();
-        assert_eq!(policy, b"policy");
-        assert_eq!(chain, b"chain");
-        assert_eq!(corim, None);
+        for length_bytes in 0..4 {
+            assert!(
+                decode_peer_data(&blob).is_none(),
+                "accepted {length_bytes}-byte CoRIM length"
+            );
+            blob.push(0);
+        }
     }
 
     #[test]
