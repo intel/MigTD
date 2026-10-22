@@ -167,17 +167,17 @@ pub fn set_emulated_enable_log_area(request_id: u64, log_max_level: u8) {
     });
 }
 
-/// Helper: Set a complete rebinding flow with EnableLogArea, GetMigtdData,
-/// StartRebinding, and ServTD field population.
+/// Helper: Set a complete rebinding flow with EnableLogArea, optional
+/// GetMigtdData, StartRebinding, and ServTD field population.
 pub fn set_emulated_start_rebinding(
     request_id: u64,
     rebinding_src: u8,
     operation: u8,
+    include_migtd_data: bool,
     target_td_uuid: [u64; 4],
     binding_handle: u64,
 ) {
     let enable_log_request_id = request_id | 0x8000_0000_0000_0000;
-    let get_report_request_id = request_id | 0x4000_0000_0000_0000;
 
     // Step 1: Queue EnableLogArea with Info level (3)
     set_emulated_mig_request(EmuMigRequest::EnableLogArea {
@@ -185,17 +185,19 @@ pub fn set_emulated_start_rebinding(
         log_max_level: 3,
     });
 
-    // Step 2: Queue GetMigtdData with default reportdata
-    let mut reportdata = [0u8; 64];
-    reportdata[0..8].copy_from_slice(&request_id.to_le_bytes());
-    reportdata[8..23].copy_from_slice(b"MIGTD_REBINDING"); // 15 bytes
-    reportdata[23] = 0;
-    set_emulated_mig_request(EmuMigRequest::GetMigtdData {
-        request_id: get_report_request_id,
-        reportdata,
-    });
+    if include_migtd_data {
+        let get_report_request_id = request_id | 0x4000_0000_0000_0000;
+        let mut reportdata = [0u8; 64];
+        reportdata[0..8].copy_from_slice(&request_id.to_le_bytes());
+        reportdata[8..23].copy_from_slice(b"MIGTD_REBINDING");
+        reportdata[23] = 0;
+        set_emulated_mig_request(EmuMigRequest::GetMigtdData {
+            request_id: get_report_request_id,
+            reportdata,
+        });
+    }
 
-    // Step 3: Queue the StartRebinding request with original request_id
+    // Queue the StartRebinding request with original request_id
     set_emulated_mig_request(EmuMigRequest::StartRebinding {
         request_id,
         rebinding_src,

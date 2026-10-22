@@ -61,6 +61,64 @@ pushd sh_script/test
 sudo pytest -k "cycle" --device_type serial
 popd
 ```
+
+## Rebinding over Virtio
+
+Rebinding is available with Policy v1 or v2 over the legacy `Service.MigTD`
+interface. Policy v1 uses quote-based RA-TLS mutual authentication. Build a
+Policy v1 image with the default virtio-vsock transport:
+
+```sh
+cargo image --no-tdinfo \
+  --policy config/policy_pre_production_fmspc.json \
+  --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+```
+
+For Policy v1 with virtio-serial:
+
+```sh
+cargo image --no-tdinfo \
+  --no-default-features \
+  --features stack-guard,virtio-serial \
+  --policy config/policy_pre_production_fmspc.json \
+  --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+```
+
+Policy v2 with the default virtio-vsock transport:
+
+```sh
+cargo image --no-tdinfo \
+  --policy-v2 \
+  --policy config/templates/policy_v2_signed.json \
+  --policy-issuer-chain config/templates/policy_issuer_chain.pem
+```
+
+For Policy v2 with virtio-serial:
+
+```sh
+cargo image --no-tdinfo \
+  --no-default-features \
+  --features stack-guard,virtio-serial \
+  --policy-v2 \
+  --policy config/templates/policy_v2_signed.json \
+  --policy-issuer-chain config/templates/policy_issuer_chain.pem
+```
+
+The VMM must orchestrate the rebinding request. For each old/new MigTD, its
+`Service.MigTD.WaitForRequest` response must set operation `2` and include the
+migration-information HOB. A virtio-vsock build also requires the stream-socket
+HOB. MigTD reports completion with operation `2` in
+`Service.MigTD.ReportStatus`.
+
+The old MigTD uses `migration_source = 1`; the new MigTD uses
+`migration_source = 0`. Both requests identify the same target TD UUID and the
+binding handle appropriate to that MigTD. The existing `mig-td.sh` script can
+provide the virtio device, but the QEMU build or external controller must
+implement the rebinding request and TDX-module binding sequence.
+
+Virtio rebinding uses RA-TLS. SPDM rebinding continues to require Policy v2
+with `vmcall-raw`.
+
 ### Build Migration TD Test binaries - Serial
 ```
 bash sh_script/build_final.sh --no-tdinfo -t test -c -a on -d serial
