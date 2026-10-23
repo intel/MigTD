@@ -177,6 +177,13 @@ jobs:
           echo "Building MigTD with AzCVMEmu, policy_v2, and skip-RA features for rebind testing..."
           cargo build --features "AzCVMEmu,policy_v2,test_disable_ra_and_accept_all" --no-default-features
 
+      - name: Test rebinding request sequence
+        if: matrix.test-type == 'rebind-skip-ra'
+        run: |
+          cargo test -p migtd -p tdx-tdcall-emu --lib --no-default-features \
+            --features migtd/AzCVMEmu,migtd/policy_v2,migtd/test_disable_ra_and_accept_all \
+            test_rebinding_requests_use_td_report
+
       - name: Build MigTD for SPDM skip-ra test
         if: matrix.test-type == 'spdm-skip-ra'
         run: |

@@ -400,7 +400,7 @@ fn parse_commandline_args() {
             set_emulated_start_migration(mig_request_id, migration_source, td_uuid, binding_handle);
         }
         "rebind" => {
-            log::info!("Setting up rebind flow (EnableLogArea → GetMigtdData → StartRebinding)\n");
+            log::info!("Setting up rebind flow (EnableLogArea → GetTDReport → StartRebinding)\n");
             set_emulated_start_rebinding(mig_request_id, migration_source, td_uuid, binding_handle);
         }
         _ => unreachable!(),
@@ -635,36 +635,6 @@ fn handle_pre_mig_emu() -> i32 {
                                     "Rebinding failed with code: {}\n", status_code);
                                 return status_code;
                             }
-                        }
-                        #[cfg(all(feature = "policy_v2"))]
-                        WaitForRequestResponse::GetMigtdData(wfr_info) => {
-                            use migtd::migration::session::get_migtd_data;
-
-                            log::info!(migration_request_id = wfr_info.mig_request_id; "Processing GetMigtdData request\n");
-                            let mut data = Vec::new();
-                            let status = get_migtd_data(
-                                &wfr_info.reportdata,
-                                &mut data,
-                                wfr_info.mig_request_id,
-                            )
-                            .await
-                            .map(|_| MigrationResult::Success)
-                            .unwrap_or_else(|e| e);
-
-                            let status_code_u8 = status as u8;
-                            let _ = report_status(
-                                status_code_u8,
-                                wfr_info.mig_request_id,
-                                &data,
-                            )
-                            .await;
-                            if status_code_u8 == MigrationResult::Success as u8 {
-                                log::trace!(migration_request_id = wfr_info.mig_request_id; "Successfully completed get migtd data\n");
-                            } else {
-                                log::error!(migration_request_id = wfr_info.mig_request_id;
-                                    "Failure during get migtd data status code: {:x}\n", status_code_u8);
-                            }
-                            // Continue to process next request
                         }
                     }
                 }
