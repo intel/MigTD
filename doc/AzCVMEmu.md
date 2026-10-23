@@ -12,6 +12,12 @@ For development and testing MigTD core logic e2e flows, including RATLS with TDX
 
 **Emulation architecture details:** See `deps/td-shim-AzCVMEmu/README.md` for detailed documentation on the emulation layer implementation.
 
+Migration and rebinding both queue `EnableLogArea`, then `GetTDReport` (opcode 3),
+then their respective start request. `GetTDReport` returns the full 1024-byte TD
+report, including the 512-byte TDINFO structure. Host callers that need TDINFO
+must extract it from that report; the former TDINFO-only operation (opcode 5)
+is no longer supported. Host-requested reports retain MigTD's fixed REPORTDATA.
+
 #### Build Options
 
 #### Build Options
