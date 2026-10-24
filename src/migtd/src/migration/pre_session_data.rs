@@ -66,8 +66,9 @@ pub(super) struct HelloPacketPayload {
 impl HelloPacketPayload {
     const HELLO_PACKET_PAYLOAD_SIZE: usize = 8;
     const HELLO_PACKET_MAGIC_WORD: [u8; 4] = [b'M', b'G', b'T', b'D'];
-    const LOWEST_VERSION: u16 = 0x0100;
-    const HIGHEST_VERSION: u16 = 0x0100;
+    // 0x0200: peer data is a sequence of TLV items.
+    const LOWEST_VERSION: u16 = 0x0200;
+    const HIGHEST_VERSION: u16 = 0x0200;
 
     pub const fn new() -> Self {
         Self {
@@ -371,15 +372,30 @@ pub(super) async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
 pub(crate) const MAX_PEER_SERVTD_CORIM_SIZE: usize = 64 * 1024;
 
 /// Borrowed `(policy, issuer_chain, servtd_corim)` slices decoded from a
-/// peer-data blob. `servtd_corim` is `None` when the peer sent no CoRIM (see
-/// [`decode_peer_data`] for exactly when that occurs).
+/// peer-data blob. `servtd_corim` is `None` when the peer sent no TCB mapping item.
 pub(crate) type PeerData<'a> = (&'a [u8], &'a [u8], Option<&'a [u8]>);
 
-/// Encode `(policy, issuer_chain, servtd_corim)` into the peer-data blob.
+// Peer-data TLV item types: one item per MigTD CFV artifact.
+const PEER_ITEM_POLICY_ISSUER_CHAIN: u32 = 0x0001;
+const PEER_ITEM_POLICY_DATA: u32 = 0x0002;
+// servTD TCB mapping. Optional: omitted when no mapping is enrolled.
+const PEER_ITEM_SERVTD_TCB_MAPPING: u32 = 0x0003;
+/// Type (u32 LE) + Length (u32 LE).
+const PEER_ITEM_HEADER_SIZE: usize = 8;
+
+fn push_peer_item(blob: &mut Vec<u8>, item_type: u32, value: &[u8]) -> Option<()> {
+    let len = u32::try_from(value.len()).ok()?;
+    blob.extend_from_slice(&item_type.to_le_bytes());
+    blob.extend_from_slice(&len.to_le_bytes());
+    blob.extend_from_slice(value);
+    Some(())
+}
+
+/// Encode `(policy, issuer_chain, servtd_corim)` into the peer-data blob as TLV
+/// items in ascending type order: issuer chain, policy, then the TCB mapping item,
+/// which is omitted when empty.
 ///
-/// Format: `[u32 LE policy_len][policy][u32 LE chain_len][issuer_chain]`
-/// followed by `[u32 LE corim_len][servtd_corim]`. The CoRIM length is always
-/// present, using `0` when no CoRIM is supplied.
+/// Format: repeated `[u32 LE type][u32 LE length][value]`.
 ///
 /// Returns `None` if any length exceeds `u32::MAX`.
 pub(crate) fn encode_peer_data(
@@ -387,64 +403,64 @@ pub(crate) fn encode_peer_data(
     issuer_chain: &[u8],
     servtd_corim: &[u8],
 ) -> Option<Vec<u8>> {
-    let policy_len = u32::try_from(policy.len()).ok()?;
-    let chain_len = u32::try_from(issuer_chain.len()).ok()?;
-    let corim_len = u32::try_from(servtd_corim.len()).ok()?;
-
-    let mut blob = Vec::with_capacity(12 + policy.len() + issuer_chain.len() + servtd_corim.len());
-    blob.extend_from_slice(&policy_len.to_le_bytes());
-    blob.extend_from_slice(policy);
-    blob.extend_from_slice(&chain_len.to_le_bytes());
-    blob.extend_from_slice(issuer_chain);
-    blob.extend_from_slice(&corim_len.to_le_bytes());
-    blob.extend_from_slice(servtd_corim);
+    let mut blob = Vec::with_capacity(
+        3 * PEER_ITEM_HEADER_SIZE + issuer_chain.len() + policy.len() + servtd_corim.len(),
+    );
+    push_peer_item(&mut blob, PEER_ITEM_POLICY_ISSUER_CHAIN, issuer_chain)?;
+    push_peer_item(&mut blob, PEER_ITEM_POLICY_DATA, policy)?;
+    if !servtd_corim.is_empty() {
+        push_peer_item(&mut blob, PEER_ITEM_SERVTD_TCB_MAPPING, servtd_corim)?;
+    }
     Some(blob)
 }
 
 /// Decode a peer-data blob produced by [`encode_peer_data`].
 ///
-/// Returns borrowed `(policy, issuer_chain, servtd_corim)` slices, with `None`
-/// for `corim_len == 0`. The CoRIM length must always be present, even without
-/// a payload. Rejects truncation, trailing bytes, and CoRIMs larger than
-/// [`MAX_PEER_SERVTD_CORIM_SIZE`] before the caller can allocate/parse them.
+/// Returns borrowed `(policy, issuer_chain, servtd_corim)` slices. Rejects
+/// out-of-order or duplicate types, unknown types, truncated items, trailing
+/// bytes, a missing issuer chain or policy, an empty TCB mapping item, and a
+/// mapping larger than [`MAX_PEER_SERVTD_CORIM_SIZE`] before the caller can
+/// allocate/parse it.
 pub(crate) fn decode_peer_data(data: &[u8]) -> Option<PeerData<'_>> {
-    if data.len() < 4 {
-        return None;
+    let mut rest = data;
+    let mut last_type: Option<u32> = None;
+    let mut issuer_chain = None;
+    let mut policy = None;
+    let mut servtd_corim = None;
+
+    while !rest.is_empty() {
+        if rest.len() < PEER_ITEM_HEADER_SIZE {
+            return None;
+        }
+        let item_type = u32::from_le_bytes(rest[..4].try_into().ok()?);
+        let len = u32::from_le_bytes(rest[4..8].try_into().ok()?) as usize;
+        let end = PEER_ITEM_HEADER_SIZE.checked_add(len)?;
+        if rest.len() < end {
+            return None;
+        }
+        let value = &rest[PEER_ITEM_HEADER_SIZE..end];
+        rest = &rest[end..];
+
+        // Strictly ascending: also rejects duplicates.
+        if last_type.is_some_and(|last| item_type <= last) {
+            return None;
+        }
+        last_type = Some(item_type);
+
+        match item_type {
+            PEER_ITEM_POLICY_ISSUER_CHAIN => issuer_chain = Some(value),
+            PEER_ITEM_POLICY_DATA => policy = Some(value),
+            PEER_ITEM_SERVTD_TCB_MAPPING => {
+                if value.is_empty() || value.len() > MAX_PEER_SERVTD_CORIM_SIZE {
+                    return None;
+                }
+                servtd_corim = Some(value);
+            }
+            _ => return None,
+        }
     }
-    let policy_len = u32::from_le_bytes(data[..4].try_into().ok()?) as usize;
-    let chain_len_offset = 4usize.checked_add(policy_len)?;
-    if data.len() < chain_len_offset.checked_add(4)? {
-        return None;
-    }
-    let policy = &data[4..chain_len_offset];
-    let chain_len = u32::from_le_bytes(
-        data[chain_len_offset..chain_len_offset + 4]
-            .try_into()
-            .ok()?,
-    ) as usize;
-    let chain_offset = chain_len_offset + 4;
-    let chain_end = chain_offset.checked_add(chain_len)?;
-    if data.len() < chain_end.checked_add(4)? {
-        return None;
-    }
-    let issuer_chain = &data[chain_offset..chain_end];
-    let corim_len = u32::from_le_bytes(data[chain_end..chain_end + 4].try_into().ok()?) as usize;
-    if corim_len > MAX_PEER_SERVTD_CORIM_SIZE {
-        return None;
-    }
-    let corim_offset = chain_end + 4;
-    let end = corim_offset.checked_add(corim_len)?;
-    // Require exact length — reject trailing bytes.
-    if data.len() != end {
-        return None;
-    }
-    let servtd_corim = &data[corim_offset..end];
-    let servtd_corim = if servtd_corim.is_empty() {
-        None
-    } else {
-        Some(servtd_corim)
-    };
-    Some((policy, issuer_chain, servtd_corim))
+
+    Some((policy?, issuer_chain?, servtd_corim))
 }
 
 /// Build the local peer-data blob from configured policy, issuer chain, and
@@ -516,6 +532,17 @@ pub(crate) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>
 mod tests {
     use super::*;
 
+    fn item(item_type: u32, value: &[u8]) -> Vec<u8> {
+        let mut v = item_type.to_le_bytes().to_vec();
+        v.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        v.extend_from_slice(value);
+        v
+    }
+
+    fn blob_with_mapping() -> Vec<u8> {
+        encode_peer_data(b"policy", b"chain", b"mapping").unwrap()
+    }
+
     #[test]
     fn round_trip_with_corim() {
         let blob = encode_peer_data(b"policy", b"chain", b"corim").unwrap();
@@ -526,59 +553,108 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_with_empty_corim_is_none() {
-        let blob = encode_peer_data(b"policy", b"chain", b"").unwrap();
-        assert_eq!(blob.as_slice(), b"\x06\0\0\0policy\x05\0\0\0chain\0\0\0\0");
-        let (policy, chain, corim) = decode_peer_data(&blob).unwrap();
-        assert_eq!(policy, b"policy");
-        assert_eq!(chain, b"chain");
-        assert_eq!(corim, None);
+    fn empty_mapping_omits_the_item() {
+        let blob = encode_peer_data(b"p", b"c", b"").unwrap();
+        assert_eq!(blob, b"\x01\0\0\0\x01\0\0\0c\x02\0\0\0\x01\0\0\0p");
+        let (policy, chain, mapping) = decode_peer_data(&blob).unwrap();
+        assert_eq!(
+            (policy, chain, mapping),
+            (b"p".as_slice(), b"c".as_slice(), None)
+        );
     }
 
     #[test]
-    fn missing_or_truncated_corim_length_is_rejected() {
-        let mut blob = Vec::new();
-        blob.extend_from_slice(&6u32.to_le_bytes());
-        blob.extend_from_slice(b"policy");
-        blob.extend_from_slice(&5u32.to_le_bytes());
-        blob.extend_from_slice(b"chain");
+    fn encoding_is_tlv_in_type_order() {
+        let blob = encode_peer_data(b"p", b"c", b"m").unwrap();
+        assert_eq!(
+            blob,
+            b"\x01\0\0\0\x01\0\0\0c\x02\0\0\0\x01\0\0\0p\x03\0\0\0\x01\0\0\0m"
+        );
+    }
 
-        for length_bytes in 0..4 {
-            assert!(
-                decode_peer_data(&blob).is_none(),
-                "accepted {length_bytes}-byte CoRIM length"
-            );
-            blob.push(0);
+    #[test]
+    fn missing_chain_or_policy_is_rejected() {
+        let chain = item(PEER_ITEM_POLICY_ISSUER_CHAIN, b"c");
+        let policy = item(PEER_ITEM_POLICY_DATA, b"p");
+        assert!(decode_peer_data(&chain).is_none());
+        assert!(decode_peer_data(&policy).is_none());
+        assert!(decode_peer_data(&[]).is_none());
+        assert!(decode_peer_data(&[chain, policy].concat()).is_some());
+    }
+
+    #[test]
+    fn truncated_blob_is_rejected() {
+        let blob = blob_with_mapping();
+        // A cut right after the policy item is a valid blob without a TCB mapping.
+        let valid_len = blob.len() - (PEER_ITEM_HEADER_SIZE + b"mapping".len());
+        for cut in 0..blob.len() {
+            if cut != valid_len {
+                assert!(
+                    decode_peer_data(&blob[..cut]).is_none(),
+                    "accepted cut {cut}"
+                );
+            }
         }
     }
 
     #[test]
-    fn oversized_corim_is_rejected() {
-        let oversized = vec![0u8; MAX_PEER_SERVTD_CORIM_SIZE + 1];
-        let blob = encode_peer_data(b"policy", b"chain", &oversized).unwrap();
-        assert!(decode_peer_data(&blob).is_none());
-    }
-
-    #[test]
-    fn corim_at_size_limit_is_accepted() {
-        let at_limit = vec![0x42u8; MAX_PEER_SERVTD_CORIM_SIZE];
-        let blob = encode_peer_data(b"policy", b"chain", &at_limit).unwrap();
-        let (_, _, corim) = decode_peer_data(&blob).unwrap();
-        assert_eq!(corim, Some(at_limit.as_slice()));
-    }
-
-    #[test]
-    fn trailing_bytes_after_corim_are_rejected() {
-        let mut blob = encode_peer_data(b"policy", b"chain", b"corim").unwrap();
+    fn trailing_bytes_are_rejected() {
+        let mut blob = blob_with_mapping();
         blob.push(0xAA);
         assert!(decode_peer_data(&blob).is_none());
     }
 
     #[test]
-    fn truncated_corim_length_prefix_is_rejected() {
-        let mut blob = encode_peer_data(b"policy", b"chain", b"corim").unwrap();
-        let len_offset = blob.len() - 5 - 4;
-        blob[len_offset..len_offset + 4].copy_from_slice(&100u32.to_le_bytes());
+    fn duplicate_or_unordered_types_are_rejected() {
+        let mut dup = blob_with_mapping();
+        dup.extend(item(PEER_ITEM_SERVTD_TCB_MAPPING, b"again"));
+        assert!(decode_peer_data(&dup).is_none());
+
+        let unordered = [
+            item(PEER_ITEM_POLICY_DATA, b"p"),
+            item(PEER_ITEM_POLICY_ISSUER_CHAIN, b"c"),
+        ]
+        .concat();
+        assert!(decode_peer_data(&unordered).is_none());
+    }
+
+    #[test]
+    fn unknown_types_are_rejected() {
+        for unknown in [0x0000, 0x0004, 0x8001, u32::MAX] {
+            let mut blob = blob_with_mapping();
+            blob.extend(item(unknown, b"x"));
+            assert!(decode_peer_data(&blob).is_none(), "accepted {unknown:#x}");
+        }
+    }
+
+    #[test]
+    fn zero_length_mapping_item_is_rejected() {
+        let blob = [
+            item(PEER_ITEM_POLICY_ISSUER_CHAIN, b"c"),
+            item(PEER_ITEM_POLICY_DATA, b"p"),
+            item(PEER_ITEM_SERVTD_TCB_MAPPING, b""),
+        ]
+        .concat();
+        assert!(decode_peer_data(&blob).is_none());
+    }
+
+    #[test]
+    fn oversized_mapping_is_rejected_and_limit_is_accepted() {
+        let oversized = vec![0u8; MAX_PEER_SERVTD_CORIM_SIZE + 1];
+        let blob = encode_peer_data(b"p", b"c", &oversized).unwrap();
+        assert!(decode_peer_data(&blob).is_none());
+
+        let at_limit = vec![0x42u8; MAX_PEER_SERVTD_CORIM_SIZE];
+        let blob = encode_peer_data(b"p", b"c", &at_limit).unwrap();
+        let (_, _, mapping) = decode_peer_data(&blob).unwrap();
+        assert_eq!(mapping, Some(at_limit.as_slice()));
+    }
+
+    #[test]
+    fn oversized_length_is_rejected() {
+        let mut blob = PEER_ITEM_POLICY_ISSUER_CHAIN.to_le_bytes().to_vec();
+        blob.extend_from_slice(&u32::MAX.to_le_bytes());
+        blob.extend_from_slice(b"c");
         assert!(decode_peer_data(&blob).is_none());
     }
 }
