@@ -170,27 +170,85 @@ pub struct SvnMapping {
     pub isvsvn: u16,
 }
 
+/// `SERVTD_ATTR` bits that select TDINFO fields ignored by `SERVTD_INFO_HASH`.
+/// A set bit makes the TDX module hash 0 instead of the named field.
+pub const SERVTD_ATTR_IGNORE_XFAM: u64 = 1 << 33;
+pub const SERVTD_ATTR_IGNORE_MRTD: u64 = 1 << 34;
+pub const SERVTD_ATTR_IGNORE_MRCONFIGID: u64 = 1 << 35;
+pub const SERVTD_ATTR_IGNORE_MROWNER: u64 = 1 << 36;
+pub const SERVTD_ATTR_IGNORE_MROWNERCONFIG: u64 = 1 << 37;
+pub const SERVTD_ATTR_IGNORE_RTMR0: u64 = 1 << 38;
+pub const SERVTD_ATTR_IGNORE_RTMR1: u64 = 1 << 39;
+pub const SERVTD_ATTR_IGNORE_RTMR2: u64 = 1 << 40;
+pub const SERVTD_ATTR_IGNORE_RTMR3: u64 = 1 << 41;
+/// The only `SERVTD_ATTR` bits MigTD accepts. Bit 32 (`IGNORE_ATTRIBUTES`) must
+/// be 0 per the TDX Module ABI; bits 42..=48 select fields that the MigTD
+/// TDINFO layout does not carry.
+pub const SERVTD_ATTR_VALID_MASK: u64 = SERVTD_ATTR_IGNORE_XFAM
+    | SERVTD_ATTR_IGNORE_MRTD
+    | SERVTD_ATTR_IGNORE_MRCONFIGID
+    | SERVTD_ATTR_IGNORE_MROWNER
+    | SERVTD_ATTR_IGNORE_MROWNERCONFIG
+    | SERVTD_ATTR_IGNORE_RTMR0
+    | SERVTD_ATTR_IGNORE_RTMR1
+    | SERVTD_ATTR_IGNORE_RTMR2
+    | SERVTD_ATTR_IGNORE_RTMR3;
+
+/// Whether `servtd_attr` only uses bits MigTD supports.
+pub const fn is_valid_servtd_attr(servtd_attr: u64) -> bool {
+    servtd_attr & !SERVTD_ATTR_VALID_MASK == 0
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Measurements {
-    /// Single-hash measurement key for hash-to-SVN TCB mapping.
+    /// Hash-to-SVN TCB mapping key: the `SERVTD_INFO_HASH` the TDX module
+    /// reports, i.e. SHA384 of the TDINFO_STRUCT after the fields selected by
+    /// `servtd_attr` are replaced by 0. For `servtd_attr == 0` it is
+    /// `SHA384(TDINFO_STRUCT)` of the complete TDINFO.
     ///
-    /// Equals `init_servtd_info_hash` for production MigTDs (servtd_attr=0):
-    ///   tdinfo_hash = SHA384(unmasked TDINFO_STRUCT bytes)
-    ///
-    /// Hex-encoded (case-insensitive).
+    /// Hex-encoded (case-insensitive). JSON key `servtdInfoHash`; the earlier
+    /// name `tdinfo_hash` is still accepted.
+    #[serde(rename = "servtdInfoHash", alias = "tdinfo_hash")]
     pub tdinfo_hash: String,
+    /// `SERVTD_ATTR` mask this release is bound with (default 0). JSON key
+    /// `servtdAttr`; the earlier name `servtd_attr` is still accepted.
+    #[serde(
+        rename = "servtdAttr",
+        alias = "servtd_attr",
+        default,
+        skip_serializing_if = "is_zero"
+    )]
+    pub servtd_attr: u64,
 }
 
 impl Measurements {
     pub fn new_from_bytes(tdinfo_hash: &[u8]) -> Self {
+        Self::new_with_attr(tdinfo_hash, 0)
+    }
+
+    /// Build an entry from an already hex-encoded hash.
+    pub fn new_from_hex(tdinfo_hash: String, servtd_attr: u64) -> Self {
+        Measurements {
+            tdinfo_hash,
+            servtd_attr,
+        }
+    }
+
+    pub fn new_with_attr(tdinfo_hash: &[u8], servtd_attr: u64) -> Self {
         Measurements {
             tdinfo_hash: bytes_to_hex_string(tdinfo_hash),
+            servtd_attr,
         }
     }
 
     fn to_ascii_uppercase(&self) -> Self {
         Measurements {
             tdinfo_hash: self.tdinfo_hash.to_ascii_uppercase(),
+            servtd_attr: self.servtd_attr,
         }
     }
 }
@@ -200,7 +258,9 @@ impl TdTcbMapping {
         for (index, mapping) in self.svn_mappings.iter().enumerate() {
             let hash = hex_string_to_bytes(&mapping.td_measurements.tdinfo_hash)
                 .map_err(|_| PolicyError::InvalidServtdTcbMapping)?;
-            if hash.len() != SHA384_DIGEST_SIZE {
+            if hash.len() != SHA384_DIGEST_SIZE
+                || !is_valid_servtd_attr(mapping.td_measurements.servtd_attr)
+            {
                 return Err(PolicyError::InvalidServtdTcbMapping);
             }
 
@@ -209,6 +269,7 @@ impl TdTcbMapping {
                     .td_measurements
                     .tdinfo_hash
                     .eq_ignore_ascii_case(&mapping.td_measurements.tdinfo_hash)
+                    && previous.td_measurements.servtd_attr == mapping.td_measurements.servtd_attr
                     && previous.isvsvn != mapping.isvsvn
                 {
                     return Err(PolicyError::InvalidServtdTcbMapping);
@@ -218,21 +279,64 @@ impl TdTcbMapping {
         Ok(())
     }
 
-    /// Look up the engine SVN for the TD represented by `report` by computing
-    /// `tdinfo_hash` (per redesign §RTMR-layout) and matching the
-    /// `svnMappings[].tdMeasurements.tdinfo_hash` entries.
-    pub fn get_engine_svn_by_report(&self, report: &Report) -> Option<u16> {
-        let tdinfo_hash = compute_tdinfo_hash_from_report(report).ok()?;
-        self.get_engine_svn_by_tdinfo_hash(&tdinfo_hash)
+    /// Distinct `servtd_attr` values used by the entries, in ascending order.
+    pub fn servtd_attrs(&self) -> Vec<u64> {
+        let mut attrs: Vec<u64> = self
+            .svn_mappings
+            .iter()
+            .map(|mapping| mapping.td_measurements.servtd_attr)
+            .collect();
+        attrs.sort_unstable();
+        attrs.dedup();
+        attrs
     }
 
-    /// Look up the engine SVN by an already-computed `tdinfo_hash`
-    /// (48 raw bytes). This is the canonical entry point for the redesign.
+    /// Look up the engine SVN and `servtd_attr` of a TD whose attribute is not
+    /// known. `servtd_info_hash(attr)` returns the TD's `SERVTD_INFO_HASH` for
+    /// the given mask. Each distinct attribute in the mapping is tried; the
+    /// match is rejected if entries with different SVNs match.
+    pub fn lookup_with<F>(&self, mut servtd_info_hash: F) -> Option<(u16, u64)>
+    where
+        F: FnMut(u64) -> Option<[u8; SHA384_DIGEST_SIZE]>,
+    {
+        let mut found: Option<(u16, u64)> = None;
+        for attr in self.servtd_attrs() {
+            let Some(hash) = servtd_info_hash(attr) else {
+                continue;
+            };
+            if let Some(svn) = self.get_engine_svn_by_servtd_info_hash(&hash, attr) {
+                match found {
+                    Some((previous, _)) if previous != svn => return None,
+                    Some(_) => {}
+                    None => found = Some((svn, attr)),
+                }
+            }
+        }
+        found
+    }
+
+    /// Look up the engine SVN for the TD represented by `report`.
+    pub fn get_engine_svn_by_report(&self, report: &Report) -> Option<u16> {
+        self.lookup_with(|attr| compute_servtd_info_hash_from_report(report, attr).ok())
+            .map(|(svn, _)| svn)
+    }
+
+    /// Look up the engine SVN by a `servtd_attr = 0` hash (48 raw bytes).
     pub fn get_engine_svn_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<u16> {
-        if tdinfo_hash.len() != SHA384_DIGEST_SIZE {
+        self.get_engine_svn_by_servtd_info_hash(tdinfo_hash, 0)
+    }
+
+    /// Look up the engine SVN by `SERVTD_INFO_HASH` (48 raw bytes) and the
+    /// `SERVTD_ATTR` it was computed with.
+    pub fn get_engine_svn_by_servtd_info_hash(
+        &self,
+        servtd_info_hash: &[u8],
+        servtd_attr: u64,
+    ) -> Option<u16> {
+        if servtd_info_hash.len() != SHA384_DIGEST_SIZE {
             return None;
         }
-        let target = Measurements::new_from_bytes(tdinfo_hash);
+        let target = Measurements::new_with_attr(servtd_info_hash, servtd_attr);
         self.get_engine_svn_by_measurements(&target)
     }
 
@@ -250,7 +354,7 @@ impl TdTcbMapping {
         // Hex strings are case-insensitive.
         let pattern = pattern.to_ascii_uppercase();
         let target = target.to_ascii_uppercase();
-        pattern.tdinfo_hash == target.tdinfo_hash
+        pattern.tdinfo_hash == target.tdinfo_hash && pattern.servtd_attr == target.servtd_attr
     }
 }
 
@@ -300,10 +404,67 @@ pub fn pack_unmasked_tdinfo(
     buf
 }
 
-/// Compute `tdinfo_hash` from the 10 individual TDINFO measurement fields.
-/// Equals `init_servtd_info_hash` for MigTDs bound with `servtd_attr == 0`.
+/// Compute `SERVTD_INFO_HASH` from the 10 individual TDINFO measurement fields
+/// and the `SERVTD_ATTR` mask: every field the mask selects is replaced by 0
+/// before the TDINFO is packed and hashed. `servtd_attr == 0` gives the hash of
+/// the complete TDINFO.
 ///
-/// Formula: `SHA384(pack(attributes, xfam, mrtd, ..., rtmr3, reserved))`
+/// Formula: `SHA384(pack(masked attributes, xfam, mrtd, ..., rtmr3, reserved))`
+#[allow(clippy::too_many_arguments)]
+pub fn compute_servtd_info_hash_from_fields(
+    attributes: &[u8; 8],
+    xfam: &[u8; 8],
+    mrtd: &[u8; SHA384_DIGEST_SIZE],
+    mrconfig_id: &[u8; SHA384_DIGEST_SIZE],
+    mrowner: &[u8; SHA384_DIGEST_SIZE],
+    mrownerconfig: &[u8; SHA384_DIGEST_SIZE],
+    rtmr0: &[u8; SHA384_DIGEST_SIZE],
+    rtmr1: &[u8; SHA384_DIGEST_SIZE],
+    rtmr2: &[u8; SHA384_DIGEST_SIZE],
+    rtmr3: &[u8; SHA384_DIGEST_SIZE],
+    servtd_attr: u64,
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    if !is_valid_servtd_attr(servtd_attr) {
+        return Err(PolicyError::InvalidParameter);
+    }
+    let zero8 = [0u8; 8];
+    let zero48 = [0u8; SHA384_DIGEST_SIZE];
+    let masked8 = |bit: u64, value: &[u8; 8]| {
+        if servtd_attr & bit != 0 {
+            zero8
+        } else {
+            *value
+        }
+    };
+    let masked48 = |bit: u64, value: &[u8; SHA384_DIGEST_SIZE]| {
+        if servtd_attr & bit != 0 {
+            zero48
+        } else {
+            *value
+        }
+    };
+    let packed = pack_unmasked_tdinfo(
+        attributes,
+        &masked8(SERVTD_ATTR_IGNORE_XFAM, xfam),
+        &masked48(SERVTD_ATTR_IGNORE_MRTD, mrtd),
+        &masked48(SERVTD_ATTR_IGNORE_MRCONFIGID, mrconfig_id),
+        &masked48(SERVTD_ATTR_IGNORE_MROWNER, mrowner),
+        &masked48(SERVTD_ATTR_IGNORE_MROWNERCONFIG, mrownerconfig),
+        &masked48(SERVTD_ATTR_IGNORE_RTMR0, rtmr0),
+        &masked48(SERVTD_ATTR_IGNORE_RTMR1, rtmr1),
+        &masked48(SERVTD_ATTR_IGNORE_RTMR2, rtmr2),
+        &masked48(SERVTD_ATTR_IGNORE_RTMR3, rtmr3),
+    );
+    digest_sha384(&packed)
+        .map_err(|_| PolicyError::HashCalculation)?
+        .try_into()
+        .map_err(|_| PolicyError::HashCalculation)
+}
+
+/// Compute `tdinfo_hash` (the hash of the complete, unmasked TDINFO) from the
+/// 10 individual TDINFO measurement fields. Equals `init_servtd_info_hash` for
+/// MigTDs bound with `servtd_attr == 0`.
+#[allow(clippy::too_many_arguments)]
 pub fn compute_tdinfo_hash_from_fields(
     attributes: &[u8; 8],
     xfam: &[u8; 8],
@@ -316,7 +477,7 @@ pub fn compute_tdinfo_hash_from_fields(
     rtmr2: &[u8; SHA384_DIGEST_SIZE],
     rtmr3: &[u8; SHA384_DIGEST_SIZE],
 ) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
-    let packed = pack_unmasked_tdinfo(
+    compute_servtd_info_hash_from_fields(
         attributes,
         xfam,
         mrtd,
@@ -327,23 +488,26 @@ pub fn compute_tdinfo_hash_from_fields(
         rtmr1,
         rtmr2,
         rtmr3,
-    );
-    digest_sha384(&packed)
-        .map_err(|_| PolicyError::HashCalculation)?
-        .try_into()
-        .map_err(|_| PolicyError::HashCalculation)
+        0,
+    )
 }
 
 fn as_array<const N: usize>(slice: &[u8]) -> Result<&[u8; N], PolicyError> {
     slice.try_into().map_err(|_| PolicyError::InvalidParameter)
 }
 
-/// Compute `tdinfo_hash` for the TD described by `report`.
-///
-/// Returns the 48-byte hash, equals `init_servtd_info_hash` for
-/// production MigTDs (`servtd_attr == 0`).
+/// Compute `tdinfo_hash` (unmasked) for the TD described by `report`.
 pub fn compute_tdinfo_hash_from_report(
     report: &Report,
+) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+    compute_servtd_info_hash_from_report(report, 0)
+}
+
+/// Compute `SERVTD_INFO_HASH` for the TD described by `report` under the
+/// `servtd_attr` mask. Returns the 48-byte hash.
+pub fn compute_servtd_info_hash_from_report(
+    report: &Report,
+    servtd_attr: u64,
 ) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
     let attributes =
         as_array::<8>(report.get_migtd_info_property(&MigTdInfoProperty::Attributes)?)?;
@@ -367,7 +531,7 @@ pub fn compute_tdinfo_hash_from_report(
         as_array::<SHA384_DIGEST_SIZE>(report.get_migtd_info_property(&MigTdInfoProperty::Rtmr2)?)?;
     let rtmr3 =
         as_array::<SHA384_DIGEST_SIZE>(report.get_migtd_info_property(&MigTdInfoProperty::Rtmr3)?)?;
-    compute_tdinfo_hash_from_fields(
+    compute_servtd_info_hash_from_fields(
         attributes,
         xfam,
         mrtd,
@@ -378,6 +542,7 @@ pub fn compute_tdinfo_hash_from_report(
         rtmr1,
         rtmr2,
         rtmr3,
+        servtd_attr,
     )
 }
 
@@ -392,9 +557,7 @@ mod test {
         mapping.svn_mappings = entries
             .iter()
             .map(|(hash, isvsvn)| SvnMapping {
-                td_measurements: Measurements {
-                    tdinfo_hash: hash.clone(),
-                },
+                td_measurements: Measurements::new_from_hex(hash.clone(), 0),
                 isvsvn: *isvsvn,
             })
             .collect();
@@ -410,23 +573,19 @@ mod test {
         // The first svnMappings entry in the test fixture is the canonical
         // tdinfo_hash (= SHA384(TDINFO) = init_servtd_info_hash for attr=0).
         let expected_hash = engine.svn_mappings[0].td_measurements.tdinfo_hash.clone();
-        let target = Measurements {
-            tdinfo_hash: expected_hash.clone(),
-        };
+        let target = Measurements::new_from_hex(expected_hash.clone(), 0);
         assert_eq!(engine.get_engine_svn_by_measurements(&target), Some(1));
 
         // Case-insensitive match.
-        let lower = Measurements {
-            tdinfo_hash: expected_hash.to_ascii_lowercase(),
-        };
+        let lower = Measurements::new_from_hex(expected_hash.to_ascii_lowercase(), 0);
         assert_eq!(engine.get_engine_svn_by_measurements(&lower), Some(1));
 
         // Wrong hash -> no match.
-        let bogus = Measurements {
-            tdinfo_hash:
-                "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
-                    .into(),
-        };
+        let bogus = Measurements::new_from_hex(
+            "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                .into(),
+            0,
+        );
         assert!(engine.get_engine_svn_by_measurements(&bogus).is_none());
     }
 
@@ -673,5 +832,215 @@ mod test {
         let expected = digest_sha384(&packed).unwrap();
 
         assert_eq!(&got[..], expected.as_slice());
+    }
+
+    fn hash_with_owner(mrowner: u8, mask: u64) -> [u8; SHA384_DIGEST_SIZE] {
+        compute_servtd_info_hash_from_fields(
+            &[0xAA; 8],
+            &[0xBB; 8],
+            &[0x11; SHA384_DIGEST_SIZE],
+            &[0x22; SHA384_DIGEST_SIZE],
+            &[mrowner; SHA384_DIGEST_SIZE],
+            &[0x44; SHA384_DIGEST_SIZE],
+            &[0x55; SHA384_DIGEST_SIZE],
+            &[0x66; SHA384_DIGEST_SIZE],
+            &[0x77; SHA384_DIGEST_SIZE],
+            &[0x88; SHA384_DIGEST_SIZE],
+            mask,
+        )
+        .unwrap()
+    }
+
+    fn mapping_with_attrs(entries: &[([u8; SHA384_DIGEST_SIZE], u64, u16)]) -> TdTcbMapping {
+        let mut mapping = mapping_with_hashes(&[]);
+        mapping.svn_mappings = entries
+            .iter()
+            .map(|(hash, attr, isvsvn)| SvnMapping {
+                td_measurements: Measurements::new_with_attr(hash, *attr),
+                isvsvn: *isvsvn,
+            })
+            .collect();
+        mapping
+    }
+
+    #[test]
+    fn servtd_attr_accepts_only_supported_bits() {
+        assert!(is_valid_servtd_attr(0));
+        assert!(is_valid_servtd_attr(
+            SERVTD_ATTR_IGNORE_MROWNER | SERVTD_ATTR_IGNORE_MROWNERCONFIG
+        ));
+        assert!(is_valid_servtd_attr(SERVTD_ATTR_VALID_MASK));
+        // Reserved low bits, IGNORE_ATTRIBUTES (bit 32), bits 42..=48 and above.
+        for bit in [0, 31, 32, 42, 48, 49, 63] {
+            assert!(!is_valid_servtd_attr(1u64 << bit), "bit {}", bit);
+        }
+    }
+
+    #[test]
+    fn masked_hash_ignores_only_selected_fields() {
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+        assert_eq!(hash_with_owner(0x33, mask), hash_with_owner(0x99, mask));
+        assert_ne!(hash_with_owner(0x33, 0), hash_with_owner(0x99, 0));
+        // A mask hiding another field does not hide MROWNER.
+        let other = SERVTD_ATTR_IGNORE_RTMR3;
+        assert_ne!(hash_with_owner(0x33, other), hash_with_owner(0x99, other));
+        // The mask changes the hash of the same TDINFO.
+        assert_ne!(hash_with_owner(0x33, 0), hash_with_owner(0x33, mask));
+    }
+
+    #[test]
+    fn unmasked_hash_matches_attr_zero() {
+        assert_eq!(
+            hash_with_owner(0x33, 0),
+            compute_tdinfo_hash_from_fields(
+                &[0xAA; 8],
+                &[0xBB; 8],
+                &[0x11; SHA384_DIGEST_SIZE],
+                &[0x22; SHA384_DIGEST_SIZE],
+                &[0x33; SHA384_DIGEST_SIZE],
+                &[0x44; SHA384_DIGEST_SIZE],
+                &[0x55; SHA384_DIGEST_SIZE],
+                &[0x66; SHA384_DIGEST_SIZE],
+                &[0x77; SHA384_DIGEST_SIZE],
+                &[0x88; SHA384_DIGEST_SIZE],
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn invalid_mask_is_rejected_when_hashing() {
+        let result = compute_servtd_info_hash_from_fields(
+            &[0; 8],
+            &[0; 8],
+            &[0; SHA384_DIGEST_SIZE],
+            &[0; SHA384_DIGEST_SIZE],
+            &[0; SHA384_DIGEST_SIZE],
+            &[0; SHA384_DIGEST_SIZE],
+            &[0; SHA384_DIGEST_SIZE],
+            &[0; SHA384_DIGEST_SIZE],
+            &[0; SHA384_DIGEST_SIZE],
+            &[0; SHA384_DIGEST_SIZE],
+            1 << 32,
+        );
+        assert!(matches!(result, Err(PolicyError::InvalidParameter)));
+    }
+
+    #[test]
+    fn lookup_by_hash_requires_matching_attr() {
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+        let hash = hash_with_owner(0x33, mask);
+        let mapping = mapping_with_attrs(&[(hash, mask, 7)]);
+        assert_eq!(
+            mapping.get_engine_svn_by_servtd_info_hash(&hash, mask),
+            Some(7)
+        );
+        assert_eq!(mapping.get_engine_svn_by_servtd_info_hash(&hash, 0), None);
+        assert_eq!(mapping.get_engine_svn_by_tdinfo_hash(&hash), None);
+    }
+
+    #[test]
+    fn lookup_with_tries_each_attr_in_the_mapping() {
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+        let mapping = mapping_with_attrs(&[
+            (hash_with_owner(0x33, 0), 0, 1),
+            (hash_with_owner(0x33, mask), mask, 2),
+        ]);
+        assert_eq!(mapping.servtd_attrs(), vec![0, mask]);
+
+        // A TD whose owner differs from the attr-0 release still matches the
+        // masked release, whatever its owner field is.
+        for owner in [0x33, 0x99] {
+            assert_eq!(
+                mapping.lookup_with(|attr| Some(hash_with_owner(owner, attr))),
+                if owner == 0x33 {
+                    // Matches both entries with different SVNs: rejected.
+                    None
+                } else {
+                    Some((2, mask))
+                }
+            );
+        }
+        // No entry matches, or the hash cannot be computed.
+        assert_eq!(
+            mapping.lookup_with(|_| Some([0xEE; SHA384_DIGEST_SIZE])),
+            None
+        );
+        assert_eq!(mapping.lookup_with(|_| None), None);
+    }
+
+    #[test]
+    fn lookup_with_accepts_agreeing_matches() {
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+        let mapping = mapping_with_attrs(&[
+            (hash_with_owner(0x33, 0), 0, 5),
+            (hash_with_owner(0x33, mask), mask, 5),
+        ]);
+        assert_eq!(
+            mapping.lookup_with(|attr| Some(hash_with_owner(0x33, attr))),
+            Some((5, 0))
+        );
+    }
+
+    #[test]
+    fn mapping_validation_checks_attr() {
+        let hash = [0x11u8; SHA384_DIGEST_SIZE];
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+        // Same hash under different attrs may map to different SVNs.
+        assert!(mapping_with_attrs(&[(hash, 0, 1), (hash, mask, 2)])
+            .validate()
+            .is_ok());
+        // Same (hash, attr) with different SVNs is a conflict.
+        assert!(mapping_with_attrs(&[(hash, mask, 1), (hash, mask, 2)])
+            .validate()
+            .is_err());
+        // Unsupported attr bits are rejected.
+        assert!(mapping_with_attrs(&[(hash, 1 << 32, 1)])
+            .validate()
+            .is_err());
+    }
+
+    #[test]
+    fn servtd_attr_json_defaults_to_zero_and_round_trips() {
+        let hash = "AB".repeat(SHA384_DIGEST_SIZE);
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+
+        // Without a mask the attribute is 0 and is not serialized.
+        let plain: Measurements =
+            serde_json::from_str(&alloc::format!(r#"{{"servtdInfoHash":"{hash}"}}"#)).unwrap();
+        assert_eq!(plain.servtd_attr, 0);
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(json.contains("servtdInfoHash"));
+        assert!(!json.contains("servtdAttr"));
+
+        // Current key names.
+        let with_attr: Measurements = serde_json::from_str(&alloc::format!(
+            r#"{{"servtdInfoHash":"{hash}","servtdAttr":{mask}}}"#
+        ))
+        .unwrap();
+        assert_eq!(with_attr.servtd_attr, mask);
+        let json = serde_json::to_string(&with_attr).unwrap();
+        assert!(json.contains("\"servtdInfoHash\"") && json.contains("\"servtdAttr\""));
+        assert!(!json.contains("tdinfo_hash") && !json.contains("servtd_attr"));
+        assert_eq!(
+            serde_json::from_str::<Measurements>(&json).unwrap(),
+            with_attr
+        );
+
+        // Earlier key names are still accepted.
+        let legacy: Measurements = serde_json::from_str(&alloc::format!(
+            r#"{{"tdinfo_hash":"{hash}","servtd_attr":{mask}}}"#
+        ))
+        .unwrap();
+        assert_eq!(legacy, with_attr);
+        let legacy_plain: Measurements =
+            serde_json::from_str(&alloc::format!(r#"{{"tdinfo_hash":"{hash}"}}"#)).unwrap();
+        assert_eq!(legacy_plain, plain);
+
+        // A key given under both names is rejected.
+        assert!(serde_json::from_str::<Measurements>(&alloc::format!(
+            r#"{{"servtdInfoHash":"{hash}","tdinfo_hash":"{hash}"}}"#
+        ))
+        .is_err());
     }
 }
