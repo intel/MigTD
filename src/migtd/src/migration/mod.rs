@@ -330,19 +330,6 @@ impl_read_from_bytes_with_optional!(ReportInfo, reportdata, [0u8; 64]);
 
 #[repr(C)]
 #[derive(Debug, Pread, Pwrite)]
-#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-pub struct MigtdDataInfo {
-    // ID for the migration request, which can be used in TDG.VP.VMCALL
-    // <Service.MigTD.ReportStatus>
-    pub mig_request_id: u64,
-    pub reportdata: [u8; 64],
-}
-
-#[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
-impl_read_from_bytes_with_optional!(MigtdDataInfo, reportdata, [0u8; 64]);
-
-#[repr(C)]
-#[derive(Debug, Pread, Pwrite)]
 #[cfg(feature = "vmcall-raw")]
 pub struct EnableLogAreaInfo {
     // ID for the migration request, which can be used in TDG.VP.VMCALL

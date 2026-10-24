@@ -78,10 +78,6 @@ pub enum EmuMigRequest {
         request_id: u64,
         log_max_level: u8,
     },
-    GetMigtdData {
-        request_id: u64,
-        reportdata: [u8; 64],
-    },
 }
 
 impl Default for EmuMigRequest {
@@ -169,7 +165,7 @@ pub fn set_emulated_enable_log_area(request_id: u64, log_max_level: u8) {
     });
 }
 
-/// Helper: Set a complete rebinding flow with EnableLogArea, GetMigtdData,
+/// Helper: Set a complete rebinding flow with EnableLogArea, GetTDReport,
 /// StartRebinding, and ServTD field population.
 pub fn set_emulated_start_rebinding(
     request_id: u64,
@@ -187,12 +183,12 @@ pub fn set_emulated_start_rebinding(
         log_max_level: 3,
     });
 
-    // Step 2: Queue GetMigtdData with default reportdata
+    // Step 2: Queue GetTDReport with default reportdata
     let mut reportdata = [0u8; 64];
     reportdata[0..8].copy_from_slice(&request_id.to_le_bytes());
     reportdata[8..23].copy_from_slice(b"MIGTD_REBINDING"); // 15 bytes
     reportdata[23] = 0;
-    set_emulated_mig_request(EmuMigRequest::GetMigtdData {
+    set_emulated_mig_request(EmuMigRequest::GetTDReport {
         request_id: get_report_request_id,
         reportdata,
     });
@@ -561,7 +557,7 @@ pub fn tdvmcall_migtd_waitforrequest(
     // data_buffer uses the GHCI 1.5 buffer format:
     // Bytes 0-7: status (u64) - filled by VMM/emulation
     //   byte[0] = 1 (TDX_VMCALL_VMM_SUCCESS)
-    //   byte[1] = operation type (1=StartMigration, 3=GetTDReport, 4=EnableLogArea)
+    //   byte[1] = operation type (1=StartMigration, 2=StartRebinding, 3=GetTDReport, 4=EnableLogArea)
     // Bytes 8-11: length (u32) - filled by VMM/emulation
     // Bytes 12+: Request-specific payload
 
@@ -764,38 +760,6 @@ pub fn tdvmcall_migtd_waitforrequest(
                     request_id,
                     rebinding_src,
                     operation
-                );
-            }
-            EmuMigRequest::GetMigtdData {
-                request_id,
-                reportdata,
-            } => {
-                // DataStatusOperation::GetMigtdData = 5
-                let status = 0x0000_0000_0000_0501u64; // byte[0]=1 (success), byte[1]=5 (GetMigtdData)
-                let length = REPORT_DATA_PAYLOAD_LEN as u32;
-
-                if data_buffer.len() < HEADER_LEN + REPORT_DATA_PAYLOAD_LEN {
-                    error!(
-                        "waitforrequest buffer too small for GetMigtdData: have={} need={}",
-                        data_buffer.len(),
-                        HEADER_LEN + REPORT_DATA_PAYLOAD_LEN
-                    );
-                    return Err(TdVmcallError::Other);
-                }
-
-                data_buffer[0..8].copy_from_slice(&status.to_le_bytes());
-                data_buffer[8..12].copy_from_slice(&length.to_le_bytes());
-
-                let payload = &mut data_buffer[HEADER_LEN..HEADER_LEN + REPORT_DATA_PAYLOAD_LEN];
-
-                // mig_request_id
-                payload[0..8].copy_from_slice(&request_id.to_le_bytes());
-                // reportdata [u8; 64]
-                payload[8..72].copy_from_slice(&reportdata);
-
-                log::info!(
-                    "tdvmcall_migtd_waitforrequest: GetMigtdData request_id={}",
-                    request_id,
                 );
             }
         }
@@ -1631,6 +1595,39 @@ pub fn tdvmcall_setup_event_notify(vector: u64) -> Result<(), original_tdx_tdcal
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "test_mock_report")]
+    #[test]
+    fn test_rebinding_requests_use_td_report() {
+        for operation in [0, 1] {
+            for rebinding_src in [0, 1] {
+                let request_id = 42u64;
+                set_emulated_start_rebinding(request_id, rebinding_src, operation, [1; 4], 2);
+
+                for (opcode, id, payload_len) in [
+                    (4, request_id | 0x8000_0000_0000_0000, 16),
+                    (3, request_id | 0x4000_0000_0000_0000, 72),
+                    (2, request_id, 56),
+                ] {
+                    let mut buffer = [0u8; 4096];
+                    tdvmcall_migtd_waitforrequest(&mut buffer, 0).unwrap();
+                    assert_eq!(buffer[0], 1);
+                    assert_eq!(buffer[1], opcode);
+                    assert_eq!(
+                        u32::from_le_bytes(buffer[8..12].try_into().unwrap()),
+                        payload_len
+                    );
+                    assert_eq!(u64::from_le_bytes(buffer[12..20].try_into().unwrap()), id);
+                    if opcode == 2 {
+                        assert_eq!(buffer[20], rebinding_src);
+                        assert_eq!(buffer[21], 0);
+                        assert_eq!(buffer[22], operation);
+                    }
+                }
+                assert!(MIG_REQUEST.lock().is_empty());
+            }
+        }
+    }
 
     #[test]
     fn test_large_payload_chunking() {
