@@ -19,6 +19,7 @@ type Result<T = ()> = core::result::Result<T, VmcallRawError>;
 pub struct VmcallRaw {
     pub addr: VmcallRawAddr,
     pub data_queue: VecDeque<Vec<u8>>,
+    registered: bool,
 }
 
 impl AsyncRead for VmcallRaw {
@@ -44,6 +45,7 @@ impl VmcallRaw {
                 transport_context: mid,
             },
             data_queue: VecDeque::new(),
+            registered: false,
         })
     }
 
@@ -52,6 +54,7 @@ impl VmcallRaw {
         VMCALL_MIG_CONTEXT_FLAGS
             .lock()
             .insert(self.addr.transport_context(), AtomicBool::new(false));
+        self.registered = true;
 
         Ok(())
     }
@@ -110,6 +113,7 @@ impl VmcallRaw {
         VMCALL_MIG_CONTEXT_FLAGS
             .lock()
             .remove(&self.addr.transport_context());
+        self.registered = false;
         Ok(())
     }
 
@@ -121,5 +125,75 @@ impl VmcallRaw {
         }
 
         Ok(())
+    }
+}
+
+impl Drop for VmcallRaw {
+    fn drop(&mut self) {
+        if self.registered {
+            VMCALL_MIG_CONTEXT_FLAGS
+                .lock()
+                .remove(&self.addr.transport_context());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::{
+        future::Future,
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    fn run_ready<F: Future>(future: F) -> F::Output {
+        let mut context = Context::from_waker(Waker::noop());
+        let mut future = pin!(future);
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(value) => value,
+            Poll::Pending => panic!("future unexpectedly pending"),
+        }
+    }
+
+    fn registered_stream(context: u64) -> VmcallRaw {
+        VMCALL_MIG_CONTEXT_FLAGS
+            .lock()
+            .insert(context, AtomicBool::new(false));
+        VmcallRaw {
+            addr: VmcallRawAddr {
+                transport_context: context,
+            },
+            data_queue: VecDeque::new(),
+            registered: true,
+        }
+    }
+
+    #[test]
+    fn drop_removes_registered_context() {
+        let context = 0xABCD_EF01_2345_6789;
+        VMCALL_MIG_CONTEXT_FLAGS.lock().remove(&context);
+        drop(registered_stream(context));
+        assert!(!VMCALL_MIG_CONTEXT_FLAGS.lock().contains_key(&context));
+    }
+
+    #[test]
+    fn drop_without_registration_is_a_noop() {
+        let context = 0x1111_2222_3333_4444;
+        VMCALL_MIG_CONTEXT_FLAGS.lock().remove(&context);
+        drop(VmcallRaw::new_with_mid(context).unwrap());
+        assert!(!VMCALL_MIG_CONTEXT_FLAGS.lock().contains_key(&context));
+    }
+
+    #[test]
+    fn shutdown_removes_registered_context_before_drop() {
+        let context = 0x5555_6666_7777_8888;
+        VMCALL_MIG_CONTEXT_FLAGS.lock().remove(&context);
+        let mut stream = registered_stream(context);
+
+        run_ready(stream.shutdown()).unwrap();
+
+        assert!(!VMCALL_MIG_CONTEXT_FLAGS.lock().contains_key(&context));
+        assert!(!stream.registered);
     }
 }
