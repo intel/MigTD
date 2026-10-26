@@ -154,11 +154,17 @@ def generate(policy_path):
     references = []
     series = []
     for entry in mapping["svnMappings"]:
-        digest = bytes.fromhex(entry["tdMeasurements"]["tdinfo_hash"])
+        digest = bytes.fromhex(entry["tdMeasurements"]["servtdInfoHash"])
         if len(digest) != 48:
             raise ValueError("TCB mapping requires 48-byte hashes")
         # Match the producer's existing algorithm-ID convention.
-        measurement = {1: {2: [[1, digest]]}}
+        mval = {2: [[1, digest]]}
+        # SERVTD_ATTR mask: raw-value (key 4), #6.560 of 8 little-endian bytes;
+        # absent means 0.
+        attr = entry["tdMeasurements"].get("servtdAttr", 0)
+        if attr:
+            mval[4] = cbor2.CBORTag(560, attr.to_bytes(8, "little"))
+        measurement = {1: mval}
         addition = {1: {1: cbor2.CBORTag(552, entry["isvsvn"])}}
         references.append([environment, [measurement]])
         series.append([[environment, []], [[[measurement], [addition]]]])

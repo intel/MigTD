@@ -31,9 +31,100 @@ const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 /// TDG.SERVTD.RD(CURR_SERVTD_ATTR) matching a hardcoded value in the MigTD
 /// reflecting the intended SERVTD_ATTR."
 ///
-/// Bits 15:0  = SERVTD_TYPE (0 = MigTD)
-/// Bits 40:32 = IGNORE flags for SERVTD_HASH computation
-pub const EXPECTED_SERVTD_ATTR: u64 = 0;
+/// The value is a property of this MigTD build, read at build time from the
+/// `servtd_attr` key of `config/servtd_attr.json` (a decimal or `0x` hex string,
+/// or a number; 0 means no mask). Bits 41:33 select the TDINFO fields that
+/// `SERVTD_INFO_HASH` ignores. The mapping entry of the release records the same
+/// value so that peers can resolve this MigTD.
+pub const EXPECTED_SERVTD_ATTR: u64 =
+    servtd_attr_from_json(include_str!("../../../../config/servtd_attr.json"));
+
+#[cfg(feature = "policy_v2")]
+const _: () = assert!(
+    policy::is_valid_servtd_attr(EXPECTED_SERVTD_ATTR),
+    "config/servtd_attr.json uses unsupported SERVTD_ATTR bits"
+);
+
+/// Extract the value of the `servtd_attr` key from the config JSON. This is a
+/// minimal scanner for the build-time constant; a missing key or a malformed
+/// value fails the build.
+const fn servtd_attr_from_json(json: &str) -> u64 {
+    let bytes = json.as_bytes();
+    let key = b"\"servtd_attr\"";
+    let mut index = 0;
+    let mut found = false;
+    while index + key.len() <= bytes.len() {
+        let mut matched = 0;
+        while matched < key.len() && bytes[index + matched] == key[matched] {
+            matched += 1;
+        }
+        if matched == key.len() {
+            found = true;
+            break;
+        }
+        index += 1;
+    }
+    assert!(found, "config/servtd_attr.json has no \"servtd_attr\" key");
+    index += key.len();
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    assert!(
+        index < bytes.len() && bytes[index] == b':',
+        "config/servtd_attr.json: expected ':' after \"servtd_attr\""
+    );
+    index += 1;
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    if index < bytes.len() && bytes[index] == b'"' {
+        index += 1;
+    }
+    let start = index;
+    while index < bytes.len()
+        && !matches!(bytes[index], b'"' | b',' | b'}')
+        && !bytes[index].is_ascii_whitespace()
+    {
+        index += 1;
+    }
+    parse_number(bytes, start, index)
+}
+
+/// Parse `bytes[start..end]` as decimal or `0x` hexadecimal. Empty, malformed or
+/// oversized input fails the build.
+const fn parse_number(bytes: &[u8], start: usize, end: usize) -> u64 {
+    assert!(
+        start < end,
+        "config/servtd_attr.json: empty servtd_attr value"
+    );
+    let hex = end - start > 2
+        && bytes[start] == b'0'
+        && (bytes[start + 1] == b'x' || bytes[start + 1] == b'X');
+    let (radix, mut index) = if hex {
+        (16u64, start + 2)
+    } else {
+        (10u64, start)
+    };
+    let mut result = 0u64;
+    while index < end {
+        let digit = match bytes[index] {
+            c @ b'0'..=b'9' => (c - b'0') as u64,
+            c @ b'a'..=b'f' => (c - b'a') as u64 + 10,
+            c @ b'A'..=b'F' => (c - b'A') as u64 + 10,
+            _ => panic!("config/servtd_attr.json: servtd_attr is not a number"),
+        };
+        assert!(
+            digit < radix,
+            "config/servtd_attr.json: invalid digit in servtd_attr"
+        );
+        result = match result.checked_mul(radix) {
+            Some(shifted) => shifted + digit,
+            None => panic!("config/servtd_attr.json: servtd_attr does not fit in 64 bits"),
+        };
+        index += 1;
+    }
+    result
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -185,10 +276,45 @@ pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), Migr
 
 #[cfg(test)]
 mod test {
-    use super::ServtdExt;
+    use super::{servtd_attr_from_json, ServtdExt, EXPECTED_SERVTD_ATTR};
 
     #[test]
     fn test_structure_sizes() {
         assert_eq!(size_of::<ServtdExt>(), 272)
+    }
+
+    #[test]
+    fn servtd_attr_json_parses_string_and_number_values() {
+        assert_eq!(servtd_attr_from_json(r#"{"servtd_attr": "0"}"#), 0);
+        assert_eq!(servtd_attr_from_json(r#"{"servtd_attr":"0x0"}"#), 0);
+        assert_eq!(
+            servtd_attr_from_json(r#"{ "servtd_attr" : "137438953472" }"#),
+            1 << 37
+        );
+        assert_eq!(
+            servtd_attr_from_json("{\n  \"servtd_attr\": \"0x2000000000\"\n}\n"),
+            1 << 37
+        );
+        assert_eq!(
+            servtd_attr_from_json(r#"{"servtd_attr":"0X3FE00000000"}"#),
+            0x3FE_0000_0000
+        );
+        assert_eq!(
+            servtd_attr_from_json(r#"{"servtd_attr": 137438953472}"#),
+            1 << 37
+        );
+        // Other keys are ignored.
+        assert_eq!(
+            servtd_attr_from_json(r#"{"note":"x","servtd_attr":"0x2000000000","z":1}"#),
+            1 << 37
+        );
+    }
+
+    #[test]
+    fn build_value_comes_from_the_config_file() {
+        assert_eq!(
+            EXPECTED_SERVTD_ATTR,
+            servtd_attr_from_json(include_str!("../../../../config/servtd_attr.json"))
+        );
     }
 }
