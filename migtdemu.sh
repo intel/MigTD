@@ -18,7 +18,7 @@ DEFAULT_DEST_IP="127.0.0.1"
 DEFAULT_DEST_PORT="8001"
 DEFAULT_BUILD_MODE="release"
 DEFAULT_NUM_CPUS="1"
-DEFAULT_OPERATION="migration"    # migration, rebind-prepare, or rebind-finalize
+DEFAULT_OPERATION="migration"    # migration or rebind
 USE_SUDO=true
 RUN_BOTH=false
 SKIP_RA=false
@@ -51,7 +51,7 @@ show_usage() {
     echo "Options:"
     echo "  -r, --role ROLE              Set role as 'source' or 'destination' (default: source)"
     echo "  -i, --request-id ID          Set migration request ID (default: 1)"
-    echo "  -o, --operation OP           Set operation: 'migration' (default), 'rebind-prepare', or 'rebind-finalize'"
+    echo "  -o, --operation OP           Set operation: 'migration' (default) or 'rebind'"
     echo "  -d, --dest-ip IP             Set destination IP address (default: 127.0.0.1)"
     echo "  -p, --dest-port PORT         Set destination port (default: 8001)"
     echo "  --policy-file FILE           Set policy file path (default: config/policy.json)"
@@ -103,13 +103,13 @@ show_usage() {
     echo "    the actual migration, ensuring logging is enabled and a TD report is generated."
     echo "  - CPU affinity is controlled via taskset. Use --num-cpus to specify the number of CPUs"
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
-    echo "  - Rebinding operations (rebind-prepare, rebind-finalize) always require policy_v2, which"
-    echo "    is enabled automatically. Specify a policy and an issuer chain or signer anchor."
+    echo "  - The rebinding operation ('rebind') always requires policy_v2, which is enabled"
+    echo "    automatically. Specify a policy and an issuer chain or signer anchor."
     echo "  - Anchor-only JSON policies need an embedded servtdTcbMappingIssuerChain. CoRIM-only"
     echo "    policies need --servtd-corim-file and a numbered servtdCrl in policyData."
     echo "    Explicit per-side policies or endorsement files disable automatic policy generation."
-    echo "  - The 'rebind-prepare' operation performs the actual rebinding handshake (TLS,"
-    echo "    token exchange, and approval). 'rebind-finalize' clears the session token."
+    echo "  - The 'rebind' operation performs the complete single-phase rebinding handshake"
+    echo "    (TLS/SPDM session, token exchange, and approval) per GHCI 1.5."
     echo
     echo "Examples:"
     echo "  # Migration testing (includes EnableLogArea → GetTDReport → StartMigration)"
@@ -133,11 +133,10 @@ show_usage() {
     echo "  $0 --num-cpus 3 --both               # Run with 3 CPUs (0-2)"
     echo
     echo "  # Rebinding examples (a policy and an issuer chain or signer anchor are required):"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
-    echo "  $0 --operation rebind-finalize --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --role destination --mock-report"
-    echo "  $0 --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --log-level trace --mock-report --both"
+    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --both"
+    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both"
+    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --role destination --mock-report"
+    echo "  $0 --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --debug --log-level trace --mock-report --both"
 }
 
 # Function to check if file exists
@@ -406,14 +405,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate operation
-if [[ "$OPERATION" != "migration" && "$OPERATION" != "rebind-prepare" && "$OPERATION" != "rebind-finalize" ]]; then
-    echo -e "${RED}Error: Operation must be 'migration', 'rebind-prepare', or 'rebind-finalize', got: $OPERATION${NC}" >&2
+if [[ "$OPERATION" != "migration" && "$OPERATION" != "rebind" ]]; then
+    echo -e "${RED}Error: Operation must be 'migration' or 'rebind', got: $OPERATION${NC}" >&2
     exit 1
 fi
 
 # Detect rebind mode
 IS_REBIND=false
-if [[ "$OPERATION" == "rebind-prepare" || "$OPERATION" == "rebind-finalize" ]]; then
+if [[ "$OPERATION" == "rebind" ]]; then
     IS_REBIND=true
     # Rebinding always requires policy_v2
     USE_POLICY_V2=true

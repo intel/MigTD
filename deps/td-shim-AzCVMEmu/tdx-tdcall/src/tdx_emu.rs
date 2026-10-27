@@ -66,7 +66,6 @@ pub enum EmuMigRequest {
     StartRebinding {
         request_id: u64,
         rebinding_src: u8,
-        operation: u8,
         target_td_uuid: [u64; 4],
         binding_handle: u64,
     },
@@ -174,7 +173,6 @@ pub fn set_emulated_enable_log_area(request_id: u64, log_max_level: u8) {
 pub fn set_emulated_start_rebinding(
     request_id: u64,
     rebinding_src: u8,
-    operation: u8,
     target_td_uuid: [u64; 4],
     binding_handle: u64,
 ) {
@@ -201,7 +199,6 @@ pub fn set_emulated_start_rebinding(
     set_emulated_mig_request(EmuMigRequest::StartRebinding {
         request_id,
         rebinding_src,
-        operation,
         target_td_uuid,
         binding_handle,
     });
@@ -706,7 +703,6 @@ pub fn tdvmcall_migtd_waitforrequest(
             EmuMigRequest::StartRebinding {
                 request_id,
                 rebinding_src,
-                operation,
                 target_td_uuid,
                 binding_handle,
             } => {
@@ -715,8 +711,7 @@ pub fn tdvmcall_migtd_waitforrequest(
                 //   [0..8]   mig_request_id (u64)
                 //   [8]      rebinding_src (u8)
                 //   [9]      has_init_data (u8) - 0 for emulation
-                //   [10]     operation (u8)
-                //   [11..16] reserved [0; 5]
+                //   [10..16] reserved [0; 6]
                 //   [16..48] target_td_uuid ([u64; 4])
                 //   [48..56] binding_handle (u64)
                 const START_REBINDING_PAYLOAD_LEN: usize = 56;
@@ -744,10 +739,8 @@ pub fn tdvmcall_migtd_waitforrequest(
                 payload[8] = rebinding_src;
                 // has_init_data = 0 (no inline init data in emulation; fetched locally)
                 payload[9] = 0;
-                // operation
-                payload[10] = operation;
-                // reserved [5 bytes]
-                for b in &mut payload[11..16] {
+                // reserved [6 bytes]
+                for b in &mut payload[10..16] {
                     *b = 0;
                 }
                 // target_td_uuid [u64; 4]
@@ -760,10 +753,9 @@ pub fn tdvmcall_migtd_waitforrequest(
                 payload[48..56].copy_from_slice(&binding_handle.to_le_bytes());
 
                 log::info!(
-                    "tdvmcall_migtd_waitforrequest: StartRebinding request_id={} src={} op={}",
+                    "tdvmcall_migtd_waitforrequest: StartRebinding request_id={} src={}",
                     request_id,
-                    rebinding_src,
-                    operation
+                    rebinding_src
                 );
             }
             EmuMigRequest::GetMigtdData {
