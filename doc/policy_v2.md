@@ -475,6 +475,11 @@ bash sh_script/build_policy_v2.sh preprod \
  config/templates/tcb_mapping.json config/templates/td_identity_signed.json \
  /path/to/servtd_signers.crl.pem
 ```
+
+The updater preserves every historical hash, rejects attempts to reassign an
+existing hash or lower the SVN for a new release, and sorts entries
+deterministically before signing. Release revocation uses the servTD leaf
+signer CRL; individual hash mappings are never removed.
 ### Rebuild migtd with new policy
 ```sh
 cargo image --policy-v2 \

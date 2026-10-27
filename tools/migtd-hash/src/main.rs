@@ -258,6 +258,12 @@ fn main() {
         exit(1);
     }
 
+    let has_measurement_input = config.from_report.is_some() || config.image.is_some();
+    if !has_measurement_input && config.update_tcb_mapping.is_some() {
+        eprintln!("--update-tcb-mapping requires --image or --from-report");
+        exit(1);
+    }
+
     // Branch 1: --from-report mode. Build TDINFO from the saved report JSON
     // directly. RTMR2 is taken verbatim from the report (it was extended at
     // runtime by the live MigTD). --image / --manifest are rejected by clap,
