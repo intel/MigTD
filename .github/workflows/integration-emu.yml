@@ -50,18 +50,18 @@ jobs:
             test-command: "./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --features igvm-attest --both --no-sudo --log-level info"
             artifact-name: "policy-v2-igvm-test-logs"
 
-          - test-name: "Rebind Prepare (Skip RA)"
+          - test-name: "Rebind (Skip RA)"
             test-type: "rebind-skip-ra"
             install-jq: 'true'
             timeout-seconds: 300
-            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --both --no-sudo --log-level info"
+            test-command: "./migtdemu.sh --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --both --no-sudo --log-level info"
             artifact-name: "rebind-skip-ra-test-logs"
 
-          - test-name: "Rebind Prepare (Mock Report)"
+          - test-name: "Rebind (Mock Report)"
             test-type: "rebind-mock"
             install-jq: 'true'
             timeout-seconds: 900
-            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both --no-sudo --log-level info"
+            test-command: "./migtdemu.sh --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --mock-report --both --no-sudo --log-level info"
             artifact-name: "rebind-mock-test-logs"
 
           - test-name: "SPDM Migration (Skip RA)"
@@ -92,11 +92,11 @@ jobs:
             test-command: "./migtdemu.sh --policy-v2 --policy-file ./target/emu-corim-policy.json --signer-anchor-file ./src/policy/test/policy_v2/corim/signer_anchor.bin --src-servtd-corim-file ./src/policy/test/policy_v2/corim/tcb_mapping.corim --dst-servtd-corim-file ./src/policy/test/policy_v2/corim/tcb_mapping_no_san.corim --mock-report --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-policy-v2-corim-identity-test-logs"
 
-          - test-name: "SPDM Rebind Prepare (Skip RA)"
+          - test-name: "SPDM Rebind (Skip RA)"
             test-type: "spdm-rebind-skip-ra"
             install-jq: 'true'
             timeout-seconds: 300
-            test-command: "./migtdemu.sh --operation rebind-prepare --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --features spdm_attestation --both --no-sudo --log-level info"
+            test-command: "./migtdemu.sh --operation rebind --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --skip-ra --debug --features spdm_attestation --both --no-sudo --log-level info"
             artifact-name: "spdm-rebind-skip-ra-test-logs"
 
           - test-name: "Mock Quote Retry"

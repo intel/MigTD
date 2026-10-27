@@ -234,17 +234,13 @@ fn parse_commandline_args() {
                         operation = "migration";
                         i += 2;
                     }
-                    "rebind-prepare" | "rebind_prepare" | "rp" => {
-                        operation = "rebind-prepare";
-                        i += 2;
-                    }
-                    "rebind-finalize" | "rebind_finalize" | "rf" => {
-                        operation = "rebind-finalize";
+                    "rebind" | "rb" => {
+                        operation = "rebind";
                         i += 2;
                     }
                     _ => {
                         println!(
-                            "Invalid operation: {}. Use 'migration', 'rebind-prepare', or 'rebind-finalize'",
+                            "Invalid operation: {}. Use 'migration' or 'rebind'",
                             args[i + 1]
                         );
                         print_usage();
@@ -403,29 +399,9 @@ fn parse_commandline_args() {
             );
             set_emulated_start_migration(mig_request_id, migration_source, td_uuid, binding_handle);
         }
-        "rebind-prepare" => {
-            log::info!(
-                "Setting up rebind-prepare flow (EnableLogArea → GetMigtdData → StartRebinding)\n"
-            );
-            set_emulated_start_rebinding(
-                mig_request_id,
-                migration_source,
-                0, // MIGTD_REBIND_OP_PREPARE
-                td_uuid,
-                binding_handle,
-            );
-        }
-        "rebind-finalize" => {
-            log::info!(
-                "Setting up rebind-finalize flow (EnableLogArea → GetMigtdData → StartRebinding)\n"
-            );
-            set_emulated_start_rebinding(
-                mig_request_id,
-                migration_source,
-                1, // MIGTD_REBIND_OP_FINALIZE
-                td_uuid,
-                binding_handle,
-            );
+        "rebind" => {
+            log::info!("Setting up rebind flow (EnableLogArea → GetMigtdData → StartRebinding)\n");
+            set_emulated_start_rebinding(mig_request_id, migration_source, td_uuid, binding_handle);
         }
         _ => unreachable!(),
     }
@@ -450,7 +426,7 @@ fn print_usage() {
     println!(
         "  --role, -m ROLE            Set role as 'source' or 'destination' (default: source)"
     );
-    println!("  --operation, -o OP         Set operation: 'migration' (default), 'rebind-prepare', or 'rebind-finalize'");
+    println!("  --operation, -o OP         Set operation: 'migration' (default) or 'rebind'");
     println!("  --uuid, -u U1 U2 U3 U4     Set target TD UUID as four integers (default: 1 2 3 4)");
     println!("  --binding, -b HANDLE       Set binding handle as hex or decimal (default: 0x1234)");
     println!("  --dest-ip, -d IP           Set destination IP address for connection (default: 127.0.0.1)");
@@ -467,9 +443,8 @@ fn print_usage() {
     println!("  ./migtd --role source --dest-ip 192.168.1.100 --dest-port 8001");
     println!();
     println!("  # Rebinding:");
-    println!("  ./migtd --role source --operation rebind-prepare --request-id 42");
-    println!("  ./migtd -m destination -o rebind-prepare -r 42");
-    println!("  ./migtd --role source --operation rebind-finalize --request-id 42");
+    println!("  ./migtd --role source --operation rebind --request-id 42");
+    println!("  ./migtd -m destination -o rebind -r 42");
 }
 
 fn handle_pre_mig_emu() -> i32 {
