@@ -269,7 +269,7 @@ pub fn is_valid_servtd_attr(servtd_attr: u64) -> bool {
     servtd_attr & !SERVTD_ATTR_VALID_MASK == 0
 }
 
-/// Add or replace an entry in a v2 TCB mapping whose hashes were computed with
+/// Add an immutable release entry to a v2 TCB mapping whose hashes were computed with
 /// `SERVTD_ATTR == 0`. See [`update_tcb_mapping_v2_with_attr`].
 pub fn update_tcb_mapping_v2(
     input: &[u8],
@@ -278,7 +278,7 @@ pub fn update_tcb_mapping_v2(
     update_tcb_mapping_v2_with_attr(input, current_mapping.map(|(hash, svn)| (hash, svn, 0)))
 }
 
-/// Add or replace an entry in a v2 TCB mapping.
+/// Add an immutable release entry to a v2 TCB mapping.
 ///
 /// `current_mapping` is `(servtd_info_hash, isvsvn, servtd_attr)`: the hash is
 /// the `SERVTD_INFO_HASH` computed with the `servtd_attr` mask. An entry is
@@ -287,7 +287,8 @@ pub fn update_tcb_mapping_v2(
 /// without masks keep their existing form.
 ///
 /// Existing mappings are retained by default. Duplicate entries with the same
-/// SVN are collapsed, while conflicting duplicates are rejected. The result is
+/// SVN are collapsed, while conflicting duplicates are rejected. The SVN for a
+/// newly added entry must be no lower than every historical SVN. The result is
 /// sorted by the canonical uppercase hash and attribute and serialized without
 /// a trailing newline so repeated updates produce stable signing input.
 pub fn update_tcb_mapping_v2_with_attr(
@@ -372,11 +373,18 @@ pub fn update_tcb_mapping_v2_with_attr(
         if let Some(previous_svn) = mappings.get(&key) {
             if *previous_svn != svn {
                 return Err(anyhow!(
-                    "conflicting duplicate servtdInfoHash {} (servtdAttr {attr:#x}): SVN {previous_svn} and {svn}",
+                    "servtdInfoHash {} (servtdAttr {attr:#x}) is immutable: existing SVN {previous_svn}, requested {svn}",
                     key.0
                 ));
             }
         } else {
+            if let Some(max_svn) = mappings.values().max() {
+                if svn < *max_svn {
+                    return Err(anyhow!(
+                        "new servtdInfoHash SVN {svn} is lower than historical maximum SVN {max_svn}"
+                    ));
+                }
+            }
             mappings.insert(key, svn);
         }
     }
@@ -653,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn tcb_mapping_replace_same_hash_is_deterministic() {
+    fn tcb_mapping_repeat_same_assignment_is_deterministic() {
         let input = format!(
             r#"{{"svnMappings":[{{"isvsvn":1,"tdMeasurements":{{"servtdInfoHash":"{}"}}}}]}}"#,
             HASH_AA.to_ascii_lowercase()
@@ -671,19 +679,6 @@ mod tests {
             HASH_AA
         );
         assert_eq!(value["svnMappings"][0]["isvsvn"], 1);
-    }
-
-    #[test]
-    fn tcb_mapping_rejects_conflicting_current_hash() {
-        let input = format!(
-            r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
-        );
-        let current = [0xAAu8; 48];
-
-        let error = update_tcb_mapping_v2(input.as_bytes(), Some((&current, 2))).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("conflicting duplicate servtdInfoHash"));
     }
 
     #[test]
@@ -906,5 +901,53 @@ mod tests {
             1u64 << 48
         );
         assert!(update_tcb_mapping_v2_with_attr(input.as_bytes(), None).is_err());
+    }
+    #[test]
+    fn tcb_mapping_rejects_reassigning_existing_hash() {
+        let input = format!(
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+        );
+        let current = [0xAAu8; 48];
+
+        let error = update_tcb_mapping_v2(input.as_bytes(), Some((&current, 2))).unwrap_err();
+        assert!(error.to_string().contains("is immutable"));
+    }
+
+    #[test]
+    fn tcb_mapping_rejects_lower_svn_for_new_release() {
+        let input = format!(
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}","servtdAttr":{SERVTD_ATTR_IGNORE_MROWNER}}},"isvsvn":2}}]}}"#
+        );
+        let current = [0x11u8; 48];
+
+        for attr in [0, SERVTD_ATTR_IGNORE_MROWNERCONFIG] {
+            let error =
+                update_tcb_mapping_v2_with_attr(input.as_bytes(), Some((&current, 1, attr)))
+                    .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("lower than historical maximum SVN"));
+            assert!(
+                update_tcb_mapping_v2_with_attr(input.as_bytes(), Some((&current, 2, attr)))
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn tcb_mapping_retains_lower_historical_svn_when_repeated() {
+        let input = format!(
+            r#"{{"svnMappings":[
+                {{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}","servtdAttr":{SERVTD_ATTR_IGNORE_MROWNER}}},"isvsvn":1}},
+                {{"tdMeasurements":{{"servtdInfoHash":"{HASH_11}"}},"isvsvn":3}}
+            ]}}"#
+        );
+        let canonical = update_tcb_mapping_v2_with_attr(input.as_bytes(), None).unwrap();
+        let repeated = update_tcb_mapping_v2_with_attr(
+            &canonical,
+            Some((&[0xAA; 48], 1, SERVTD_ATTR_IGNORE_MROWNER)),
+        )
+        .unwrap();
+        assert_eq!(repeated, canonical);
     }
 }

@@ -37,6 +37,16 @@ popd
   ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --update-tcb-mapping <tcb_mapping.json> --policy-v2 --mapping-isvsvn <release-svn> --verbose
   ```
 
+  Existing hashes are retained with immutable SVN assignments, new release
+  SVNs must be no lower than the historical maximum, and entries are sorted by
+  uppercase hash for stable signing input. Conflicting duplicate hashes are
+  rejected. Use
+  `config/templates/tcb_mapping_seed.json` only when no prior release exists.
+
+  Historical hash assignments are append-only and are never removed. Revoke
+  a release by revoking the mapping's leaf signer certificate through the
+  locally authoritative servTD CRL.
+
   - Generate migtd SERVTD_HASH with debug infomation:
   ```
   ./target/debug/migtd-hash --manifest config/servtd_info.json --image <migtd.bin> --servtd-attr 0 --calc-servtd-hash --verbose
