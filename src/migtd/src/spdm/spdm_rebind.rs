@@ -20,22 +20,16 @@ use spdmlib::{
     protocol::SpdmMeasurementSummaryHashType,
     requester::RequesterContext,
 };
-use zeroize::Zeroize;
-
 pub async fn spdm_requester_rebind_old(
     spdm_requester: &mut RequesterContext,
     rebind_info: &MigtdMigrationInformation,
     peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
-    // `send_and_receive_pub_key` (called below) encodes the requester's
-    // ephemeral ECDSA private key into
-    // `spdm_requester.common.app_context_data_buffer` so libspdm's
-    // asymmetric signing callback can read it. That buffer is a plain
-    // `[u8; SIZE]` with no automatic cleanup, so wipe it on every return
-    // path here.
-    let result = spdm_requester_rebind_old_inner(spdm_requester, rebind_info, peer_data).await;
-    spdm_requester.common.app_context_data_buffer.zeroize();
-    result
+    let guard = super::AppContextGuard {
+        context: spdm_requester,
+        common: |context| &mut context.common,
+    };
+    spdm_requester_rebind_old_inner(guard.context, rebind_info, peer_data).await
 }
 
 async fn spdm_requester_rebind_old_inner(
@@ -88,18 +82,16 @@ pub async fn spdm_responder_rebind_new<'a>(
     rebind_info: &'a MigtdMigrationInformation,
     peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
+    let guard = super::AppContextGuard {
+        context: spdm_responder_ex,
+        common: |context| &mut context.responder_context.common,
+    };
+    let spdm_responder_ex = &mut *guard.context;
+
     spdm_responder_ex.peer_data = peer_data;
     spdm_responder_ex.info = ResponderContextExInfo::RebindInformation(rebind_info);
 
-    // Zeroize the responder key buffer on every return path.
-    let result = spdm_responder_rebind_new_inner(spdm_responder_ex).await;
-    spdm_responder_ex
-        .responder_context
-        .common
-        .app_context_data_buffer
-        .zeroize();
-
-    result
+    spdm_responder_rebind_new_inner(spdm_responder_ex).await
 }
 
 async fn spdm_responder_rebind_new_inner(

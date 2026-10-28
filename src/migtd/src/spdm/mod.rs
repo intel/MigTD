@@ -48,6 +48,22 @@ use crate::migration::MigtdMigrationInformation;
 use crate::spdm::vmcall_msg::VMCALL_SPDM_MESSAGE_HEADER_SIZE;
 
 pub(crate) type SpdmDeviceIoArc<T> = Arc<Mutex<MigtdTransport<T>>>;
+
+// Borrow the whole context so the exchange can keep using it while its session
+// keys and raw application-buffer signing key are cleared on return or cancellation.
+struct AppContextGuard<'a, T> {
+    context: &'a mut T,
+    common: fn(&mut T) -> &mut SpdmContext,
+}
+
+impl<T> Drop for AppContextGuard<'_, T> {
+    fn drop(&mut self) {
+        let common = (self.common)(self.context);
+        teardown_sessions(common);
+        common.app_context_data_buffer.zeroize();
+    }
+}
+
 pub struct MigtdTransport<T: AsyncRead + AsyncWrite + Unpin + Send> {
     pub transport: T,
 }
