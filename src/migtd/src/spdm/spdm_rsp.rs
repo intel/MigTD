@@ -154,6 +154,12 @@ pub async fn spdm_responder_transfer_msk<'a>(
     exchange_information: &'a ExchangeInformation,
     #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
 ) -> Result<(), SpdmStatus> {
+    let guard = super::AppContextGuard {
+        context: spdm_responder_ex,
+        common: |context| &mut context.responder_context.common,
+    };
+    let spdm_responder_ex = &mut *guard.context;
+
     #[cfg(not(feature = "policy_v2"))]
     let peer_data = Vec::new();
 
@@ -165,15 +171,7 @@ pub async fn spdm_responder_transfer_msk<'a>(
     spdm_responder_ex.mig_info_exchanged = false;
     spdm_responder_ex.remote_information = None;
 
-    // Zeroize the responder key buffer on every return path.
-    let result = spdm_responder_transfer_msk_inner(spdm_responder_ex, mig_info).await;
-    spdm_responder_ex
-        .responder_context
-        .common
-        .app_context_data_buffer
-        .zeroize();
-
-    result
+    spdm_responder_transfer_msk_inner(spdm_responder_ex, mig_info).await
 }
 
 async fn spdm_responder_transfer_msk_inner(
