@@ -401,8 +401,7 @@ impl From<SpdmStatus> for MigrationResult {
         if spdm_status.severity == StatusSeverity::SUCCESS {
             MigrationResult::Success
         } else if let StatusCode::VDM(vdm_error) = &spdm_status.status_code {
-            MigrationResult::try_from(vdm_error.vdm_error_code as u8)
-                .unwrap_or(MigrationResult::SecureSessionError)
+            decode_error_path_status(vdm_error.vdm_error_code as u8)
         } else {
             MigrationResult::SecureSessionError
         }
@@ -429,6 +428,20 @@ impl From<MigrationResult> for SpdmStatus {
     }
 }
 
+/// Decode a raw application status code that arrived on a path that is only
+/// ever taken for SPDM *errors* (a `StatusCode::VDM` error status, or the
+/// vendor-defined Param2 of an SPDM ERROR message). The wire encoding reuses
+/// `MigrationResult::Success` (discriminant 0) as an ordinary enum value, so
+/// a bare `TryFrom<u8>` decode could otherwise turn a peer-reported error
+/// into a false `Success`. Reject that case (and any undecodable value) so
+/// an error path can never produce `Success`.
+fn decode_error_path_status(value: u8) -> MigrationResult {
+    match MigrationResult::try_from(value) {
+        Ok(MigrationResult::Success) | Err(()) => MigrationResult::SecureSessionError,
+        Ok(result) => result,
+    }
+}
+
 /// Decode an SpdmStatus returned by an SPDM session body into a
 /// MigrationResult, preserving application-level errors carried over the wire
 /// as `SpdmErrorVendorDefined`.
@@ -448,9 +461,7 @@ pub(crate) fn decode_spdm_session_err(e: SpdmStatus) -> MigrationResult {
         if ed.length >= 4
             && ed.data[2] == spdmlib::message::SpdmErrorCode::SpdmErrorVendorDefined.get_u8()
         {
-            if let Ok(decoded) = MigrationResult::try_from(ed.data[3]) {
-                return decoded;
-            }
+            return decode_error_path_status(ed.data[3]);
         }
     }
     MigrationResult::SecureSessionError
