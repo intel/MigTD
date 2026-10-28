@@ -11,6 +11,7 @@ use crypto::{
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::migration::servtd_ext::read_servtd_ext;
 use crate::migration::transport::*;
@@ -40,6 +41,7 @@ const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
                                                        // FIXME: Need VMM provide socket information
 
 #[repr(C)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct RebindingToken {
     token: [u8; 32],
 }
@@ -498,9 +500,9 @@ async fn tls_send_rebind_token(
 async fn tls_receive_rebind_token(
     tls_session: &mut SecureChannel<TransportType>,
 ) -> Result<RebindingToken, MigrationResult> {
-    let mut data = [0u8; size_of::<RebindingToken>()];
+    let mut data = Zeroizing::new([0u8; size_of::<RebindingToken>()]);
     // MigTD old send rebinding session token to peer
-    with_timeout(TLS_TIMEOUT, tls_session_read_exact(tls_session, &mut data))
+    with_timeout(TLS_TIMEOUT, tls_session_read_exact(tls_session, &mut *data))
         .await
         .map_err(|e| {
             log::error!(
@@ -518,7 +520,7 @@ async fn tls_receive_rebind_token(
         })?;
 
     let rebind_token =
-        RebindingToken::read_from_bytes(&data).ok_or(MigrationResult::InvalidParameter)?;
+        RebindingToken::read_from_bytes(&*data).ok_or(MigrationResult::InvalidParameter)?;
     Ok(rebind_token)
 }
 
@@ -553,4 +555,37 @@ async fn tls_session_read_exact(
         recvd += n;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rebinding_token_zeroize_clears_the_token_bytes() {
+        // RebindingToken carries a plaintext rebind secret and derives
+        // Zeroize/ZeroizeOnDrop so the bytes can never linger un-wiped,
+        // whether the struct is dropped normally or zeroized explicitly.
+        let mut token = RebindingToken {
+            token: [0xABu8; 32],
+        };
+        token.zeroize();
+        assert_eq!(token.token, [0u8; 32]);
+    }
+
+    #[test]
+    fn create_rebind_token_produces_a_32_byte_token() {
+        let token = create_rebind_token().unwrap();
+        assert_eq!(token.token().len(), 32);
+    }
+
+    #[test]
+    fn rebinding_token_round_trips_through_bytes() {
+        let token = RebindingToken {
+            token: [0x42u8; 32],
+        };
+        let bytes = token.as_bytes().to_vec();
+        let decoded = RebindingToken::read_from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.token(), &[0x42u8; 32]);
+    }
 }

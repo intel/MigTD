@@ -38,7 +38,7 @@ use spdmlib::{
 };
 use spin::Mutex;
 use zerocopy::IntoBytes;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 extern crate alloc;
 
@@ -903,7 +903,12 @@ pub fn handle_exchange_mig_info_req(
 
     let min_import_version = exchange_information.min_ver;
     let max_import_version = exchange_information.max_ver;
-    let mig_session_key = exchange_information.key.as_bytes().to_vec();
+    // Zeroizing: this is a plain-buffer copy of the raw forward migration
+    // session key (pulled out of the already-zeroizing MigrationSessionKey
+    // so it can be serialized below). Without this wrapper the copy would
+    // be dropped un-wiped on every exit path, including the several `?`
+    // early-returns further down.
+    let mig_session_key = Zeroizing::new(exchange_information.key.as_bytes().to_vec());
 
     spdm_responder_ex.remote_information = Some(remote_information);
     spdm_responder_ex.mig_info_exchanged = true;
@@ -1297,7 +1302,10 @@ pub fn handle_exchange_rebind_info_req(
         return Err(SPDM_STATUS_INVALID_MSG_FIELD);
     }
 
-    let mut token = <[u8; 32]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    // Zeroizing: wraps the plaintext token read off the wire so it is wiped
+    // on every exit path from here -- including the `?` early-returns on
+    // the fallible TDCS writes below -- not only after they all succeed.
+    let token = Zeroizing::new(<[u8; 32]>::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?);
 
     let servtd_ext = unsafe {
         let spdm_responder_ex = upcast_mut(responder_context);
@@ -1306,10 +1314,9 @@ pub fn handle_exchange_rebind_info_req(
             .ok_or(SPDM_STATUS_INVALID_STATE_LOCAL)?
     };
 
-    write_rebinding_session_token(&token)?;
+    write_rebinding_session_token(&token[..])?;
     write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
     write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
-    token.zeroize();
 
     let mut writer = Writer::init(vendor_defined_rsp_payload);
     let mut cnt = 0;

@@ -32,6 +32,7 @@ use crate::event_log::get_event_log;
 use crate::migration::pre_session_data::local_peer_data;
 use alloc::sync::Arc;
 use log::error;
+use zeroize::Zeroizing;
 
 pub fn spdm_requester<T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static>(
     stream: T,
@@ -209,7 +210,7 @@ pub async fn send_and_receive_pub_key(spdm_requester: &mut RequesterContext) -> 
         standard_id: RegistryOrStandardsBodyID::IANA,
         vendor_id,
         req_length: cnt as u32,
-        req_payload: payload,
+        req_payload: payload.into(),
     };
     let mut used = 0;
     used += request_header
@@ -486,7 +487,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         standard_id: RegistryOrStandardsBodyID::IANA,
         vendor_id,
         req_length: cnt as u32,
-        req_payload: payload,
+        req_payload: payload.into(),
     };
     let mut send_used = 0;
     send_used += request_header
@@ -813,7 +814,7 @@ async fn send_and_receive_sdm_exchange_migration_info(
         standard_id: RegistryOrStandardsBodyID::IANA,
         vendor_id,
         req_length: cnt as u32,
-        req_payload: payload,
+        req_payload: payload.into(),
     };
     let mut send_used = 0;
     send_used += request_header
@@ -1049,7 +1050,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         standard_id: RegistryOrStandardsBodyID::IANA,
         vendor_id,
         req_length: cnt as u32,
-        req_payload: payload,
+        req_payload: payload.into(),
     };
     let mut send_used = 0;
     send_used += request_header
@@ -1221,7 +1222,7 @@ pub async fn send_and_receive_sdm_rebind_info(
         return Err(SPDM_STATUS_INVALID_STATE_LOCAL);
     }
 
-    let mut payload = vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE];
+    let mut payload = Zeroizing::new(vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE]);
     let mut writer = Writer::init(&mut payload);
     let mut cnt = 0;
 
@@ -1253,8 +1254,8 @@ pub async fn send_and_receive_sdm_rebind_info(
         None,
     );
 
-    let mut send_buffer = [0u8; config::MAX_SPDM_MSG_SIZE];
-    let mut writer = Writer::init(&mut send_buffer);
+    let mut send_buffer = Zeroizing::new([0u8; config::MAX_SPDM_MSG_SIZE]);
+    let mut writer = Writer::init(&mut send_buffer[..]);
 
     let request_header = SpdmMessageHeader {
         version: spdm_requester.common.negotiate_info.spdm_version_sel,
