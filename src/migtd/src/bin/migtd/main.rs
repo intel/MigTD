@@ -578,20 +578,20 @@ fn handle_pre_mig() {
                                 log::error!(
                                     migration_request_id = rebinding_info.mig_request_id; "Failure during rebinding status code: {:x}\n", status.clone() as u8);
                             }
-                            let _ =
-                                report_status(status as u8, rebinding_info.mig_request_id, &data)
-                                    .await
-                                    .map_err(|e| {
-                                        log::error!(
-                                            migration_request_id = rebinding_info.mig_request_id;
-                                            "Failed to report status for StartRebinding: {:?}\n",
-                                            e
-                                        );
-                                    });
-                            log::trace!(
-                                migration_request_id = rebinding_info.mig_request_id;
-                                "ReportStatus for rebinding completed\n"
-                            );
+                            match report_status(status as u8, rebinding_info.mig_request_id, &data)
+                                .await
+                            {
+                                Ok(()) => log::trace!(
+                                    migration_request_id = rebinding_info.mig_request_id;
+                                    "Reported rebinding result status code: {:x}\n",
+                                    status as u8
+                                ),
+                                Err(e) => log::error!(
+                                    migration_request_id = rebinding_info.mig_request_id;
+                                    "Failed to report status for StartRebinding: {:?}\n",
+                                    e
+                                ),
+                            }
                             REQUESTS.lock().remove(&rebinding_info.mig_request_id);
                         }
                         WaitForRequestResponse::GetTdReport(wfr_info) => {
