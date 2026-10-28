@@ -13,6 +13,7 @@ use spdmlib::{
     protocol::{SpdmRequestCapabilityFlags, SpdmResponseCapabilityFlags, SpdmVersion},
     responder::ResponderContext,
 };
+use zeroize::Zeroizing;
 
 use crate::spdm::spdm_rsp::*;
 
@@ -158,7 +159,7 @@ pub struct SpdmVdmRequestPayload {
     pub standard_id: RegistryOrStandardsBodyID,
     pub vendor_id: VendorIDStruct,
     pub req_length: u32,
-    pub req_payload: Vec<u8>,
+    pub req_payload: Zeroizing<Vec<u8>>,
 }
 
 impl SpdmCodec for SpdmVdmRequestPayload {
@@ -249,7 +250,7 @@ impl SpdmCodec for SpdmVdmRequestPayload {
             let len = u16::read(r)?; // rsp_length
             len as u32
         };
-        let mut req_payload = Vec::with_capacity(req_length as usize);
+        let mut req_payload = Zeroizing::new(Vec::with_capacity(req_length as usize));
         for _ in 0..req_length {
             let d = u8::read(r)?;
             req_payload.push(d);
@@ -269,7 +270,7 @@ pub struct SpdmVdmResponsePayload {
     pub standard_id: RegistryOrStandardsBodyID,
     pub vendor_id: VendorIDStruct,
     pub rsp_length: u32,
-    pub rsp_payload: Vec<u8>,
+    pub rsp_payload: Zeroizing<Vec<u8>>,
 }
 
 impl SpdmCodec for SpdmVdmResponsePayload {
@@ -360,7 +361,7 @@ impl SpdmCodec for SpdmVdmResponsePayload {
             let len = u16::read(r)?; // rsp_length
             len as u32
         };
-        let mut rsp_payload = Vec::with_capacity(rsp_length as usize);
+        let mut rsp_payload = Zeroizing::new(Vec::with_capacity(rsp_length as usize));
         for _ in 0..rsp_length {
             let d = u8::read(r)?;
             rsp_payload.push(d);
@@ -442,7 +443,7 @@ pub fn migtd_vdm_msg_rsp_dispatcher_ex<'a>(
             vendor_id: [0u8; MAX_SPDM_VENDOR_DEFINED_VENDOR_ID_LEN],
         },
         rsp_length: 0,
-        rsp_payload: vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE],
+        rsp_payload: Zeroizing::new(vec![0u8; MAX_SPDM_VENDOR_DEFINED_PAYLOAD_SIZE]),
     };
 
     // Patch the vendor id field
