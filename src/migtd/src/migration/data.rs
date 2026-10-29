@@ -253,14 +253,15 @@ pub struct RequestDataBuffer<'a> {
     pub data: &'a [u8],
 }
 
-#[cfg(feature = "vmcall-raw")]
 pub enum WaitForRequestResponse {
     StartMigration(MigrationInformation),
-    #[cfg(all(feature = "main", feature = "policy_v2"))]
-    StartRebinding(MigtdMigrationInformation),
+    #[cfg(feature = "main")]
+    StartRebinding(MigrationInformation),
+    #[cfg(feature = "vmcall-raw")]
     GetTdReport(ReportInfo),
+    #[cfg(feature = "vmcall-raw")]
     EnableLogArea(EnableLogAreaInfo),
-    #[cfg(feature = "policy_v2")]
+    #[cfg(all(feature = "vmcall-raw", feature = "policy_v2"))]
     GetMigtdData(MigtdDataInfo),
 }
 
@@ -593,8 +594,6 @@ mod test {
         let mut hob_data = vec![0u8; 1024];
         let mut offset = 0;
 
-        // Add Migration Information HOB
-        create_mig_info_hob(&mut hob_data, &mut offset);
         // Add Policy Information HOB
         create_policy_info_hob(&mut hob_data, &mut offset);
         // Add End of HOB List
