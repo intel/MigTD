@@ -573,7 +573,15 @@ pub async fn wait_for_request() -> Result<MigrationInformation> {
 
     poll_fn(|_cx| {
         #[cfg(not(feature = "vmcall-interrupt"))]
-        tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+        {
+            // Each polling WAIT reuses the response page. The VMM overwrote its header
+            // on the previous call (Length shrinks to the NOOP response size), and the
+            // header Length is the only way the VMM learns the buffer capacity, so a
+            // stale header would leave no room for a real request.
+            VmcallServiceResponse::new(rsp_mem.as_mut_bytes(), VMCALL_SERVICE_MIGTD_GUID)
+                .ok_or(MigrationResult::InvalidParameter)?;
+            tdx::tdvmcall_service(cmd_mem.as_bytes(), rsp_mem.as_mut_bytes(), 0, 0)?;
+        }
 
         #[cfg(feature = "vmcall-interrupt")]
         if VMCALL_SERVICE_FLAG.load(Ordering::SeqCst) {
