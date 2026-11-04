@@ -15,8 +15,10 @@ mod v2;
 pub use v2::*;
 #[path = "v2/measurement.rs"]
 pub mod measurement;
+mod servtd_attr_config;
 #[cfg(not(feature = "policy_v2"))]
 pub use measurement::*;
+pub use servtd_attr_config::*;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use cc_measurement::CcEventHeader;
