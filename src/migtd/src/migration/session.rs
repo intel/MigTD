@@ -1114,6 +1114,12 @@ async fn migration_dst_exchange_msk(
         log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: missing remote migration information\n");
         MigrationResult::SecureSessionError
     })?;
+    // Set only after successful source attestation; required before installing any state.
+    #[cfg(feature = "policy_v2")]
+    let servtd_ext = spdm_responder.servtd_ext.ok_or_else(|| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: missing authenticated SERVTD_EXT\n");
+        MigrationResult::SecureSessionError
+    })?;
     verify_servtd_attr(
         info.mig_info.binding_handle,
         &info.mig_info.target_td_uuid,
@@ -1137,8 +1143,12 @@ async fn migration_dst_exchange_msk(
     })?;
 
     #[cfg(feature = "policy_v2")]
-    if let Some(servtd_ext) = spdm_responder.servtd_ext {
-        write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
+    {
+        write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)
+            .map_err(|e| {
+                log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: write_approved_servtd_ext_hash error: {:?}\n", e);
+                e
+            })?;
     }
 
     log::info!(migration_request_id = info.mig_info.mig_request_id; "Set MSK and report status\n");
