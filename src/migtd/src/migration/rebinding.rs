@@ -5,14 +5,13 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::mem::MaybeUninit;
 use core::time::Duration;
-use crypto::{
-    tls::SecureChannel,
-    x509::{Certificate, Decode},
-};
+use crypto::tls::SecureChannel;
 use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+#[cfg(not(feature = "spdm_attestation"))]
+use crate::migration::servtd_ext::get_servtd_ext_from_cert;
 use crate::migration::servtd_ext::read_servtd_ext;
 use crate::migration::transport::*;
 #[cfg(feature = "spdm_attestation")]
@@ -23,10 +22,9 @@ use crate::migration::pre_session_data::pre_session_data_exchange;
 use crate::{
     driver::ticks::with_timeout,
     migration::{
-        servtd_ext::{write_approved_servtd_ext_hash, ServtdExt},
-        MigrationResult, MigtdMigrationInformation,
+        servtd_ext::write_approved_servtd_ext_hash, MigrationResult, MigtdMigrationInformation,
     },
-    ratls::{self, find_extension, EXTNID_MIGTD_SERVTD_EXT},
+    ratls,
 };
 pub use tdx_tdcall::tdx::TargetTdUuid;
 
@@ -435,30 +433,6 @@ pub fn approve_rebinding(
         &info.target_td_uuid,
     )?;
     Ok(())
-}
-
-fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, MigrationResult> {
-    if let Some(cert_chain) = certs {
-        if cert_chain.is_empty() {
-            return Err(MigrationResult::SecureSessionError);
-        }
-
-        let cert = Certificate::from_der(cert_chain[0])
-            .map_err(|_| MigrationResult::SecureSessionError)?;
-
-        let extensions = cert
-            .tbs_certificate
-            .extensions
-            .as_ref()
-            .ok_or(MigrationResult::SecureSessionError)?;
-
-        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT)
-            .ok_or(MigrationResult::SecureSessionError)?;
-
-        ServtdExt::read_from_bytes(servtd_ext).ok_or(MigrationResult::InvalidParameter)
-    } else {
-        Err(MigrationResult::SecureSessionError)
-    }
 }
 
 pub fn create_rebind_token() -> Result<RebindingToken, MigrationResult> {

@@ -4,11 +4,11 @@
 
 #[cfg(feature = "policy_v2")]
 use crate::migration::pre_session_data::pre_session_data_exchange;
-#[cfg(all(not(feature = "spdm_attestation"), feature = "policy_v2"))]
-use crate::migration::servtd_ext::read_servtd_ext;
 use crate::migration::servtd_ext::verify_servtd_attr;
-#[cfg(all(feature = "spdm_attestation", feature = "policy_v2"))]
+#[cfg(feature = "policy_v2")]
 use crate::migration::servtd_ext::write_approved_servtd_ext_hash;
+#[cfg(all(not(feature = "spdm_attestation"), feature = "policy_v2"))]
+use crate::migration::servtd_ext::{get_servtd_ext_from_cert, read_servtd_ext, ServtdExt};
 use crate::migration::transport::setup_transport;
 use crate::migration::transport::shutdown_transport;
 use crate::migration::transport::TransportType;
@@ -903,6 +903,7 @@ async fn migration_dst_exchange_msk(
     exchange_information: &ExchangeInformation,
     remote_information: &mut ExchangeInformation,
     #[cfg(feature = "policy_v2")] peer_data: Vec<u8>,
+    #[cfg(feature = "policy_v2")] peer_servtd_ext: &mut Option<ServtdExt>,
 ) -> Result<()> {
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
@@ -954,7 +955,22 @@ async fn migration_dst_exchange_msk(
         return Err(MigrationResult::NetworkError);
     }
     remote_information.validate()?;
+
+    // The source SERVTD_EXT was authenticated as part of the client certificate
+    // verification during the TLS handshake.
+    #[cfg(feature = "policy_v2")]
+    let servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs()).map_err(|e| {
+        log::error!(migration_request_id = info.mig_info.mig_request_id;
+            "exchange_msk: get_servtd_ext_from_cert error: {:?}\n", e);
+        e
+    })?;
+
     shutdown_transport(ratls_server.transport_mut(), info.mig_info.mig_request_id).await?;
+
+    #[cfg(feature = "policy_v2")]
+    {
+        *peer_servtd_ext = Some(servtd_ext);
+    }
     Ok(())
 }
 
@@ -1162,6 +1178,8 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
     #[cfg(not(feature = "spdm_attestation"))]
     {
         let mut remote_information = ExchangeInformation::default();
+        #[cfg(feature = "policy_v2")]
+        let mut peer_servtd_ext: Option<ServtdExt> = None;
         let exchange_information =
             exchange_info(&info.mig_info, info.is_src()).map_err(|e| {
                 log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: exchange_info error: {:?}\n", e);
@@ -1187,6 +1205,8 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
                 &mut remote_information,
                 #[cfg(feature = "policy_v2")]
                 peer_data,
+                #[cfg(feature = "policy_v2")]
+                &mut peer_servtd_ext,
             )
             .await?;
         }
@@ -1212,6 +1232,16 @@ pub async fn exchange_msk(info: &MigrationInformation) -> Result<()> {
             log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: write_msk error: {:?}\n", e);
             e
         })?;
+
+        // Destination only: install the approved hash of the source SERVTD_EXT.
+        #[cfg(feature = "policy_v2")]
+        if let Some(servtd_ext) = peer_servtd_ext {
+            write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)
+                .map_err(|e| {
+                    log::error!(migration_request_id = info.mig_info.mig_request_id; "exchange_msk: write_approved_servtd_ext_hash error: {:?}\n", e);
+                    e
+                })?;
+        }
 
         log::info!(migration_request_id = info.mig_info.mig_request_id; "Set MSK and report status\n");
     }
