@@ -7,8 +7,8 @@ use clap::Parser;
 use log::debug;
 use migtd_hash::{
     apply_servtd_attr_masks, build_td_info_unmasked, calculate_servtd_hash,
-    calculate_servtd_info_hash, calculate_tdinfo_hash, clone_td_info, update_tcb_mapping_v2,
-    SERVTD_TYPE_MIGTD,
+    calculate_servtd_info_hash, clone_td_info, config_servtd_attr, is_valid_servtd_attr,
+    parse_servtd_attr, update_tcb_mapping_v2_with_attr, SERVTD_TYPE_MIGTD,
 };
 use serde_json::{json, Value};
 use std::{
@@ -79,11 +79,11 @@ fn build_td_info_from_report(report_path: &Path) -> anyhow::Result<TdInfoStruct>
 fn update_tcb_mapping_file_v2(
     input_path: &Path,
     output_path: &Path,
-    current_mapping: Option<(&[u8], u16)>,
+    current_mapping: Option<(&[u8], u16, u64)>,
 ) -> anyhow::Result<()> {
     let manifest =
         fs::read(input_path).with_context(|| format!("Failed to read {}", input_path.display()))?;
-    let serialized = update_tcb_mapping_v2(&manifest, current_mapping)
+    let serialized = update_tcb_mapping_v2_with_attr(&manifest, current_mapping)
         .with_context(|| format!("Failed to update {}", input_path.display()))?;
     fs::write(output_path, serialized).with_context(|| {
         format!(
@@ -185,8 +185,11 @@ struct Config {
     /// The input MigTD image enables the `policy_v2` feature
     #[clap(long)]
     pub policy_v2: bool,
-    /// Servtd_attr value (default 0)
-    #[clap(short, long)]
+    /// Servtd_attr value (default: `config/servtd_attr.json`). A mask: bits 33, 35, 36 and 37 select TDINFO
+    /// fields (XFAM, MRCONFIGID, MROWNER, MROWNERCONFIG) that the
+    /// servTD info hash ignores. With `--policy-v2 --update-tcb-mapping` the
+    /// mapping entry records the masked hash and this attribute.
+    #[clap(short, long, value_parser = parse_servtd_attr)]
     pub servtd_attr: Option<u64>,
     /// Indicator to calculate final servtd_hash instead of servtd_info_hash (default false)
     #[clap(short, long)]
@@ -194,16 +197,18 @@ struct Config {
     /// Output in TD Info in JSON format
     #[clap(long)]
     pub output_td_info: Option<PathBuf>,
-    /// Output the v2-style `tdinfo_hash` (= SHA384(TDINFO_STRUCT), equals
-    /// `init_servtd_info_hash` for attr=0) as a hex-encoded text file.
-    /// ALWAYS uses unmasked TDINFO regardless of `--servtd-attr`.
+    /// Output the servTD info hash (SHA384 of the TDINFO_STRUCT after the
+    /// `--servtd-attr` mask) as a hex-encoded text file. It is the TCB mapping
+    /// key and the `SERVTD_INFO_HASH` the TDX module reports for that mask.
     #[clap(long, requires = "policy_v2")]
-    pub output_tdinfo_hash: Option<PathBuf>,
+    pub output_servtd_info_hash: Option<PathBuf>,
     /// Enable verbose logging
     #[clap(short, long)]
     pub verbose: bool,
     /// Update the provided tcb_mapping JSON with the generated TD measurements.
-    /// For v2 (`--policy-v2`), writes `tdinfo_hash` to `tdMeasurements`.
+    /// For v2 (`--policy-v2`), writes the servTD info hash (masked by
+    /// `--servtd-attr`) as `servtdInfoHash`, and `servtdAttr` when it is not 0,
+    /// to `tdMeasurements`.
     /// For v1, writes `mrtd`/`rtmr0`/`rtmr1`.
     #[clap(long)]
     pub update_tcb_mapping: Option<PathBuf>,
@@ -212,7 +217,7 @@ struct Config {
     /// artifact as the input history.
     #[clap(long, requires = "update_tcb_mapping")]
     pub output_tcb_mapping: Option<PathBuf>,
-    /// ISV SVN assigned to the generated v2 `tdinfo_hash`. Required when
+    /// ISV SVN assigned to the generated v2 servTD info hash. Required when
     /// `--policy-v2` updates a mapping from an image or report.
     #[clap(long, requires = "update_tcb_mapping")]
     pub mapping_isvsvn: Option<u16>,
@@ -234,8 +239,19 @@ fn main() {
 
     debug!("Starting migtd-hash tool");
 
-    let servtd_attr = config.servtd_attr.unwrap_or(0);
+    let servtd_attr = config.servtd_attr.unwrap_or_else(|| {
+        config_servtd_attr().unwrap_or_else(|e| {
+            eprintln!("Invalid config/servtd_attr.json: {e}");
+            exit(1);
+        })
+    });
     debug!("ServTD attributes: {servtd_attr:#x}");
+    if !is_valid_servtd_attr(servtd_attr) {
+        eprintln!(
+            "--servtd-attr {servtd_attr:#x} uses unsupported bits (only bits 33, 35, 36 and 37)"
+        );
+        exit(1);
+    }
 
     if !config.policy_v2 && config.mapping_isvsvn.is_some() {
         eprintln!("--mapping-isvsvn requires --policy-v2");
@@ -310,11 +326,16 @@ fn main() {
         })
     };
 
-    // v2 mappings use the unmasked TDINFO hash (attr=0).
-    let tdinfo_hash_v2 = if config.policy_v2 {
+    // Apply the (possibly masked) servtd_attr to produce the td_info used for
+    // the remaining outputs (`--output-file`, `--output-td-info`).
+    let mut td_info = clone_td_info(&unmasked_td_info);
+    apply_servtd_attr_masks(&mut td_info, servtd_attr);
+
+    // v2: the servTD info hash under the mask is the TCB mapping key.
+    let servtd_info_hash_v2 = if config.policy_v2 {
         Some(
-            calculate_tdinfo_hash(clone_td_info(&unmasked_td_info)).unwrap_or_else(|e| {
-                eprintln!("Failed to calculate tdinfo_hash: {e:?}");
+            calculate_servtd_info_hash(clone_td_info(&td_info)).unwrap_or_else(|e| {
+                eprintln!("Failed to calculate servtd_info_hash: {e:?}");
                 exit(1);
             }),
         )
@@ -322,26 +343,24 @@ fn main() {
         None
     };
 
-    if let Some(ref hash) = tdinfo_hash_v2 {
-        debug!("tdinfo_hash (unmasked, attr=0): {}", bytes_to_hex(hash));
+    if let Some(ref hash) = servtd_info_hash_v2 {
+        debug!(
+            "servtd_info_hash ({servtd_attr:#x}): {}",
+            bytes_to_hex(hash)
+        );
     }
 
-    if let Some(output_tdinfo_hash) = &config.output_tdinfo_hash {
-        let Some(hash) = tdinfo_hash_v2.as_ref() else {
-            eprintln!("--output-tdinfo-hash requires --policy-v2");
+    if let Some(output_servtd_info_hash) = &config.output_servtd_info_hash {
+        let Some(hash) = servtd_info_hash_v2.as_ref() else {
+            eprintln!("--output-servtd-info-hash requires --policy-v2");
             exit(1);
         };
-        debug!("Writing tdinfo_hash to: {output_tdinfo_hash:?}");
-        fs::write(output_tdinfo_hash, bytes_to_hex(hash)).unwrap_or_else(|e| {
-            eprintln!("Failed to write tdinfo_hash file: {e}");
+        debug!("Writing servtd_info_hash to: {output_servtd_info_hash:?}");
+        fs::write(output_servtd_info_hash, bytes_to_hex(hash)).unwrap_or_else(|e| {
+            eprintln!("Failed to write servtd_info_hash file: {e}");
             exit(1);
         });
     }
-
-    // Apply the (possibly masked) servtd_attr to produce the td_info used for
-    // the remaining outputs (`--output-file`, `--output-td-info`).
-    let mut td_info = clone_td_info(&unmasked_td_info);
-    apply_servtd_attr_masks(&mut td_info, servtd_attr);
 
     debug!("td_info: {td_info:?}");
     debug!("MRTD: {}", bytes_to_hex(&td_info.mrtd));
@@ -377,15 +396,19 @@ fn main() {
             .as_deref()
             .unwrap_or(tcb_mapping_path.as_path());
         let result = if config.policy_v2 {
-            let Some(hash) = tdinfo_hash_v2.as_ref() else {
-                eprintln!("Failed to compute tdinfo_hash for the v2 mapping update");
+            let Some(hash) = servtd_info_hash_v2.as_ref() else {
+                eprintln!("Failed to compute servtd_info_hash for the v2 mapping update");
                 exit(1);
             };
             let isvsvn = config.mapping_isvsvn.unwrap_or_else(|| {
                 eprintln!("--mapping-isvsvn is required with --policy-v2 --update-tcb-mapping");
                 exit(1);
             });
-            update_tcb_mapping_file_v2(tcb_mapping_path, output_path, Some((hash, isvsvn)))
+            update_tcb_mapping_file_v2(
+                tcb_mapping_path,
+                output_path,
+                Some((hash, isvsvn, servtd_attr)),
+            )
         } else {
             update_tcb_mapping_file_v1(
                 tcb_mapping_path,
