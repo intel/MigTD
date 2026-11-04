@@ -166,6 +166,42 @@ pub fn verify_servtd_attr(
     Ok(())
 }
 
+/// Extract the SERVTD_EXT carried in the leaf certificate of an RA-TLS peer.
+///
+/// Must only be called on an established session, i.e. after the peer certificate
+/// (including its SERVTD_EXT extension) has been authenticated during the handshake.
+#[cfg(all(
+    feature = "main",
+    feature = "policy_v2",
+    not(feature = "spdm_attestation")
+))]
+pub fn get_servtd_ext_from_cert(certs: &Option<Vec<&[u8]>>) -> Result<ServtdExt, MigrationResult> {
+    use crate::ratls::{find_extension, EXTNID_MIGTD_SERVTD_EXT};
+    use crypto::x509::{Certificate, Decode};
+
+    if let Some(cert_chain) = certs {
+        if cert_chain.is_empty() {
+            return Err(MigrationResult::SecureSessionError);
+        }
+
+        let cert = Certificate::from_der(cert_chain[0])
+            .map_err(|_| MigrationResult::SecureSessionError)?;
+
+        let extensions = cert
+            .tbs_certificate
+            .extensions
+            .as_ref()
+            .ok_or(MigrationResult::SecureSessionError)?;
+
+        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT)
+            .ok_or(MigrationResult::SecureSessionError)?;
+
+        ServtdExt::read_from_bytes(servtd_ext).ok_or(MigrationResult::InvalidParameter)
+    } else {
+        Err(MigrationResult::SecureSessionError)
+    }
+}
+
 pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), MigrationResult> {
     if servtd_ext_hash.len() != SHA384_DIGEST_SIZE {
         return Err(MigrationResult::InvalidParameter);
@@ -190,5 +226,83 @@ mod test {
     #[test]
     fn test_structure_sizes() {
         assert_eq!(size_of::<ServtdExt>(), 272)
+    }
+
+    #[cfg(all(
+        feature = "main",
+        feature = "policy_v2",
+        not(feature = "spdm_attestation")
+    ))]
+    mod cert {
+        use super::super::get_servtd_ext_from_cert;
+        use super::ServtdExt;
+        use crate::migration::MigrationResult;
+        use crate::ratls::{EXTNID_MIGTD_SERVTD_EXT, ID_EC_SIG_OID};
+        use alloc::vec::Vec;
+        use crypto::x509::{AlgorithmIdentifier, CertificateBuilder, Encode, Extension};
+
+        fn build_cert(servtd_ext: Option<&[u8]>) -> Vec<u8> {
+            let alg = || AlgorithmIdentifier {
+                algorithm: ID_EC_SIG_OID,
+                parameters: None,
+            };
+            let mut builder = CertificateBuilder::new(alg(), alg(), &[0u8; 4]).unwrap();
+            if let Some(ext) = servtd_ext {
+                builder = builder
+                    .add_extension(
+                        Extension::new(EXTNID_MIGTD_SERVTD_EXT, Some(false), Some(ext)).unwrap(),
+                    )
+                    .unwrap();
+            }
+            builder.build().to_der().unwrap()
+        }
+
+        #[test]
+        fn extracts_servtd_ext_from_leaf_cert() {
+            let ext: Vec<u8> = (0..size_of::<ServtdExt>()).map(|i| i as u8).collect();
+            let cert = build_cert(Some(&ext));
+            let other = build_cert(None);
+
+            let parsed = get_servtd_ext_from_cert(&Some(vec![&cert[..], &other[..]])).unwrap();
+            assert_eq!(parsed.as_bytes(), &ext[..]);
+        }
+
+        #[test]
+        fn rejects_missing_or_empty_chain() {
+            assert_eq!(
+                get_servtd_ext_from_cert(&None).err(),
+                Some(MigrationResult::SecureSessionError)
+            );
+            assert_eq!(
+                get_servtd_ext_from_cert(&Some(Vec::new())).err(),
+                Some(MigrationResult::SecureSessionError)
+            );
+        }
+
+        #[test]
+        fn rejects_malformed_cert() {
+            assert_eq!(
+                get_servtd_ext_from_cert(&Some(vec![&[0xde, 0xad, 0xbe, 0xef][..]])).err(),
+                Some(MigrationResult::SecureSessionError)
+            );
+        }
+
+        #[test]
+        fn rejects_cert_without_servtd_ext() {
+            let cert = build_cert(None);
+            assert_eq!(
+                get_servtd_ext_from_cert(&Some(vec![&cert[..]])).err(),
+                Some(MigrationResult::SecureSessionError)
+            );
+        }
+
+        #[test]
+        fn rejects_truncated_servtd_ext() {
+            let cert = build_cert(Some(&[0u8; 16]));
+            assert_eq!(
+                get_servtd_ext_from_cert(&Some(vec![&cert[..]])).err(),
+                Some(MigrationResult::InvalidParameter)
+            );
+        }
     }
 }
