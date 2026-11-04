@@ -29,6 +29,8 @@ use crate::v2::ServtdCorim;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServtdLookup {
     pub isvsvn: u16,
+    /// `SERVTD_ATTR` of the matched mapping entry.
+    pub servtd_attr: u64,
     pub tcb_date: Option<String>,
     pub tcb_status: Option<String>,
 }
@@ -172,6 +174,9 @@ pub struct PolicyEvaluationInfo {
     /// The isvsvn of the MigTD TCB
     pub migtd_isvsvn: Option<u16>,
 
+    /// The `SERVTD_ATTR` of the mapping entry that resolved `migtd_isvsvn`
+    pub migtd_servtd_attr: Option<u64>,
+
     pub migtd_tcb_status: Option<String>,
 
     /// The date of the MigTD TCB in ISO-8601 format (from the optional TD
@@ -278,22 +283,36 @@ impl VerifiedPolicy<'_> {
         Ok(())
     }
 
-    fn servtd_svn_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<u16> {
+    fn servtd_svn_by_servtd_info_hash(&self, hash: &[u8], servtd_attr: u64) -> Option<u16> {
         #[cfg(feature = "servtd_corim")]
         if let Some(corim) = &self.servtd_corim {
             return corim
-                .lookup_by_tdinfo_hash(tdinfo_hash)
+                .lookup_by_servtd_info_hash(hash, servtd_attr)
                 .map(|lookup| lookup.isvsvn);
         }
         self.servtd_tcb_mapping
             .as_ref()?
-            .get_engine_svn_by_tdinfo_hash(tdinfo_hash)
+            .get_engine_svn_by_servtd_info_hash(hash, servtd_attr)
     }
 
-    /// Resolve a TDINFO hash through the active mapping, then enrich its SVN
-    /// with the optional JSON TD Identity. CoRIM misses remain unendorsed.
+    /// Resolve a TDINFO hash computed with `SERVTD_ATTR == 0` through the active
+    /// mapping, then enrich its SVN with the optional JSON TD Identity. CoRIM
+    /// misses remain unendorsed.
     pub fn servtd_lookup_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<ServtdLookup> {
-        let isvsvn = self.servtd_svn_by_tdinfo_hash(tdinfo_hash)?;
+        self.servtd_lookup_by_servtd_info_hash(tdinfo_hash, 0)
+    }
+
+    /// Resolve a `SERVTD_INFO_HASH` computed with the `servtd_attr` mask.
+    pub fn servtd_lookup_by_servtd_info_hash(
+        &self,
+        servtd_info_hash: &[u8],
+        servtd_attr: u64,
+    ) -> Option<ServtdLookup> {
+        let isvsvn = self.servtd_svn_by_servtd_info_hash(servtd_info_hash, servtd_attr)?;
+        self.enrich_servtd_lookup(isvsvn, servtd_attr)
+    }
+
+    fn enrich_servtd_lookup(&self, isvsvn: u16, servtd_attr: u64) -> Option<ServtdLookup> {
         let (tcb_date, tcb_status) = match &self.servtd_identity {
             Some(identity) => {
                 let level = identity.get_tcb_level_by_svn(isvsvn)?;
@@ -303,15 +322,21 @@ impl VerifiedPolicy<'_> {
         };
         Some(ServtdLookup {
             isvsvn,
+            servtd_attr,
             tcb_date,
             tcb_status,
         })
     }
 
-    /// Resolve the TDINFO hash in a verified report.
-    pub fn servtd_lookup_by_report(&self, report: &Report) -> Option<ServtdLookup> {
-        let hash = crate::v2::compute_tdinfo_hash_from_report(report).ok()?;
-        self.servtd_lookup_by_tdinfo_hash(&hash)
+    /// Resolve the TD described by a verified report, hashed with the
+    /// authenticated `servtd_attr` of that TD.
+    pub fn servtd_lookup_by_report(
+        &self,
+        report: &Report,
+        servtd_attr: u64,
+    ) -> Option<ServtdLookup> {
+        let hash = crate::v2::compute_servtd_info_hash_from_report(report, servtd_attr).ok()?;
+        self.servtd_lookup_by_servtd_info_hash(&hash, servtd_attr)
     }
 }
 
@@ -1182,6 +1207,60 @@ mod test {
         );
     }
 
+    #[test]
+    fn servtd_lookup_resolves_masked_entry_and_reports_attr() {
+        use crate::v2::{Measurements, SvnMapping, SERVTD_ATTR_IGNORE_MROWNER};
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+        let mut policy = verified_test_policy();
+        policy.servtd_identity = None;
+        policy.servtd_tcb_mapping.as_mut().unwrap().svn_mappings = vec![SvnMapping {
+            td_measurements: Measurements::new_with_attr(&[0x11; SHA384_DIGEST_SIZE], mask),
+            isvsvn: 9,
+        }];
+
+        assert!(policy
+            .servtd_lookup_by_servtd_info_hash(&[0x22; SHA384_DIGEST_SIZE], mask)
+            .is_none());
+
+        // The entry is only reachable with its own attribute.
+        assert!(policy
+            .servtd_lookup_by_tdinfo_hash(&[0x11; SHA384_DIGEST_SIZE])
+            .is_none());
+        let by_hash = policy
+            .servtd_lookup_by_servtd_info_hash(&[0x11; SHA384_DIGEST_SIZE], mask)
+            .unwrap();
+        assert_eq!((by_hash.isvsvn, by_hash.servtd_attr), (9, mask));
+    }
+
+    #[cfg(feature = "servtd_corim")]
+    #[test]
+    fn corim_mapping_resolves_masked_entries() {
+        use crate::v2::SERVTD_ATTR_IGNORE_MROWNER;
+        let mask = SERVTD_ATTR_IGNORE_MROWNER;
+        let mut policy = verified_test_policy();
+        policy.servtd_identity = None;
+        let plain = vec![0xAA; SHA384_DIGEST_SIZE];
+        let masked = vec![0xBB; SHA384_DIGEST_SIZE];
+        let payload = crate::v2::servtd_corim::test::build_tcb_mapping_attr(&[
+            (plain.clone(), 0, 7),
+            (masked.clone(), mask, 9),
+        ]);
+        policy.set_servtd_corim(ServtdCorim::decode(&payload, 0).unwrap());
+
+        let lookup = policy.servtd_lookup_by_servtd_info_hash(&plain, 0).unwrap();
+        assert_eq!((lookup.isvsvn, lookup.servtd_attr), (7, 0));
+        let lookup = policy
+            .servtd_lookup_by_servtd_info_hash(&masked, mask)
+            .unwrap();
+        assert_eq!((lookup.isvsvn, lookup.servtd_attr), (9, mask));
+        assert!(policy
+            .servtd_lookup_by_servtd_info_hash(&masked, 0)
+            .is_none());
+        assert!(policy
+            .servtd_lookup_by_servtd_info_hash(&[0xCC; SHA384_DIGEST_SIZE], mask)
+            .is_none());
+    }
+
     #[cfg(feature = "servtd_corim")]
     #[test]
     fn corim_without_json_identity_stays_svn_only() {
@@ -1447,6 +1526,7 @@ mod test {
             tcb_evaluation_number: Some(15),
             fmspc: Some([0x10, 0xC0, 0x6F, 0x00, 0x00, 0x00]),
             migtd_isvsvn: None,
+            migtd_servtd_attr: None,
             migtd_tcb_status: None,
             migtd_tcb_date: None,
             pck_crl_num: None,

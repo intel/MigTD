@@ -21,6 +21,11 @@
 //! * a `conditional-endorsement-series` (CES) triple whose series record
 //!   *selects* on that digest and *adds* `mval.svn = ExactValue(svn)`.
 //!
+//! The measurement that carries the digest may also carry the `SERVTD_ATTR`
+//! mask the hash was computed with, as `mval.raw-value` (key 4): `#6.560` of
+//! 8 bytes, little endian. It is present in both the reference triple and the
+//! CES selection; absent means 0. An entry is identified by `(hash, attr)`.
+//!
 //! The hash -> svn lookup is driven by the CES triples. An optional JSON TD
 //! Identity can then supply `tcb_date` / `tcb_status` for that SVN. A CoRIM
 //! lookup miss never falls back to the JSON TCB mapping.
@@ -43,13 +48,13 @@
 //! performs decode + match only.
 
 use alloc::{collections::BTreeMap, vec::Vec};
-use core::convert::TryFrom;
+use core::convert::{TryFrom, TryInto};
 
 use corim::{
     types::{
         comid::ComidTag,
         environment::EnvironmentMap,
-        measurement::{MeasurementMap, SvnChoice},
+        measurement::{MeasurementMap, RawValueChoice, SvnChoice},
         signed::{decode_signed_corim, CoseAlgorithm, CwtClaims},
     },
     validate::decode_and_validate_at,
@@ -58,7 +63,7 @@ use corim::{
 use crypto::SHA384_DIGEST_SIZE;
 
 use crate::{
-    v2::{compute_signer_anchor, ServtdLookup},
+    v2::{compute_signer_anchor, is_valid_servtd_attr, ServtdLookup},
     PolicyError,
 };
 
@@ -79,7 +84,8 @@ pub const MIGRATION_TD_INSTANCE_BYTES: &[u8] = b"migration-td";
 pub struct ServtdCorim {
     /// CoMID tags from the TCB Mapping CoRIM (digest-selecting CES).
     tcb_mapping: Vec<ComidTag>,
-    svn_mappings: BTreeMap<Vec<u8>, u16>,
+    /// `(SERVTD_INFO_HASH, SERVTD_ATTR) -> isvsvn`.
+    svn_mappings: BTreeMap<(Vec<u8>, u64), u16>,
     /// Verified leaf-first COSE `x5chain`, retained so callers can apply the
     /// locally authoritative servTD CRL after signature/anchor verification.
     signer_chain: Option<Vec<Vec<u8>>>,
@@ -151,8 +157,18 @@ impl ServtdCorim {
     /// the 48-byte SHA-384 ServTD info hash with the SHA-256 algorithm id
     /// (see the design-review gap note), so the algorithm field is not
     /// enforced here.
-    fn svn_for_hash(&self, hash: &[u8]) -> Option<u16> {
-        self.svn_mappings.get(hash).copied()
+    fn svn_for_hash(&self, hash: &[u8], servtd_attr: u64) -> Option<u16> {
+        self.svn_mappings
+            .get(&(hash.to_vec(), servtd_attr))
+            .copied()
+    }
+
+    /// Distinct `SERVTD_ATTR` values used by the entries, in ascending order.
+    pub fn servtd_attrs(&self) -> Vec<u64> {
+        let mut attrs: Vec<u64> = self.svn_mappings.keys().map(|(_, attr)| *attr).collect();
+        attrs.sort_unstable();
+        attrs.dedup();
+        attrs
     }
 
     /// Number of CoMID tags in the TCB Mapping document. Exposed for
@@ -165,9 +181,21 @@ impl ServtdCorim {
     /// hashes to `tdinfo_hash` (the 48-byte `init/cur_servtd_info_hash`).
     /// Returns `None` if the hash is not endorsed by this CoRIM.
     pub fn lookup_by_tdinfo_hash(&self, tdinfo_hash: &[u8]) -> Option<ServtdLookup> {
-        let isvsvn = self.svn_for_hash(tdinfo_hash)?;
+        self.lookup_by_servtd_info_hash(tdinfo_hash, 0)
+    }
+
+    /// Resolve the MigTD ISV SVN for a `SERVTD_INFO_HASH` computed with the
+    /// `servtd_attr` mask. Returns `None` if `(hash, servtd_attr)` is not
+    /// endorsed by this CoRIM.
+    pub fn lookup_by_servtd_info_hash(
+        &self,
+        servtd_info_hash: &[u8],
+        servtd_attr: u64,
+    ) -> Option<ServtdLookup> {
+        let isvsvn = self.svn_for_hash(servtd_info_hash, servtd_attr)?;
         Some(ServtdLookup {
             isvsvn,
+            servtd_attr,
             tcb_date: None,
             tcb_status: None,
         })
@@ -279,18 +307,22 @@ fn is_migration_td_environment(env: &EnvironmentMap) -> bool {
 
 // ---- TCB Mapping (CES) helpers --------------------------------------------
 
-fn validated_svn_mappings(comids: &[ComidTag]) -> Result<BTreeMap<Vec<u8>, u16>, PolicyError> {
-    let mut references: BTreeMap<&[u8], Vec<&EnvironmentMap>> = BTreeMap::new();
+fn validated_svn_mappings(
+    comids: &[ComidTag],
+) -> Result<BTreeMap<(Vec<u8>, u64), u16>, PolicyError> {
+    let mut references: BTreeMap<(&[u8], u64), Vec<&EnvironmentMap>> = BTreeMap::new();
     for comid in comids {
         for reference in comid.triples.reference_triples.iter().flatten() {
             if !is_migration_td_environment(reference.environment()) {
                 continue;
             }
-            for hash in reference.measurements().iter().filter_map(digest_value) {
-                references
-                    .entry(hash)
-                    .or_default()
-                    .push(reference.environment());
+            for measurement in reference.measurements() {
+                if let Some(key) = measurement_key(measurement)? {
+                    references
+                        .entry(key)
+                        .or_default()
+                        .push(reference.environment());
+                }
             }
         }
     }
@@ -308,14 +340,16 @@ fn validated_svn_mappings(comids: &[ComidTag]) -> Result<BTreeMap<Vec<u8>, u16>,
                 continue;
             }
             for record in ces.series() {
-                let hash = record
+                let (hash, attr) = record
                     .selection()
                     .first()
-                    .and_then(digest_value)
+                    .map(measurement_key)
+                    .transpose()?
+                    .flatten()
                     .ok_or(PolicyError::InvalidServtdTcbMapping)?;
                 if hash.len() != SHA384_DIGEST_SIZE
                     || !references
-                        .get(hash)
+                        .get(&(hash, attr))
                         .is_some_and(|environments| environments.contains(&environment))
                 {
                     return Err(PolicyError::InvalidServtdTcbMapping);
@@ -326,7 +360,7 @@ fn validated_svn_mappings(comids: &[ComidTag]) -> Result<BTreeMap<Vec<u8>, u16>,
                     .and_then(svn_exact)
                     .and_then(|svn| u16::try_from(svn).ok())
                     .ok_or(PolicyError::InvalidServtdTcbMapping)?;
-                if let Some(previous) = mappings.insert(hash.to_vec(), svn) {
+                if let Some(previous) = mappings.insert((hash.to_vec(), attr), svn) {
                     if previous != svn {
                         return Err(PolicyError::InvalidServtdTcbMapping);
                     }
@@ -335,6 +369,38 @@ fn validated_svn_mappings(comids: &[ComidTag]) -> Result<BTreeMap<Vec<u8>, u16>,
         }
     }
     Ok(mappings)
+}
+
+/// `SERVTD_ATTR` of a measurement: 0 when it has no `raw-value`, otherwise the
+/// 8-byte little-endian `#6.560` raw value. A masked raw value, any other
+/// length, or an unsupported mask bit is an error.
+fn servtd_attr_of(m: &MeasurementMap) -> Result<u64, PolicyError> {
+    match &m.mval.raw_value {
+        None => Ok(0),
+        Some(RawValueChoice::Bytes(bytes)) => {
+            let attr = u64::from_le_bytes(
+                bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| PolicyError::InvalidServtdTcbMapping)?,
+            );
+            if is_valid_servtd_attr(attr) {
+                Ok(attr)
+            } else {
+                Err(PolicyError::InvalidServtdTcbMapping)
+            }
+        }
+        Some(_) => Err(PolicyError::InvalidServtdTcbMapping),
+    }
+}
+
+/// `(SERVTD_INFO_HASH, SERVTD_ATTR)` identified by a measurement, if it has a
+/// digest.
+fn measurement_key(m: &MeasurementMap) -> Result<Option<(&[u8], u64)>, PolicyError> {
+    match digest_value(m) {
+        Some(hash) => Ok(Some((hash, servtd_attr_of(m)?))),
+        None => Ok(None),
+    }
 }
 
 /// First digest value of a measurement (the ServTD info hash).
@@ -623,34 +689,39 @@ pub(super) mod test {
         }
     }
 
+    /// A measurement holding the hash and, for a non-zero mask, the 8-byte
+    /// little-endian `raw-value`.
+    fn digest_measurement(hash: &[u8], attr: u64) -> MeasurementMap {
+        MeasurementMap {
+            mkey: None,
+            mval: MeasurementValuesMap {
+                digests: Some(vec![Digest::new(SHA256_ALG, hash.to_vec())]),
+                raw_value: (attr != 0).then(|| RawValueChoice::Bytes(attr.to_le_bytes().to_vec())),
+                ..MeasurementValuesMap::new()
+            },
+            authorized_by: None,
+        }
+    }
+
     fn ref_triple(hash: &[u8]) -> ReferenceTriple {
-        ReferenceTriple::new(
-            migration_td_env(),
-            vec![MeasurementMap {
-                mkey: None,
-                mval: MeasurementValuesMap {
-                    digests: Some(vec![Digest::new(SHA256_ALG, hash.to_vec())]),
-                    ..MeasurementValuesMap::new()
-                },
-                authorized_by: None,
-            }],
-        )
+        ref_triple_attr(hash, 0)
+    }
+
+    fn ref_triple_attr(hash: &[u8], attr: u64) -> ReferenceTriple {
+        ReferenceTriple::new(migration_td_env(), vec![digest_measurement(hash, attr)])
     }
 
     fn ces_triple(hash: &[u8], svn: u16) -> ConditionalEndorsementSeriesTriple {
+        ces_triple_attr(hash, 0, svn)
+    }
+
+    fn ces_triple_attr(hash: &[u8], attr: u64, svn: u16) -> ConditionalEndorsementSeriesTriple {
         let condition = CesCondition {
             environment: migration_td_env(),
             claims_list: Vec::new(),
             authorized_by: None,
         };
-        let selection = MeasurementMap {
-            mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(SHA256_ALG, hash.to_vec())]),
-                ..MeasurementValuesMap::new()
-            },
-            authorized_by: None,
-        };
+        let selection = digest_measurement(hash, attr);
         let addition = MeasurementMap {
             mkey: None,
             mval: MeasurementValuesMap {
@@ -671,10 +742,19 @@ pub(super) mod test {
     /// Build a TCB Mapping CoRIM mirroring `TcbMappingCorim::add_release`:
     /// a reference-triple plus a CES triple per `(hash, svn)`.
     pub(crate) fn build_tcb_mapping(entries: &[(Vec<u8>, u16)]) -> Vec<u8> {
+        let entries: Vec<_> = entries
+            .iter()
+            .map(|(hash, svn)| (hash.clone(), 0, *svn))
+            .collect();
+        build_tcb_mapping_attr(&entries)
+    }
+
+    /// Like [`build_tcb_mapping`] for `(hash, servtd_attr, svn)` entries.
+    pub(crate) fn build_tcb_mapping_attr(entries: &[(Vec<u8>, u64, u16)]) -> Vec<u8> {
         let mut comid = ComidBuilder::new(TagIdChoice::Text("migtd-tcb-mapping".into()));
-        for (hash, svn) in entries {
-            comid = comid.add_reference_triple(ref_triple(hash));
-            comid = comid.add_conditional_endorsement_series(ces_triple(hash, *svn));
+        for (hash, attr, svn) in entries {
+            comid = comid.add_reference_triple(ref_triple_attr(hash, *attr));
+            comid = comid.add_conditional_endorsement_series(ces_triple_attr(hash, *attr, *svn));
         }
         build_corim(vec![comid.build().expect("build tcb-mapping comid")])
     }
@@ -818,5 +898,147 @@ pub(super) mod test {
             verify_and_extract_payload(&cose, &[0; SHA384_DIGEST_SIZE]),
             Err(PolicyError::SignatureVerificationFailed)
         ));
+    }
+
+    const MASK_A: u64 = crate::v2::SERVTD_ATTR_IGNORE_MROWNER;
+    const MASK_B: u64 =
+        crate::v2::SERVTD_ATTR_IGNORE_MROWNER | crate::v2::SERVTD_ATTR_IGNORE_MROWNERCONFIG;
+
+    #[test]
+    fn raw_value_attr_selects_the_entry() {
+        let tcb = build_tcb_mapping_attr(&[
+            (hash(0xAA), 0, 1),
+            (hash(0xAA), MASK_A, 2),
+            (hash(0xBB), MASK_B, 3),
+        ]);
+        let provider = ServtdCorim::decode(&tcb, 0).unwrap();
+
+        let plain = provider.lookup_by_servtd_info_hash(&hash(0xAA), 0).unwrap();
+        assert_eq!((plain.isvsvn, plain.servtd_attr), (1, 0));
+        let masked = provider
+            .lookup_by_servtd_info_hash(&hash(0xAA), MASK_A)
+            .unwrap();
+        assert_eq!((masked.isvsvn, masked.servtd_attr), (2, MASK_A));
+        let other = provider
+            .lookup_by_servtd_info_hash(&hash(0xBB), MASK_B)
+            .unwrap();
+        assert_eq!((other.isvsvn, other.servtd_attr), (3, MASK_B));
+
+        // The attribute is part of the key.
+        assert!(provider
+            .lookup_by_servtd_info_hash(&hash(0xBB), 0)
+            .is_none());
+        assert!(provider
+            .lookup_by_servtd_info_hash(&hash(0xBB), MASK_A)
+            .is_none());
+        assert!(provider.lookup_by_tdinfo_hash(&hash(0xBB)).is_none());
+        assert_eq!(provider.servtd_attrs(), vec![0, MASK_A, MASK_B]);
+    }
+
+    #[test]
+    fn absent_raw_value_means_attr_zero() {
+        let tcb = build_tcb_mapping(&[(hash(0xAA), 5)]);
+        let provider = ServtdCorim::decode(&tcb, 0).unwrap();
+        assert_eq!(provider.servtd_attrs(), vec![0]);
+        assert_eq!(
+            provider
+                .lookup_by_servtd_info_hash(&hash(0xAA), 0)
+                .unwrap()
+                .isvsvn,
+            5
+        );
+    }
+
+    #[test]
+    fn raw_value_is_encoded_as_little_endian_tagged_bytes() {
+        let tcb = build_tcb_mapping_attr(&[(hash(0xAA), MASK_A, 5)]);
+        // #6.560 (d9 02 30) of an 8-byte string (48), little endian.
+        let mut expected = vec![0xd9, 0x02, 0x30, 0x48];
+        expected.extend_from_slice(&MASK_A.to_le_bytes());
+        assert!(tcb.windows(expected.len()).any(|w| w == expected));
+    }
+
+    #[test]
+    fn reference_must_match_the_selected_attr() {
+        let comid = ComidBuilder::new(TagIdChoice::Text("different-attr".into()))
+            .add_reference_triple(ref_triple_attr(&hash(0xAA), 0))
+            .add_conditional_endorsement_series(ces_triple_attr(&hash(0xAA), MASK_A, 5))
+            .build()
+            .unwrap();
+        assert!(matches!(
+            ServtdCorim::decode(&build_corim(vec![comid]), 0),
+            Err(PolicyError::InvalidServtdTcbMapping)
+        ));
+    }
+
+    #[test]
+    fn conflicting_svns_for_the_same_hash_and_attr_are_rejected() {
+        let tcb = build_tcb_mapping_attr(&[(hash(0xAA), MASK_A, 5), (hash(0xAA), MASK_A, 7)]);
+        assert!(matches!(
+            ServtdCorim::decode(&tcb, 0),
+            Err(PolicyError::InvalidServtdTcbMapping)
+        ));
+        // The same hash under different masks may map to different SVNs.
+        let tcb = build_tcb_mapping_attr(&[(hash(0xAA), 0, 5), (hash(0xAA), MASK_A, 7)]);
+        assert!(ServtdCorim::decode(&tcb, 0).is_ok());
+    }
+
+    fn corim_with_raw_value(raw_value: RawValueChoice) -> Vec<u8> {
+        let with_raw = |mut measurement: MeasurementMap| {
+            measurement.mval.raw_value = Some(raw_value.clone());
+            measurement
+        };
+        let reference = ReferenceTriple::new(
+            migration_td_env(),
+            vec![with_raw(digest_measurement(&hash(0xAA), 0))],
+        );
+        let mut ces = ces_triple(&hash(0xAA), 5);
+        let mut record_selection = digest_measurement(&hash(0xAA), 0);
+        record_selection.mval.raw_value = Some(raw_value.clone());
+        ces = ConditionalEndorsementSeriesTriple::new(
+            ces.condition().clone(),
+            vec![ConditionalSeriesRecord::new(
+                vec![record_selection],
+                ces.series()[0].addition().to_vec(),
+            )],
+        );
+        let comid = ComidBuilder::new(TagIdChoice::Text("raw-value".into()))
+            .add_reference_triple(reference)
+            .add_conditional_endorsement_series(ces)
+            .build()
+            .unwrap();
+        build_corim(vec![comid])
+    }
+
+    #[test]
+    fn invalid_raw_values_are_rejected() {
+        for raw_value in [
+            // Not 8 bytes.
+            RawValueChoice::Bytes(vec![0; 4]),
+            RawValueChoice::Bytes(vec![0; 9]),
+            // Unsupported bits (IGNORE_ATTRIBUTES, bit 32).
+            RawValueChoice::Bytes((1u64 << 32).to_le_bytes().to_vec()),
+            RawValueChoice::Bytes(1u64.to_le_bytes().to_vec()),
+            // Masked raw values are not used.
+            RawValueChoice::Masked {
+                value: MASK_A.to_le_bytes().to_vec(),
+                mask: u64::MAX.to_le_bytes().to_vec(),
+            },
+        ] {
+            assert!(
+                matches!(
+                    ServtdCorim::decode(&corim_with_raw_value(raw_value.clone()), 0),
+                    Err(PolicyError::InvalidServtdTcbMapping)
+                ),
+                "{:?}",
+                raw_value
+            );
+        }
+        // An explicit zero is the same as no raw value.
+        let tcb = corim_with_raw_value(RawValueChoice::Bytes(0u64.to_le_bytes().to_vec()));
+        assert_eq!(
+            ServtdCorim::decode(&tcb, 0).unwrap().servtd_attrs(),
+            vec![0]
+        );
     }
 }
