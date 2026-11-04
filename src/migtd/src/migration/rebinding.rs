@@ -17,6 +17,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use crate::migration::servtd_ext::get_servtd_ext_from_cert;
 #[cfg(not(feature = "spdm_attestation"))]
 use crate::migration::servtd_ext::read_servtd_ext;
+#[cfg(all(not(feature = "spdm_attestation"), feature = "policy_v2"))]
+use crate::migration::servtd_ext::rebinding_new_servtd_ext;
+use crate::migration::servtd_ext::EXPECTED_SERVTD_ATTR;
 use crate::migration::transport::*;
 #[cfg(all(
     feature = "spdm_attestation",
@@ -420,6 +423,8 @@ async fn rebinding_new_prepare(
         transport,
         #[cfg(feature = "policy_v2")]
         peer_data,
+        #[cfg(feature = "policy_v2")]
+        &rebinding_new_servtd_ext(),
     )
     .map_err(|e| {
         #[cfg(feature = "vmcall-raw")]
@@ -443,7 +448,7 @@ async fn rebinding_new_prepare(
     // The TLS session is established; we can now extract servtd_ext from the peer certificates.
     let mut servtd_ext = get_servtd_ext_from_cert(&ratls_server.peer_certs())?;
     write_rebinding_session_token(&rebind_token.token)?;
-    write_servtd_rebind_attr(&servtd_ext.cur_servtd_attr)?;
+    write_expected_servtd_rebind_attr()?;
     servtd_ext.cur_servtd_info_hash.fill(0);
     servtd_ext.cur_servtd_attr.fill(0);
     write_approved_servtd_ext_hash(&servtd_ext.calculate_approved_servtd_ext_hash()?)?;
@@ -467,6 +472,14 @@ pub fn write_rebinding_session_token(rebind_token: &[u8]) -> Result<(), Migratio
     }
 
     Ok(())
+}
+
+/// Write this MigTD's own `EXPECTED_SERVTD_ATTR` as the attribute of the new
+/// binding. MigTD-old may be built with another mask, so its `CUR_ATTR` must not
+/// decide how this TD is bound; the new MigTD later requires
+/// `CURR_SERVTD_ATTR == EXPECTED_SERVTD_ATTR`.
+pub fn write_expected_servtd_rebind_attr() -> Result<(), MigrationResult> {
+    write_servtd_rebind_attr(&EXPECTED_SERVTD_ATTR.to_le_bytes())
 }
 
 pub fn write_servtd_rebind_attr(servtd_attr: &[u8]) -> Result<(), MigrationResult> {

@@ -869,11 +869,16 @@ async fn migration_dst_exchange_msk(
 ) -> Result<()> {
     const TLS_TIMEOUT: Duration = Duration::from_secs(60); // 60 seconds
 
+    #[cfg(feature = "policy_v2")]
+    let servtd_ext = read_servtd_ext(info.mig_info.binding_handle, &info.mig_info.target_td_uuid)?;
+
     // TLS server
     let mut ratls_server = ratls::server(
         transport,
         #[cfg(feature = "policy_v2")]
         peer_data,
+        #[cfg(feature = "policy_v2")]
+        &servtd_ext,
     )
     .map_err(|e| {
         log::error!(migration_request_id = info.mig_info.mig_request_id;
