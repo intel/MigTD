@@ -27,11 +27,11 @@ pub const VDM_MESSAGE_MINOR_VERSION: u8 = 0;
 pub const VDM_MESSAGE_EXCHANGE_PUB_KEY_REQ_ELEMENT_COUNT: u8 = 1;
 pub const VDM_MESSAGE_EXCHANGE_PUB_KEY_RSP_ELEMENT_COUNT: u8 = 1;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT: u8 = 4;
-pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 3;
+pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 4;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_REQ_ELEMENT_COUNT: u8 = 2;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_RSP_ELEMENT_COUNT: u8 = 2;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_REQ_WITH_HISTORY_INFO_ELEMENT_COUNT: u8 = 4;
-pub const VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 3;
+pub const VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 4;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_REQ_COUNT: u8 = 1;
 pub const VDM_MESSAGE_EXCHANGE_REBIND_INFO_ELEMENT_RSP_COUNT: u8 = 0;
 
@@ -687,6 +687,35 @@ mod tests {
             VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
             VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT,
             &elements,
+        );
+    }
+
+    #[test]
+    fn migration_attestation_response_header_matches_element_count() {
+        assert_encoded_element_count(
+            VdmMessageOpCode::ExchangeMigrationAttestInfoRsp,
+            VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_RSP_ELEMENT_COUNT,
+            &[
+                VdmMessageElementType::QuoteMy,
+                VdmMessageElementType::EventLogMy,
+                VdmMessageElementType::MigPolicyMy,
+                VdmMessageElementType::ServtdExt,
+            ],
+        );
+    }
+
+    #[cfg(feature = "policy_v2")]
+    #[test]
+    fn rebind_attestation_response_header_matches_element_count() {
+        assert_encoded_element_count(
+            VdmMessageOpCode::ExchangeRebindAttestInfoRsp,
+            VDM_MESSAGE_EXCHANGE_REBIND_ATTEST_INFO_RSP_ELEMENT_COUNT,
+            &[
+                VdmMessageElementType::TdReportMy,
+                VdmMessageElementType::EventLogMy,
+                VdmMessageElementType::MigPolicyMy,
+                VdmMessageElementType::ServtdExt,
+            ],
         );
     }
 

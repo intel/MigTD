@@ -53,6 +53,7 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<SecureChan
 pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     peer_data: Vec<u8>,
+    servtd_ext: &ServtdExt,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
@@ -61,7 +62,7 @@ pub fn server<T: AsyncRead + AsyncWrite + Unpin>(
         );
         e
     })?;
-    let (certs, _quote) = create_certificate_for_server(&signing_key).map_err(|e| {
+    let (certs, _quote) = create_certificate_for_server(&signing_key, servtd_ext).map_err(|e| {
         log::error!("server policy_v2 gen_cert() failed with error {:?}\n", e);
         e
     })?;
@@ -180,6 +181,7 @@ pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(stream: T) -> Result<
 pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
     stream: T,
     peer_data: Vec<u8>,
+    servtd_ext: &ServtdExt,
 ) -> Result<SecureChannel<T>> {
     let signing_key = EcdsaPk::new().map_err(|e| {
         log::error!(
@@ -188,7 +190,7 @@ pub fn server_rebinding<T: AsyncRead + AsyncWrite + Unpin>(
         );
         e
     })?;
-    let certs = create_certificate_for_rebinding_new(&signing_key).map_err(|e| {
+    let certs = create_certificate_for_rebinding_new(&signing_key, servtd_ext).map_err(|e| {
         log::error!("server rebinding gen_cert() failed with error {:?}\n", e);
         e
     })?;
@@ -422,8 +424,15 @@ fn create_quote_certificate(
     Ok((x509_cert_der, quote))
 }
 
-fn create_certificate_for_server(signing_key: &EcdsaPk) -> Result<(Vec<u8>, Vec<u8>)> {
-    create_quote_certificate(signing_key, None)
+fn create_certificate_for_server(
+    signing_key: &EcdsaPk,
+    #[cfg(feature = "policy_v2")] servtd_ext: &ServtdExt,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    #[cfg(feature = "policy_v2")]
+    let servtd_ext = Some(servtd_ext);
+    #[cfg(not(feature = "policy_v2"))]
+    let servtd_ext = None;
+    create_quote_certificate(signing_key, servtd_ext)
 }
 
 #[cfg(not(feature = "policy_v2"))]
@@ -547,7 +556,10 @@ fn create_certificate_for_rebinding_old(
 }
 
 #[cfg(feature = "policy_v2")]
-fn create_certificate_for_rebinding_new(signing_key: &EcdsaPk) -> Result<Vec<u8>> {
+fn create_certificate_for_rebinding_new(
+    signing_key: &EcdsaPk,
+    servtd_ext: &ServtdExt,
+) -> Result<Vec<u8>> {
     let pub_key = signing_key.public_key().map_err(|e| {
         log::error!(
             "gen_cert signing_key.public_key() failed with error {:?}\n",
@@ -615,6 +627,27 @@ fn create_certificate_for_rebinding_new(signing_key: &EcdsaPk) -> Result<Vec<u8>
         .map_err(|e| {
             log::error!(
                 "gen_cert policy_v2 add_extension for policy hash failed with error {:?}.\n",
+                e
+            );
+            e
+        })?
+        .add_extension(
+            Extension::new(
+                EXTNID_MIGTD_SERVTD_EXT,
+                Some(false),
+                Some(servtd_ext.as_bytes()),
+            )
+            .map_err(|e| {
+                log::error!(
+                    "gen_cert policy_v2 add_extension failed with error {:?}.\n",
+                    e
+                );
+                e
+            })?,
+        )
+        .map_err(|e| {
+            log::error!(
+                "gen_cert policy_v2 add_extension for servtd_ext failed with error {:?}.\n",
                 e
             );
             e
@@ -944,16 +977,15 @@ mod verify {
                 INVALID_MIG_POLICY_ERROR.to_string(),
             ));
         }
+        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
+            log::error!("Failed to find servtd ext extension.\n");
+            CryptoError::ParseCertificate
+        })?;
         // MigTD-src acts as TLS client. Source authentication also validates
         // initial/current TCB continuity using the authenticated SERVTD_EXT.
         let policy_check_result = if is_client {
-            mig_policy::authenticate_remote(true, quote_report, peer_data, event_log)
+            mig_policy::authenticate_remote(true, quote_report, peer_data, event_log, servtd_ext)
         } else {
-            let servtd_ext =
-                find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
-                    log::error!("Failed to find servtd ext extension.\n");
-                    CryptoError::ParseCertificate
-                })?;
             mig_policy::authenticate_migration_source(
                 quote_report,
                 peer_data,
@@ -1082,6 +1114,10 @@ mod verify {
                 log::error!("Failed to find expected policy hash extension.\n");
                 CryptoError::ParseCertificate
             })?;
+        let servtd_ext = find_extension(extensions, &EXTNID_MIGTD_SERVTD_EXT).ok_or_else(|| {
+            log::error!("Failed to find servtd ext extension.\n");
+            CryptoError::ParseCertificate
+        })?;
 
         let exact_policy_hash = digest_sha384(peer_data)?;
         if expected_policy_hash != exact_policy_hash.as_slice() {
@@ -1092,7 +1128,7 @@ mod verify {
         }
 
         let policy_check_result =
-            mig_policy::authenticate_rebinding_new(td_report, event_log, peer_data);
+            mig_policy::authenticate_rebinding_new(td_report, event_log, peer_data, servtd_ext);
 
         if let Err(e) = &policy_check_result {
             log::error!("Policy check failed, below is the detail information:\n");

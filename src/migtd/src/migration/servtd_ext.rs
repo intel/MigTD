@@ -31,9 +31,35 @@ const TDCS_FIELD_WRITE_MASK: u64 = u64::MAX;
 /// TDG.SERVTD.RD(CURR_SERVTD_ATTR) matching a hardcoded value in the MigTD
 /// reflecting the intended SERVTD_ATTR."
 ///
-/// Bits 15:0  = SERVTD_TYPE (0 = MigTD)
-/// Bits 40:32 = IGNORE flags for SERVTD_HASH computation
-pub const EXPECTED_SERVTD_ATTR: u64 = 0;
+/// The value is a property of this MigTD build, read at build time from the
+/// `servtdAttr` key of `config/servtd_attr.json` (a decimal or `0x` hex string,
+/// or a number; 0 means no mask). Bits 41:33 select the TDINFO fields that
+/// `SERVTD_INFO_HASH` ignores. The mapping entry of the release records the same
+/// value so that peers can resolve this MigTD.
+pub const EXPECTED_SERVTD_ATTR: u64 =
+    servtd_attr_from_json(include_str!("../../../../config/servtd_attr.json"));
+
+#[cfg(feature = "policy_v2")]
+const _: () = assert!(
+    policy::is_valid_servtd_attr(EXPECTED_SERVTD_ATTR),
+    "config/servtd_attr.json uses unsupported SERVTD_ATTR bits"
+);
+
+/// Read `servtdAttr` from the config JSON with the parser shared with
+/// `migtd-hash`; a missing, duplicate or malformed value fails the build.
+const fn servtd_attr_from_json(json: &str) -> u64 {
+    use policy::ServtdAttrConfigError as E;
+    match policy::parse_servtd_attr_config(json) {
+        Ok(value) => value,
+        Err(E::NotObject) => panic!("config/servtd_attr.json: not a JSON object"),
+        Err(E::Missing) => panic!("config/servtd_attr.json: no top-level \"servtdAttr\" key"),
+        Err(E::Duplicate) => panic!("config/servtd_attr.json: duplicate \"servtdAttr\" key"),
+        Err(E::Malformed) => panic!("config/servtd_attr.json: malformed servtdAttr value"),
+        Err(E::Empty) => panic!("config/servtd_attr.json: empty servtdAttr value"),
+        Err(E::NotANumber) => panic!("config/servtd_attr.json: servtdAttr is not a number"),
+        Err(E::Overflow) => panic!("config/servtd_attr.json: servtdAttr does not fit in 64 bits"),
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -146,6 +172,24 @@ pub fn read_servtd_ext(
     })
 }
 
+/// `SERVTD_EXT` of the rebinding-new MigTD. It is not bound to the target TD
+/// yet, so there is no CURR_SERVTD_ATTR to read: only the attribute of this
+/// build is reported.
+pub fn rebinding_new_servtd_ext() -> ServtdExt {
+    ServtdExt {
+        init_servtd_info_hash: [0u8; 48],
+        init_attr: [0u8; 8],
+        reserved: [0u8; 8],
+        init_cpusvn: [0u8; 16],
+        init_tee_tcb_svn: [0u8; 16],
+        init_tee_model: [0u8; 12],
+        reserved1: [0u8; 4],
+        cur_servtd_info_hash: [0u8; 48],
+        cur_servtd_attr: EXPECTED_SERVTD_ATTR.to_le_bytes(),
+        reserved2: [0u8; 104],
+    }
+}
+
 /// Verify that CURR_SERVTD_ATTR of the target TD (VMM input) matches the
 /// hardcoded expected value (MigTD internal).
 ///
@@ -217,7 +261,7 @@ pub fn write_approved_servtd_ext_hash(servtd_ext_hash: &[u8]) -> Result<(), Migr
 
 #[cfg(test)]
 mod test {
-    use super::ServtdExt;
+    use super::{servtd_attr_from_json, ServtdExt, EXPECTED_SERVTD_ATTR};
 
     #[test]
     fn test_structure_sizes() {
@@ -296,5 +340,39 @@ mod test {
                 Some(MigrationResult::InvalidParameter)
             );
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "no top-level")]
+    fn servtd_attr_json_rejects_the_snake_case_key() {
+        servtd_attr_from_json(r#"{"servtd_attr": "0"}"#);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate")]
+    fn servtd_attr_json_rejects_duplicate_keys() {
+        servtd_attr_from_json(r#"{"servtdAttr":"1","servtdAttr":"2"}"#);
+    }
+
+    #[test]
+    #[should_panic(expected = "empty")]
+    fn servtd_attr_json_rejects_an_empty_value() {
+        servtd_attr_from_json(r#"{"servtdAttr":""}"#);
+    }
+
+    #[test]
+    fn servtd_attr_json_trims_whitespace() {
+        assert_eq!(
+            servtd_attr_from_json(r#"{"servtdAttr":" 0x2000000000 "}"#),
+            1 << 37
+        );
+    }
+
+    #[test]
+    fn build_value_comes_from_the_config_file() {
+        assert_eq!(
+            EXPECTED_SERVTD_ATTR,
+            servtd_attr_from_json(include_str!("../../../../config/servtd_attr.json"))
+        );
     }
 }
