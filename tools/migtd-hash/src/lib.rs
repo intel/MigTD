@@ -239,15 +239,60 @@ fn canonical_tdinfo_hash(hash: &str) -> Result<String> {
     Ok(hex::encode_upper(bytes))
 }
 
-/// Add or replace an entry in a v2 TCB mapping.
-///
-/// Existing mappings are retained by default. Duplicate hashes with the same
-/// SVN are collapsed, while conflicting duplicate hashes are rejected. The
-/// result is sorted by the canonical uppercase hash and serialized without a
-/// trailing newline so repeated updates produce stable signing input.
+/// `SERVTD_ATTR` bits MigTD accepts: IGNORE_XFAM, IGNORE_MRCONFIGID,
+/// IGNORE_MROWNER and IGNORE_MROWNERCONFIG. Every other bit is rejected,
+/// including IGNORE_ATTRIBUTES, IGNORE_MRTD and IGNORE_RTMR0-IGNORE_RTMR3.
+pub const SERVTD_ATTR_VALID_MASK: u64 = SERVTD_ATTR_IGNORE_XFAM
+    | SERVTD_ATTR_IGNORE_MRCONFIGID
+    | SERVTD_ATTR_IGNORE_MROWNER
+    | SERVTD_ATTR_IGNORE_MROWNERCONFIG;
+
+/// Parse a decimal or `0x` hex `SERVTD_ATTR`; surrounding whitespace is ignored
+/// and an empty value is an error. Shares its parser with the MigTD build.
+pub fn parse_servtd_attr(value: &str) -> Result<u64> {
+    policy::parse_servtd_attr_text(value).map_err(|e| anyhow!("invalid servtdAttr {value:?}: {e}"))
+}
+
+/// `SERVTD_ATTR` of this MigTD build, from `config/servtd_attr.json`.
+pub fn config_servtd_attr() -> Result<u64> {
+    servtd_attr_from_json(include_str!("../../../config/servtd_attr.json"))
+}
+
+/// Read the top-level `servtdAttr` key of the config JSON: a decimal or `0x` hex
+/// string, or a number. Shares its parser with the MigTD build, so both agree.
+pub fn servtd_attr_from_json(json: &str) -> Result<u64> {
+    policy::parse_servtd_attr_config(json).map_err(|e| anyhow!("invalid servtdAttr config: {e}"))
+}
+
+/// Whether `servtd_attr` only uses bits MigTD supports.
+pub fn is_valid_servtd_attr(servtd_attr: u64) -> bool {
+    servtd_attr & !SERVTD_ATTR_VALID_MASK == 0
+}
+
+/// Add or replace an entry in a v2 TCB mapping whose hashes were computed with
+/// `SERVTD_ATTR == 0`. See [`update_tcb_mapping_v2_with_attr`].
 pub fn update_tcb_mapping_v2(
     input: &[u8],
     current_mapping: Option<(&[u8], u16)>,
+) -> Result<Vec<u8>> {
+    update_tcb_mapping_v2_with_attr(input, current_mapping.map(|(hash, svn)| (hash, svn, 0)))
+}
+
+/// Add or replace an entry in a v2 TCB mapping.
+///
+/// `current_mapping` is `(servtd_info_hash, isvsvn, servtd_attr)`: the hash is
+/// the `SERVTD_INFO_HASH` computed with the `servtd_attr` mask. An entry is
+/// identified by `(hash, servtd_attr)`; the JSON keys are `servtdInfoHash` and
+/// `servtdAttr`, and `servtdAttr` is written only when it is not 0, so mappings
+/// without masks keep their existing form.
+///
+/// Existing mappings are retained by default. Duplicate entries with the same
+/// SVN are collapsed, while conflicting duplicates are rejected. The result is
+/// sorted by the canonical uppercase hash and attribute and serialized without
+/// a trailing newline so repeated updates produce stable signing input.
+pub fn update_tcb_mapping_v2_with_attr(
+    input: &[u8],
+    current_mapping: Option<(&[u8], u16, u64)>,
 ) -> Result<Vec<u8>> {
     let mut document: Value =
         serde_json::from_slice(input).map_err(|e| anyhow!("invalid TCB mapping JSON: {e}"))?;
@@ -256,34 +301,58 @@ pub fn update_tcb_mapping_v2(
         .and_then(Value::as_array_mut)
         .ok_or_else(|| anyhow!("'svnMappings' missing or not an array"))?;
 
-    let mut mappings = BTreeMap::<String, u16>::new();
+    let mut mappings = BTreeMap::<(String, u64), u16>::new();
     for (index, mapping) in svn_mappings.iter().enumerate() {
-        let hash = mapping
-            .get("tdMeasurements")
-            .and_then(|measurements| measurements.get("tdinfo_hash"))
+        let measurements = mapping.get("tdMeasurements");
+        let hash = measurements
+            .and_then(|measurements| measurements.get("servtdInfoHash"))
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                anyhow!("svnMappings[{index}].tdMeasurements.tdinfo_hash missing or not a string")
+                anyhow!(
+                    "svnMappings[{index}].tdMeasurements.servtdInfoHash missing or not a string"
+                )
             })?;
         let hash = canonical_tdinfo_hash(hash)
-            .map_err(|e| anyhow!("invalid svnMappings[{index}] tdinfo_hash: {e}"))?;
+            .map_err(|e| anyhow!("invalid svnMappings[{index}] servtdInfoHash: {e}"))?;
+        // The earlier snake_case key names are not read; reject them rather
+        // than silently dropping a mask or hash when rewriting a mapping.
+        if let Some(unknown) = measurements.and_then(Value::as_object).and_then(|object| {
+            object
+                .keys()
+                .find(|key| !matches!(key.as_str(), "servtdInfoHash" | "servtdAttr"))
+        }) {
+            return Err(anyhow!(
+                "svnMappings[{index}].tdMeasurements has unknown key {unknown}"
+            ));
+        }
+        let attr = match measurements.and_then(|measurements| measurements.get("servtdAttr")) {
+            None => 0,
+            Some(value) => value.as_u64().ok_or_else(|| {
+                anyhow!("svnMappings[{index}].tdMeasurements.servtdAttr is not an unsigned number")
+            })?,
+        };
+        if !is_valid_servtd_attr(attr) {
+            return Err(anyhow!(
+                "svnMappings[{index}] servtd_attr {attr:#x} uses unsupported bits"
+            ));
+        }
         let svn = mapping
             .get("isvsvn")
             .and_then(Value::as_u64)
             .and_then(|svn| u16::try_from(svn).ok())
             .ok_or_else(|| anyhow!("svnMappings[{index}].isvsvn missing or outside u16 range"))?;
 
-        if let Some(previous_svn) = mappings.insert(hash.clone(), svn) {
+        if let Some(previous_svn) = mappings.insert((hash.clone(), attr), svn) {
             if previous_svn != svn {
                 return Err(anyhow!(
-                    "conflicting duplicate tdinfo_hash {hash}: SVN {previous_svn} and {svn}"
+                    "conflicting duplicate servtdInfoHash {hash} (servtdAttr {attr:#x}): SVN {previous_svn} and {svn}"
                 ));
             }
         }
     }
 
     let current_mapping = current_mapping
-        .map(|(hash, svn)| {
+        .map(|(hash, svn, attr)| {
             if hash.len() != SHA384_DIGEST_SIZE {
                 return Err(anyhow!(
                     "current tdinfo_hash is {} bytes, expected {}",
@@ -291,29 +360,48 @@ pub fn update_tcb_mapping_v2(
                     SHA384_DIGEST_SIZE
                 ));
             }
-            Ok((hex::encode_upper(hash), svn))
+            if !is_valid_servtd_attr(attr) {
+                return Err(anyhow!("servtd_attr {attr:#x} uses unsupported bits"));
+            }
+            Ok((hex::encode_upper(hash), svn, attr))
         })
         .transpose()?;
 
-    if let Some((hash, svn)) = current_mapping {
-        if let Some(previous_svn) = mappings.get(&hash) {
+    if let Some((hash, svn, attr)) = current_mapping {
+        let key = (hash, attr);
+        if let Some(previous_svn) = mappings.get(&key) {
             if *previous_svn != svn {
                 return Err(anyhow!(
-                    "conflicting duplicate tdinfo_hash {hash}: SVN {previous_svn} and {svn}"
+                    "conflicting duplicate servtdInfoHash {} (servtdAttr {attr:#x}): SVN {previous_svn} and {svn}",
+                    key.0
                 ));
             }
         } else {
-            mappings.insert(hash, svn);
+            mappings.insert(key, svn);
+        }
+    }
+
+    // The same hash must map to one SVN whatever mask the peer claims.
+    let mut svn_by_hash = BTreeMap::<&str, u16>::new();
+    for ((hash, _), svn) in &mappings {
+        if let Some(previous_svn) = svn_by_hash.insert(hash.as_str(), *svn) {
+            if previous_svn != *svn {
+                return Err(anyhow!(
+                    "servtdInfoHash {hash} maps to SVN {previous_svn} and {svn} under different servtdAttr values"
+                ));
+            }
         }
     }
 
     *svn_mappings = mappings
         .into_iter()
-        .map(|(hash, svn)| {
+        .map(|((hash, attr), svn)| {
+            let mut measurements = json!({ "servtdInfoHash": hash });
+            if attr != 0 {
+                measurements["servtdAttr"] = json!(attr);
+            }
             json!({
-                "tdMeasurements": {
-                    "tdinfo_hash": hash,
-                },
+                "tdMeasurements": measurements,
                 "isvsvn": svn,
             })
         })
@@ -457,8 +545,14 @@ fn calculate_digest(data: &[u8]) -> Result<Vec<u8>, Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_igvm_cfv_page, update_tcb_mapping_v2};
+    use super::{
+        apply_servtd_attr_masks, calculate_servtd_info_hash, config_servtd_attr,
+        copy_igvm_cfv_page, is_valid_servtd_attr, parse_servtd_attr, servtd_attr_from_json,
+        update_tcb_mapping_v2, update_tcb_mapping_v2_with_attr, SERVTD_ATTR_IGNORE_MRCONFIGID,
+        SERVTD_ATTR_IGNORE_MROWNER, SERVTD_ATTR_IGNORE_MROWNERCONFIG, SERVTD_ATTR_IGNORE_XFAM,
+    };
     use serde_json::Value;
+    use td_shim_tools::tee_info_hash::TdInfoStruct;
 
     #[test]
     fn igvm_cfv_pages_preserve_gpa_gaps() {
@@ -486,7 +580,7 @@ mod tests {
     #[test]
     fn tcb_mapping_add_retains_historical_releases() {
         let input = format!(
-            r#"{{"id":"mapping","svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+            r#"{{"id":"mapping","svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
         );
         let current = [0x11u8; 48];
 
@@ -495,16 +589,16 @@ mod tests {
         let mappings = value["svnMappings"].as_array().unwrap();
 
         assert_eq!(mappings.len(), 2);
-        assert_eq!(mappings[0]["tdMeasurements"]["tdinfo_hash"], HASH_11);
+        assert_eq!(mappings[0]["tdMeasurements"]["servtdInfoHash"], HASH_11);
         assert_eq!(mappings[0]["isvsvn"], 2);
-        assert_eq!(mappings[1]["tdMeasurements"]["tdinfo_hash"], HASH_AA);
+        assert_eq!(mappings[1]["tdMeasurements"]["servtdInfoHash"], HASH_AA);
         assert_eq!(mappings[1]["isvsvn"], 1);
     }
 
     #[test]
     fn tcb_mapping_retains_multiple_hashes_for_same_svn() {
         let input = format!(
-            r#"{{"id":"mapping","svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+            r#"{{"id":"mapping","svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
         );
         let current = [0x11u8; 48];
 
@@ -516,17 +610,17 @@ mod tests {
         assert!(mappings.iter().all(|mapping| mapping["isvsvn"] == 1));
         assert!(mappings
             .iter()
-            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == HASH_11));
+            .any(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == HASH_11));
         assert!(mappings
             .iter()
-            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == HASH_AA));
+            .any(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == HASH_AA));
     }
 
     #[test]
     fn tcb_mapping_two_phase_uses_authority_history_not_mock_output() {
         let historical_hash = "22".repeat(48);
         let authority = format!(
-            r#"{{"svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{historical_hash}"}},"isvsvn":1}}]}}"#
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{historical_hash}"}},"isvsvn":1}}]}}"#
         );
         let mock_hash = [0x33u8; 48];
         let real_hash = [0x44u8; 48];
@@ -537,7 +631,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == "33".repeat(48)));
+            .any(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == "33".repeat(48)));
 
         // The measured-image phase must restart from the authority input, not
         // from phase one's generated output containing the transient mock hash.
@@ -549,19 +643,19 @@ mod tests {
         assert_eq!(mappings.len(), 2);
         assert!(mappings
             .iter()
-            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == historical_hash));
+            .any(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == historical_hash));
         assert!(mappings
             .iter()
-            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == "44".repeat(48)));
+            .any(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == "44".repeat(48)));
         assert!(!mappings
             .iter()
-            .any(|mapping| mapping["tdMeasurements"]["tdinfo_hash"] == "33".repeat(48)));
+            .any(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == "33".repeat(48)));
     }
 
     #[test]
     fn tcb_mapping_replace_same_hash_is_deterministic() {
         let input = format!(
-            r#"{{"svnMappings":[{{"isvsvn":1,"tdMeasurements":{{"tdinfo_hash":"{}"}}}}]}}"#,
+            r#"{{"svnMappings":[{{"isvsvn":1,"tdMeasurements":{{"servtdInfoHash":"{}"}}}}]}}"#,
             HASH_AA.to_ascii_lowercase()
         );
         let current = [0xAAu8; 48];
@@ -573,7 +667,7 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(value["svnMappings"].as_array().unwrap().len(), 1);
         assert_eq!(
-            value["svnMappings"][0]["tdMeasurements"]["tdinfo_hash"],
+            value["svnMappings"][0]["tdMeasurements"]["servtdInfoHash"],
             HASH_AA
         );
         assert_eq!(value["svnMappings"][0]["isvsvn"], 1);
@@ -582,22 +676,22 @@ mod tests {
     #[test]
     fn tcb_mapping_rejects_conflicting_current_hash() {
         let input = format!(
-            r#"{{"svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
         );
         let current = [0xAAu8; 48];
 
         let error = update_tcb_mapping_v2(input.as_bytes(), Some((&current, 2))).unwrap_err();
         assert!(error
             .to_string()
-            .contains("conflicting duplicate tdinfo_hash"));
+            .contains("conflicting duplicate servtdInfoHash"));
     }
 
     #[test]
     fn tcb_mapping_rejects_conflicting_duplicate_hashes() {
         let input = format!(
             r#"{{"svnMappings":[
-                {{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}},
-                {{"tdMeasurements":{{"tdinfo_hash":"{}"}},"isvsvn":2}}
+                {{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}"}},"isvsvn":1}},
+                {{"tdMeasurements":{{"servtdInfoHash":"{}"}},"isvsvn":2}}
             ]}}"#,
             HASH_AA.to_ascii_lowercase()
         );
@@ -605,6 +699,212 @@ mod tests {
         let error = update_tcb_mapping_v2(input.as_bytes(), None).unwrap_err();
         assert!(error
             .to_string()
-            .contains("conflicting duplicate tdinfo_hash"));
+            .contains("conflicting duplicate servtdInfoHash"));
+    }
+
+    #[test]
+    fn v2_mapping_update_records_servtd_attr() {
+        let input = format!(
+            r#"{{"id":"mapping","svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+        );
+        let masked = vec![0x55; 48];
+        let output = update_tcb_mapping_v2_with_attr(
+            input.as_bytes(),
+            Some((&masked, 2, SERVTD_ATTR_IGNORE_MROWNER)),
+        )
+        .unwrap();
+        let document: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        let mappings = document["svnMappings"].as_array().unwrap();
+        assert_eq!(mappings.len(), 2);
+        let masked_entry = mappings
+            .iter()
+            .find(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == "55".repeat(48))
+            .unwrap();
+        assert_eq!(
+            masked_entry["tdMeasurements"]["servtdAttr"],
+            SERVTD_ATTR_IGNORE_MROWNER
+        );
+        // Entries without a mask do not gain a `servtd_attr` field.
+        let plain = mappings
+            .iter()
+            .find(|mapping| mapping["tdMeasurements"]["servtdInfoHash"] == HASH_AA)
+            .unwrap();
+        assert!(plain["tdMeasurements"].get("servtdAttr").is_none());
+    }
+
+    #[test]
+    fn v2_mapping_update_keys_entries_by_hash_and_attr() {
+        let hash = vec![0x55; 48];
+        let first =
+            update_tcb_mapping_v2_with_attr(br#"{"svnMappings":[]}"#, Some((&hash, 1, 0))).unwrap();
+        // Same hash under another mask is a distinct entry with the same SVN.
+        let second =
+            update_tcb_mapping_v2_with_attr(&first, Some((&hash, 1, SERVTD_ATTR_IGNORE_MROWNER)))
+                .unwrap();
+        let document: serde_json::Value = serde_json::from_slice(&second).unwrap();
+        assert_eq!(document["svnMappings"].as_array().unwrap().len(), 2);
+        // Same hash and mask with another SVN conflicts.
+        assert!(update_tcb_mapping_v2_with_attr(
+            &second,
+            Some((&hash, 3, SERVTD_ATTR_IGNORE_MROWNER))
+        )
+        .is_err());
+        // The same hash under another mask must not map to another SVN.
+        let error =
+            update_tcb_mapping_v2_with_attr(&first, Some((&hash, 2, SERVTD_ATTR_IGNORE_MROWNER)))
+                .unwrap_err();
+        assert!(
+            error.to_string().contains("different servtdAttr"),
+            "{error}"
+        );
+        // Re-adding the same entry is stable.
+        assert_eq!(
+            update_tcb_mapping_v2_with_attr(&second, Some((&hash, 1, SERVTD_ATTR_IGNORE_MROWNER)))
+                .unwrap(),
+            second
+        );
+    }
+
+    #[test]
+    fn servtd_attr_text_parses_decimal_and_hex() {
+        assert_eq!(
+            parse_servtd_attr(
+                "0x0
+"
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(parse_servtd_attr(" 137438953472 ").unwrap(), 1 << 37);
+        assert_eq!(parse_servtd_attr("0x2000000000").unwrap(), 1 << 37);
+        assert_eq!(
+            parse_servtd_attr(" 0X3fe00000000 ").unwrap(),
+            0x3FE_0000_0000
+        );
+        assert!(parse_servtd_attr("").is_err());
+        assert!(parse_servtd_attr("  ").is_err());
+        assert!(parse_servtd_attr("0xZZ").is_err());
+        assert!(parse_servtd_attr("-1").is_err());
+        assert!(is_valid_servtd_attr(config_servtd_attr().unwrap()));
+    }
+
+    #[test]
+    fn servtd_attr_json_matches_the_migtd_build_parser() {
+        // The parser is shared with the MigTD build (`EXPECTED_SERVTD_ATTR`);
+        // the cases mirror the tests in the policy crate.
+        for (json, expected) in [
+            (r#"{"servtdAttr":"0x0"}"#, 0),
+            (r#"{"servtdAttr":"0x2000000000"}"#, 1 << 37),
+            (r#"{"servtdAttr":137438953472}"#, 1 << 37),
+            (r#"{"servtdAttr": " 0x0 "}"#, 0),
+            (r#"{"other":{"servtdAttr":"1"},"servtdAttr":"2"}"#, 2),
+        ] {
+            assert_eq!(servtd_attr_from_json(json).unwrap(), expected, "{json}");
+        }
+        for json in [
+            r#"{}"#,
+            r#"{"servtdAttr":-1}"#,
+            r#"{"servtdAttr":"zz"}"#,
+            r#"{"servtdAttr":""}"#,
+            r#"{"servtdAttr":"1","servtdAttr":"2"}"#,
+            r#"{"a":{"servtdAttr":"1"}}"#,
+            r#"{"servtdAttr":"0x1"#,
+            "not json",
+            // The earlier snake_case key is not read.
+            r#"{"servtd_attr":"0x0"}"#,
+        ] {
+            assert!(servtd_attr_from_json(json).is_err(), "{json}");
+        }
+    }
+
+    /// Known answers shared with `src/policy/src/v2/servtd_collateral.rs`: the
+    /// two independent implementations must agree on the masked hash.
+    #[test]
+    fn masked_hash_matches_known_answers() {
+        for (mask, expected) in [
+            (
+                0,
+                "7dfbbdb8c5f4c4707dca71acf1b1d501c9c182706190434c3fd33890bf8b29bf123dd792c07ec8193f21317b0df248a6",
+            ),
+            (
+                SERVTD_ATTR_IGNORE_MROWNER,
+                "096b8281fd232790a6480926679a372fe6138132fd62ada1e224e8918e514a7dee88784d2cbcc8adbfc6bf4654e6418f",
+            ),
+            (
+                SERVTD_ATTR_IGNORE_XFAM
+                    | SERVTD_ATTR_IGNORE_MRCONFIGID
+                    | SERVTD_ATTR_IGNORE_MROWNERCONFIG,
+                "9cf6c5515541d553f27cdc20dd6656af7b57b3d965980eb93b4672beff06b4576b355dd4548f2ce6c2f1a744c032f1a7",
+            ),
+        ] {
+            let mut td_info = TdInfoStruct {
+                attributes: [0xAA; 8],
+                xfam: [0xBB; 8],
+                mrtd: [0x11; 48],
+                mrconfig_id: [0x22; 48],
+                mrowner: [0x33; 48],
+                mrownerconfig: [0x44; 48],
+                rtmr0: [0x55; 48],
+                rtmr1: [0x66; 48],
+                rtmr2: [0x77; 48],
+                rtmr3: [0x88; 48],
+                reserved: [0; 112],
+            };
+            apply_servtd_attr_masks(&mut td_info, mask);
+            let hash = calculate_servtd_info_hash(td_info).unwrap();
+            assert_eq!(hex::encode(hash), expected, "mask {mask:#x}");
+        }
+    }
+
+    #[test]
+    fn v2_mapping_reads_servtd_attr_key() {
+        let input = format!(
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}","servtdAttr":{SERVTD_ATTR_IGNORE_MROWNER}}},"isvsvn":1}}]}}"#
+        );
+        let output = update_tcb_mapping_v2_with_attr(input.as_bytes(), None).unwrap();
+        let document: Value = serde_json::from_slice(&output).unwrap();
+        let measurements = &document["svnMappings"][0]["tdMeasurements"];
+        assert_eq!(measurements["servtdInfoHash"], HASH_AA);
+        assert_eq!(measurements["servtdAttr"], SERVTD_ATTR_IGNORE_MROWNER);
+    }
+
+    #[test]
+    fn v2_mapping_rejects_snake_case_keys() {
+        for key in ["tdinfo_hash", "servtd_attr"] {
+            let input = format!(
+                r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}","{key}":1}},"isvsvn":1}}]}}"#
+            );
+            let error = update_tcb_mapping_v2_with_attr(input.as_bytes(), None).unwrap_err();
+            assert!(error.to_string().contains("unknown key"), "{key}: {error}");
+        }
+    }
+
+    #[test]
+    fn v2_mapping_rejects_the_tdinfo_hash_key() {
+        let input = format!(
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"tdinfo_hash":"{HASH_AA}"}},"isvsvn":1}}]}}"#
+        );
+        let error = update_tcb_mapping_v2_with_attr(input.as_bytes(), None).unwrap_err();
+        assert!(error.to_string().contains("servtdInfoHash missing"));
+    }
+
+    #[test]
+    fn v2_mapping_update_rejects_unsupported_attr_bits() {
+        let hash = vec![0x55; 48];
+        assert!(is_valid_servtd_attr(SERVTD_ATTR_IGNORE_MROWNER));
+        // IGNORE_ATTRIBUTES, IGNORE_MRTD and IGNORE_RTMR0-3 are rejected.
+        for bit in [32, 34, 38, 39, 40, 41] {
+            assert!(!is_valid_servtd_attr(1u64 << bit), "bit {bit}");
+        }
+        assert!(update_tcb_mapping_v2_with_attr(
+            br#"{"svnMappings":[]}"#,
+            Some((&hash, 1, 1 << 32))
+        )
+        .is_err());
+        let input = format!(
+            r#"{{"svnMappings":[{{"tdMeasurements":{{"servtdInfoHash":"{HASH_AA}","servtdAttr":{}}},"isvsvn":1}}]}}"#,
+            1u64 << 48
+        );
+        assert!(update_tcb_mapping_v2_with_attr(input.as_bytes(), None).is_err());
     }
 }
