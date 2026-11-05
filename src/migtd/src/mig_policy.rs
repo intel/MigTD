@@ -350,6 +350,7 @@ mod v2 {
         // 1. Verify quote & get supplemental data
         let (fmspc, suppl_data) = verify_quote(quote, policy.get_collaterals())
             .map_err(|_| PolicyError::QuoteVerification)?;
+        verify_migtd_tee_tcb_svn2(quote)?;
 
         // 2. Verify the signature of the provided policy and the integrity of the event log
         let verified_policy = verify_policy_and_event_log(
@@ -566,7 +567,28 @@ mod v2 {
         if !validity {
             return Err(PolicyError::InvalidTdReport);
         }
+        verify_tee_tcb_svn2(
+            &tdx_report.tee_tcb_info.valid,
+            &tdx_report.tee_tcb_info.tee_tcb_svn,
+            &tdx_report.tee_tcb_info.tee_tcb_svn2,
+        )?;
         Ok(tdx_report)
+    }
+
+    /// MigTD is relaunched after a TD-preserving TDX module update, so its
+    /// TEE_TCB_SVN2, when reported, must equal TEE_TCB_SVN.
+    fn verify_tee_tcb_svn2(
+        valid: &[u8; 8],
+        tee_tcb_svn: &[u8; 16],
+        tee_tcb_svn2: &[u8; 16],
+    ) -> Result<(), PolicyError> {
+        // TEE_TCB_INFO.VALID bits 16-17 cover TEE_TCB_SVN2 at offset 128.
+        const TEE_TCB_SVN2_VALID: u8 = 0x03;
+
+        if valid[2] & TEE_TCB_SVN2_VALID == TEE_TCB_SVN2_VALID && tee_tcb_svn != tee_tcb_svn2 {
+            return Err(PolicyError::SvnMismatch);
+        }
+        Ok(())
     }
 
     /// Extract the CRL number from the policy being evaluated. Local CRL
@@ -746,6 +768,24 @@ mod v2 {
         let timestamp = 1704067200; // Corresponds to 2024-01-01T00:00:00Z
         let iso_date = unix_to_iso8601(timestamp).unwrap();
         assert_eq!(iso_date, "2024-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_verify_tee_tcb_svn2() {
+        let mut valid = [0xff, 0x01, 0x03, 0, 0, 0, 0, 0];
+        let svn = [0x07; 16];
+        let mut svn2 = [0x07; 16];
+        assert!(verify_tee_tcb_svn2(&valid, &svn, &svn2).is_ok());
+
+        svn2[0] = 0x06;
+        assert!(matches!(
+            verify_tee_tcb_svn2(&valid, &svn, &svn2),
+            Err(PolicyError::SvnMismatch)
+        ));
+
+        // TEE_TCB_SVN2 not reported by the TDX module.
+        valid[2] = 0;
+        assert!(verify_tee_tcb_svn2(&valid, &svn, &svn2).is_ok());
     }
 
     #[cfg(test)]
