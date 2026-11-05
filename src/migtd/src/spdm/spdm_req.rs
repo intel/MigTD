@@ -447,27 +447,6 @@ pub async fn send_and_receive_sdm_migration_attest_info(
             .ok_or(SPDM_STATUS_BUFFER_FULL)?;
     }
 
-    #[cfg(not(feature = "policy_v2"))]
-    // Init TDINFO
-    {
-        let tdinfo_init_owned = {
-            let report = tdx_tdcall::tdreport::tdcall_report(&[0u8; 64])
-                .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
-            report.td_info.as_bytes().to_vec()
-        };
-        let tdinfo_init: &[u8] = &tdinfo_init_owned;
-        let tdinfo_init_element = VdmMessageElement {
-            element_type: VdmMessageElementType::TdReportInit,
-            length: tdinfo_init.len() as u32,
-        };
-        cnt += tdinfo_init_element
-            .encode(&mut writer)
-            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
-        cnt += writer
-            .extend_from_slice(tdinfo_init)
-            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
-    }
-
     spdm_requester.common.reset_buffer_via_request_code(
         SpdmRequestResponseCode::SpdmRequestVendorDefinedRequest,
         None,

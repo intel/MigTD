@@ -531,24 +531,6 @@ pub fn handle_exchange_mig_attest_info_req(
     #[cfg(feature = "policy_v2")]
     let servtd_ext_bytes_vec = servtd_ext_bytes.to_vec();
 
-    #[cfg(not(feature = "policy_v2"))]
-    // Init TDINFO from src
-    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    #[cfg(not(feature = "policy_v2"))]
-    if vdm_element.element_type != VdmMessageElementType::TdReportInit {
-        error!(
-            "Invalid VDM message element_type: {:x?}\n",
-            vdm_element.element_type
-        );
-        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
-    }
-    #[cfg(not(feature = "policy_v2"))]
-    let td_report_init = reader
-        .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    #[cfg(not(feature = "policy_v2"))]
-    let _ = td_report_init;
-
     // Policy-specific verification
     #[cfg(not(feature = "policy_v2"))]
     rsp_verify_peer_attestation_v1(
