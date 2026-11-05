@@ -111,7 +111,7 @@ enum_builder! {
         QuoteMy => 0x03,
         EventLogMy => 0x04,
         MigPolicyMy => 0x05,
-        SerVtdExt => 0x10,
+        ServtdExt => 0x10,
         TdReportInit => 0x12,
         EventLogInit => 0x14,
         MigrationExportVersion => 0x81,
@@ -686,7 +686,7 @@ mod tests {
             VdmMessageElementType::QuoteMy,
             VdmMessageElementType::EventLogMy,
             VdmMessageElementType::MigPolicyMy,
-            VdmMessageElementType::SerVtdExt,
+            VdmMessageElementType::ServtdExt,
         ]);
         if !cfg!(feature = "policy_v2") {
             elements.push(VdmMessageElementType::TdReportInit);
@@ -708,7 +708,7 @@ mod tests {
                 VdmMessageElementType::TdReportMy,
                 VdmMessageElementType::EventLogMy,
                 VdmMessageElementType::MigPolicyMy,
-                VdmMessageElementType::SerVtdExt,
+                VdmMessageElementType::ServtdExt,
             ],
         );
     }

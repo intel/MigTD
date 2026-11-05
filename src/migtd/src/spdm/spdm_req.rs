@@ -436,7 +436,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
         let servtd_ext = read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
             .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
         let servtd_ext_element = VdmMessageElement {
-            element_type: VdmMessageElementType::SerVtdExt,
+            element_type: VdmMessageElementType::ServtdExt,
             length: servtd_ext.as_bytes().len() as u32,
         };
         cnt += servtd_ext_element
@@ -1021,7 +1021,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
         .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?;
 
     let servtd_ext_element = VdmMessageElement {
-        element_type: VdmMessageElementType::SerVtdExt,
+        element_type: VdmMessageElementType::ServtdExt,
         length: servtd_ext.as_bytes().len() as u32,
     };
     cnt += servtd_ext_element
