@@ -190,16 +190,6 @@ the initial release SVN to be no greater than the current release SVN. The
 initial hash comes from `SERVTD_EXT`; the current hash comes from the
 authenticated peer quote or TDREPORT.
 
-This one-hash flow does not separately compare initial and current `policySvn`
-values or require their `MROWNER` values to match. Different hashes assigned
-the same `isvsvn` need not have equal or monotonic `policySvn` values. If a
-security-relevant policy update must not be rolled back, assign it a higher
-release `isvsvn`. Including `policySvn` in a hash authenticates its value; it
-does not establish numeric ordering between releases.
-
-The existing current-policy check remains: the source/old MigTD requires the
-destination/new MigTD's `policySvn` to be no lower than its own.
-
 ## 4. Build Final MigTD Image with Policy, Issuer Chain, and Mapping
 
 Place artifacts where the build expects them (e.g. under `config/templates`):
