@@ -580,13 +580,31 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     #[cfg(feature = "policy_v2")]
     let mig_policy_hash_dst = reader
         .take(vdm_element.length as usize)
-        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?
+        .to_vec();
     #[cfg(not(feature = "policy_v2"))]
     let _mig_policy_hash_dst = reader
         .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
+    // SERVTD_EXT dst
+    let servtd_ext_dst = {
+        let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+        if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
+            error!(
+                "Invalid VDM message element_type: {:x?}\n",
+                vdm_element.element_type
+            );
+            return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+        }
+        reader
+            .take(vdm_element.length as usize)
+            .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?
+    };
+
     // Policy-specific verification
+    #[cfg(not(feature = "policy_v2"))]
+    let _ = servtd_ext_dst;
     #[cfg(not(feature = "policy_v2"))]
     verify_peer_attestation_v1(
         &verified_report_local,
@@ -601,7 +619,8 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     verify_peer_attestation_v2(
         &quote_dst_vec,
         &event_log_dst_vec,
-        mig_policy_hash_dst,
+        &mig_policy_hash_dst,
+        servtd_ext_dst,
         &peer_data,
         &th1,
         spdm_requester,
@@ -692,6 +711,7 @@ fn verify_peer_attestation_v2(
     quote_peer: &[u8],
     event_log_peer: &[u8],
     mig_policy_hash_peer: &[u8],
+    servtd_ext_peer: &[u8],
     peer_data: &[u8],
     th1: &SpdmDigestStruct,
     spdm_requester: &mut RequesterContext,
@@ -707,8 +727,13 @@ fn verify_peer_attestation_v2(
     // 2. Authenticate remote (includes quote verification internally)
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
-        let policy_check_result =
-            mig_policy::authenticate_remote(true, quote_peer, peer_data, event_log_peer);
+        let policy_check_result = mig_policy::authenticate_remote(
+            true,
+            quote_peer,
+            peer_data,
+            event_log_peer,
+            servtd_ext_peer,
+        );
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
             error!("{:x?}\n", e);
@@ -739,6 +764,9 @@ fn verify_peer_attestation_v2(
             }
         }
     }
+
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    let _ = servtd_ext_peer;
 
     Ok(())
 }
@@ -1143,6 +1171,20 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
     }
     let mig_policy_hash_dst = reader
         .take(vdm_element.length as usize)
+        .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?
+        .to_vec();
+
+    //servtd ext dst
+    let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
+    if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
+        error!(
+            "Invalid VDM message element_type: {:x?}\n",
+            vdm_element.element_type
+        );
+        return Err(SPDM_STATUS_INVALID_MSG_FIELD);
+    }
+    let servtd_ext_dst = reader
+        .take(vdm_element.length as usize)
         .ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
 
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
@@ -1157,6 +1199,7 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
             &td_report_dst_vec,
             &event_log_dst_vec,
             &peer_data,
+            servtd_ext_dst,
         );
 
         if let Err(e) = &policy_check_result {
@@ -1182,6 +1225,9 @@ pub async fn send_and_receive_sdm_rebind_attest_info(
             return Err(SpdmStatus::from(MigrationResult::MutualAttestationError));
         }
     }
+
+    #[cfg(feature = "test_disable_ra_and_accept_all")]
+    let _ = servtd_ext_dst;
 
     let vdm_attest_info_src_hash =
         digest_sha384(&send_buffer[..send_used]).map_err(|_| SPDM_STATUS_CRYPTO_ERROR)?;

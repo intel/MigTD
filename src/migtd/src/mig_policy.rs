@@ -75,11 +75,14 @@ mod v2 {
     use crate::migration::pre_session_data::LogErr;
     use crate::migration::servtd_ext::ServtdExt;
 
-    /// Compute the outer `tdinfo_hash` (attr=0) for the TD described by a
-    /// `TdInfo` returned by `TDG.MR.REPORT`. This is the canonical lookup key
-    /// for `servtd_tcb_mapping` after the TCB-mapping redesign.
-    fn tdinfo_hash_from_td_info(td: &TdInfo) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
-        policy::compute_tdinfo_hash_from_fields(
+    /// Compute the `SERVTD_INFO_HASH` of the TD described by a `TdInfo`
+    /// returned by `TDG.MR.REPORT`, after the fields selected by `servtd_attr`
+    /// are replaced by 0. This is the lookup key stored in the TCB mapping.
+    fn servtd_info_hash_from_td_info(
+        td: &TdInfo,
+        servtd_attr: u64,
+    ) -> Result<[u8; SHA384_DIGEST_SIZE], PolicyError> {
+        policy::compute_servtd_info_hash_from_fields(
             &td.attributes,
             &td.xfam,
             &td.mrtd,
@@ -90,6 +93,7 @@ mod v2 {
             &td.rtmr1,
             &td.rtmr2,
             &td.rtmr3,
+            servtd_attr,
         )
     }
 
@@ -148,7 +152,13 @@ mod v2 {
         let (fmspc, suppl_data) = verify_quote(&quote, policy.get_collaterals())?;
         crate::quote::verify_local_report(&suppl_data, &report)
             .map_err(|_| PolicyError::QuoteVerification)?;
-        setup_evaluation_data(fmspc, &suppl_data, policy, policy.get_collaterals())
+        setup_evaluation_data(
+            fmspc,
+            &suppl_data,
+            policy,
+            policy.get_collaterals(),
+            crate::migration::servtd_ext::EXPECTED_SERVTD_ATTR,
+        )
     }
 
     /// Get reference to the global verified policy
@@ -162,6 +172,7 @@ mod v2 {
         quote_peer: &[u8],
         policy_peer: &[u8],
         event_log_peer: &[u8],
+        servtd_ext_peer: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
         let (policy_peer, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(policy_peer)
@@ -173,6 +184,7 @@ mod v2 {
                 policy_peer,
                 peer_issuer_chain,
                 peer_servtd_corim,
+                servtd_ext_peer,
             )
         } else {
             evaluate_migration_source(
@@ -181,6 +193,7 @@ mod v2 {
                 policy_peer,
                 peer_issuer_chain,
                 peer_servtd_corim,
+                servtd_ext_peer,
             )
         }
     }
@@ -191,13 +204,16 @@ mod v2 {
         mig_policy_dst: &[u8],
         policy_issuer_chain: &[u8],
         peer_servtd_corim: Option<&[u8]>,
+        servtd_ext_dst: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        let servtd_attr_dst = peer_cur_servtd_attr(servtd_ext_dst)?;
         let (evaluation_data_dst, verified_policy_dst, suppl_data) = authenticate_remote_common(
             quote_dst,
             event_log_dst,
             mig_policy_dst,
             policy_issuer_chain,
             peer_servtd_corim,
+            servtd_attr_dst,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -227,13 +243,16 @@ mod v2 {
         mig_policy_src: &[u8],
         policy_issuer_chain: &[u8],
         peer_servtd_corim: Option<&[u8]>,
+        servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        let servtd_attr_src = peer_cur_servtd_attr(servtd_ext_src)?;
         let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
             quote_src,
             event_log_src,
             mig_policy_src,
             policy_issuer_chain,
             peer_servtd_corim,
+            servtd_attr_src,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -257,7 +276,9 @@ mod v2 {
         tdreport_dst: &[u8],
         event_log_dst: &[u8],
         mig_policy_dst: &[u8],
+        servtd_ext_dst: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        let servtd_attr_dst = peer_cur_servtd_attr(servtd_ext_dst)?;
         let (mig_policy_dst, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(mig_policy_dst)
                 .ok_or(PolicyError::InvalidParameter)?;
@@ -267,6 +288,7 @@ mod v2 {
             mig_policy_dst,
             peer_issuer_chain,
             peer_servtd_corim,
+            servtd_attr_dst,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -298,6 +320,7 @@ mod v2 {
         mig_policy_src: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        let servtd_attr_src = peer_cur_servtd_attr(servtd_ext_src)?;
         let (mig_policy_src, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(mig_policy_src)
                 .ok_or(PolicyError::InvalidParameter)?;
@@ -308,6 +331,7 @@ mod v2 {
             mig_policy_src,
             peer_issuer_chain,
             peer_servtd_corim,
+            servtd_attr_src,
         )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
@@ -344,6 +368,7 @@ mod v2 {
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
         peer_servtd_corim: Option<&[u8]>,
+        servtd_attr: u64,
     ) -> Result<(PolicyEvaluationInfo, VerifiedPolicy<'p>, Vec<u8>), PolicyError> {
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
@@ -366,6 +391,7 @@ mod v2 {
             &suppl_data,
             &verified_policy,
             policy.get_collaterals(),
+            servtd_attr,
         )?;
 
         Ok((evaluation_data, verified_policy, suppl_data))
@@ -377,6 +403,7 @@ mod v2 {
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
         peer_servtd_corim: Option<&[u8]>,
+        servtd_attr: u64,
     ) -> Result<(PolicyEvaluationInfo, VerifiedPolicy<'p>, TdxReport), PolicyError> {
         // 1. Verify quote & get supplemental data
         let tdreport_verified = verify_tdreport(tdreport)?;
@@ -392,7 +419,7 @@ mod v2 {
 
         // 3. Get TCB evaluation info from the collaterals
         let evaluation_data =
-            setup_evaluation_data_with_tdreport(&tdreport_verified, &verified_policy)?;
+            setup_evaluation_data_with_tdreport(&tdreport_verified, &verified_policy, servtd_attr)?;
 
         Ok((evaluation_data, verified_policy, tdreport_verified))
     }
@@ -400,16 +427,22 @@ mod v2 {
     /// Compare the initial SVN from the source's verified mapping with
     /// the current SVN derived from its authenticated report. The source mapping
     /// allows an older destination to accept newer source releases.
+    ///
+    /// `INIT_ATTR` and `CUR_ATTR` shall be supported masks. The initial hash is
+    /// looked up with `INIT_ATTR`. The current TDINFO was already looked up with
+    /// `CUR_ATTR` when `source_evaluation` was built.
     fn verify_init_servtd_svn_order(
         source_policy: &VerifiedPolicy,
         source_evaluation: &PolicyEvaluationInfo,
         servtd_ext: &ServtdExt,
     ) -> Result<(), PolicyError> {
-        if servtd_ext.init_attr != [0; 8] || servtd_ext.cur_servtd_attr != [0; 8] {
+        let init_attr = u64::from_le_bytes(servtd_ext.init_attr);
+        let cur_attr = u64::from_le_bytes(servtd_ext.cur_servtd_attr);
+        if !policy::is_valid_servtd_attr(init_attr) || !policy::is_valid_servtd_attr(cur_attr) {
             return Err(PolicyError::UnqualifiedMigTdInfo);
         }
         let init_svn = source_policy
-            .servtd_lookup_by_tdinfo_hash(&servtd_ext.init_servtd_info_hash)
+            .servtd_lookup_by_servtd_info_hash(&servtd_ext.init_servtd_info_hash, init_attr)
             .ok_or(PolicyError::UnqualifiedMigTdInfo)?
             .isvsvn;
         let current_svn = source_evaluation
@@ -420,6 +453,18 @@ mod v2 {
             return Err(PolicyError::SvnMismatch);
         }
         Ok(())
+    }
+
+    /// `CUR_ATTR` of the peer from its `SERVTD_EXT`. It shall be a supported
+    /// mask and selects the mapping entries the peer is looked up with.
+    fn peer_cur_servtd_attr(servtd_ext: &[u8]) -> Result<u64, PolicyError> {
+        let servtd_ext =
+            ServtdExt::read_from_bytes(servtd_ext).ok_or(PolicyError::InvalidParameter)?;
+        let cur_attr = u64::from_le_bytes(servtd_ext.cur_servtd_attr);
+        if !policy::is_valid_servtd_attr(cur_attr) {
+            return Err(PolicyError::UnqualifiedMigTdInfo);
+        }
+        Ok(cur_attr)
     }
 
     fn get_rtmrs_from_tdreport(
@@ -580,6 +625,7 @@ mod v2 {
         suppl_data: &[u8],
         policy: &VerifiedPolicy,
         collaterals: &Collaterals,
+        servtd_attr: u64,
     ) -> Result<PolicyEvaluationInfo, PolicyError> {
         let (tcb_date, tcb_status) = get_tcb_date_and_status_from_suppl_data(suppl_data)?;
         let collateral = get_collateral_with_fmspc(&fmspc, collaterals)?;
@@ -587,7 +633,7 @@ mod v2 {
         let report_value = Report::new(suppl_data)?;
 
         let migtd = policy
-            .servtd_lookup_by_report(&report_value)
+            .servtd_lookup_by_report(&report_value, servtd_attr)
             .ok_or(PolicyError::UnqualifiedMigTdInfo)?;
         if policy.requires_servtd_tcb_status() && migtd.tcb_status.is_none() {
             return Err(PolicyError::UnqualifiedMigTdInfo);
@@ -604,6 +650,7 @@ mod v2 {
             tcb_evaluation_number: Some(tcb_evaluation_number),
             fmspc: Some(fmspc),
             migtd_isvsvn: Some(migtd.isvsvn),
+            migtd_servtd_attr: Some(migtd.servtd_attr),
             migtd_tcb_status: migtd.tcb_status,
             migtd_tcb_date: migtd.tcb_date,
             pck_crl_num: Some(pck_crl_num),
@@ -615,13 +662,14 @@ mod v2 {
     fn setup_evaluation_data_with_tdreport(
         tdreport: &TdxReport,
         policy: &VerifiedPolicy,
+        servtd_attr: u64,
     ) -> Result<PolicyEvaluationInfo, PolicyError> {
         // Rebinding authenticates this peer TDREPORT before reaching here.
         // Keep all evaluation fields bound to that report, including in
         // mock-quote builds, rather than substituting local test evidence.
-        let tdinfo_hash = tdinfo_hash_from_td_info(&tdreport.td_info)?;
+        let servtd_info_hash = servtd_info_hash_from_td_info(&tdreport.td_info, servtd_attr)?;
         let migtd = policy
-            .servtd_lookup_by_tdinfo_hash(&tdinfo_hash)
+            .servtd_lookup_by_servtd_info_hash(&servtd_info_hash, servtd_attr)
             .ok_or(PolicyError::UnqualifiedMigTdInfo)?;
         if policy.requires_servtd_tcb_status() && migtd.tcb_status.is_none() {
             return Err(PolicyError::UnqualifiedMigTdInfo);
@@ -634,6 +682,7 @@ mod v2 {
             tcb_evaluation_number: None,
             fmspc: None,
             migtd_isvsvn: Some(migtd.isvsvn),
+            migtd_servtd_attr: Some(migtd.servtd_attr),
             migtd_tcb_status: migtd.tcb_status,
             migtd_tcb_date: migtd.tcb_date,
             pck_crl_num: None,
@@ -707,6 +756,7 @@ mod v2 {
         event_log_src: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        let servtd_attr_src = peer_cur_servtd_attr(servtd_ext_src)?;
         let (mig_policy_src, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(peer_data)
                 .ok_or(PolicyError::InvalidParameter)?;
@@ -717,6 +767,7 @@ mod v2 {
             mig_policy_src,
             peer_issuer_chain,
             peer_servtd_corim,
+            servtd_attr_src,
         )?;
 
         let relative_reference = get_local_tcb_evaluation_info()?;
@@ -759,7 +810,9 @@ mod v2 {
     #[cfg(test)]
     fn endorse_test_report(policy: &mut VerifiedPolicy, tdreport: &TdxReport) {
         policy.servtd_tcb_mapping.as_mut().unwrap().svn_mappings[0].td_measurements =
-            Measurements::new_from_bytes(&tdinfo_hash_from_td_info(&tdreport.td_info).unwrap());
+            Measurements::new_from_bytes(
+                &servtd_info_hash_from_td_info(&tdreport.td_info, 0).unwrap(),
+            );
     }
 
     #[cfg(test)]
@@ -798,8 +851,8 @@ mod v2 {
                 TdxReport::read_from_bytes(&[0; core::mem::size_of::<TdxReport>()]).unwrap();
             endorse_test_report(&mut peer, &tdreport);
             endorse_test_report(&mut local, &tdreport);
-            let peer_data = setup_evaluation_data_with_tdreport(&tdreport, &peer).unwrap();
-            let local_data = setup_evaluation_data_with_tdreport(&tdreport, &local).unwrap();
+            let peer_data = setup_evaluation_data_with_tdreport(&tdreport, &peer, 0).unwrap();
+            let local_data = setup_evaluation_data_with_tdreport(&tdreport, &local, 0).unwrap();
             assert_eq!(peer_data.servtd_crl_num, Some(7));
             assert_eq!(local_data.servtd_crl_num, Some(8));
         }
@@ -955,7 +1008,7 @@ mod v2 {
             suppl_data[Report::R_TCB_STATUS.start..][..status.len()].copy_from_slice(status);
             assert_eq!(
                 compute_tdinfo_hash_from_report(&Report::new(&suppl_data).unwrap()).unwrap(),
-                tdinfo_hash_from_td_info(&tdreport.td_info).unwrap()
+                servtd_info_hash_from_td_info(&tdreport.td_info, 0).unwrap()
             );
 
             [
@@ -964,14 +1017,15 @@ mod v2 {
                     &suppl_data,
                     policy,
                     policy.get_collaterals(),
+                    0,
                 ),
-                setup_evaluation_data_with_tdreport(tdreport, policy),
+                setup_evaluation_data_with_tdreport(tdreport, policy, 0),
             ]
         }
 
         fn assert_unendorsed(policy: &VerifiedPolicy, tdreport: &TdxReport) {
             assert!(!policy.requires_servtd_tcb_status());
-            let hash = tdinfo_hash_from_td_info(&tdreport.td_info).unwrap();
+            let hash = servtd_info_hash_from_td_info(&tdreport.td_info, 0).unwrap();
             assert!(policy.servtd_lookup_by_tdinfo_hash(&hash).is_none());
 
             let crl_only = PolicyEvaluationInfo {
@@ -1236,7 +1290,7 @@ mod v2 {
                 let input = corim_policy_input();
                 let policy = load_corim_policy(&input);
                 let mut tdreport = endorsed_tdreport();
-                let endorsed_hash = tdinfo_hash_from_td_info(&tdreport.td_info).unwrap();
+                let endorsed_hash = servtd_info_hash_from_td_info(&tdreport.td_info, 0).unwrap();
                 assert!(policy
                     .servtd_lookup_by_tdinfo_hash(&endorsed_hash)
                     .is_some());
@@ -1267,6 +1321,12 @@ mod v2 {
 
     #[cfg(test)]
     fn continuity_policy() -> VerifiedPolicy<'static> {
+        continuity_policy_with_entries(&[(0x11, 0, 1), (0x22, 0, 2)])
+    }
+
+    /// Policy whose JSON mapping holds `(hash tag, servtd_attr, isvsvn)` entries.
+    #[cfg(test)]
+    fn continuity_policy_with_entries(entries: &[(u8, u64, u16)]) -> VerifiedPolicy<'static> {
         let input = include_bytes!("../../policy/test/policy_v2/policy_v2.json");
         let chain =
             include_bytes!("../../policy/test/policy_v2/cert_chain/policy_issuer_chain.pem");
@@ -1281,10 +1341,13 @@ mod v2 {
             version: 1,
             issue_date: String::new(),
             next_update: String::new(),
-            svn_mappings: [(0x11u8, 1u16), (0x22, 2)]
+            svn_mappings: entries
                 .iter()
-                .map(|(tag, isvsvn)| SvnMapping {
-                    td_measurements: Measurements::new_from_bytes(&[*tag; SHA384_DIGEST_SIZE]),
+                .map(|(tag, attr, isvsvn)| SvnMapping {
+                    td_measurements: Measurements::new_with_attr(
+                        &[*tag; SHA384_DIGEST_SIZE],
+                        *attr,
+                    ),
                     isvsvn: *isvsvn,
                 })
                 .collect(),
@@ -1306,10 +1369,11 @@ mod v2 {
         servtd_ext.init_attr = *init_attr;
         servtd_ext.cur_servtd_info_hash = *cur_hash;
         servtd_ext.cur_servtd_attr = *cur_attr;
+        let current =
+            policy.servtd_lookup_by_servtd_info_hash(cur_hash, u64::from_le_bytes(*cur_attr));
         let evaluation = PolicyEvaluationInfo {
-            migtd_isvsvn: policy
-                .servtd_lookup_by_tdinfo_hash(cur_hash)
-                .map(|entry| entry.isvsvn),
+            migtd_isvsvn: current.as_ref().map(|entry| entry.isvsvn),
+            migtd_servtd_attr: current.as_ref().map(|entry| entry.servtd_attr),
             ..Default::default()
         };
         verify_init_servtd_svn_order(policy, &evaluation, &servtd_ext)
@@ -1352,6 +1416,7 @@ mod v2 {
         servtd_ext.cur_servtd_info_hash = [0x22; SHA384_DIGEST_SIZE];
         let mut evaluation = PolicyEvaluationInfo {
             migtd_isvsvn: Some(1),
+            migtd_servtd_attr: Some(0),
             ..Default::default()
         };
 
@@ -1418,27 +1483,82 @@ mod v2 {
     }
 
     #[test]
-    fn one_hash_mapping_rejects_masked_servtd_info_hashes() {
+    fn unsupported_servtd_attr_bits_are_rejected() {
         let mapping = continuity_policy();
+        for bad in [1u64, 1 << 32, 1 << 42, 1 << 48, 1 << 63] {
+            assert!(matches!(
+                verify_continuity_order(
+                    &mapping,
+                    &[0x11; 48],
+                    &bad.to_le_bytes(),
+                    &[0x22; 48],
+                    &[0; 8],
+                ),
+                Err(PolicyError::UnqualifiedMigTdInfo)
+            ));
+            assert!(matches!(
+                verify_continuity_order(
+                    &mapping,
+                    &[0x11; 48],
+                    &[0; 8],
+                    &[0x22; 48],
+                    &bad.to_le_bytes(),
+                ),
+                Err(PolicyError::UnqualifiedMigTdInfo)
+            ));
+        }
+    }
+
+    #[test]
+    fn masked_servtd_attr_resolves_initial_and_current_entries() {
+        let mask = policy::SERVTD_ATTR_IGNORE_MROWNER | policy::SERVTD_ATTR_IGNORE_MROWNERCONFIG;
+        let mapping = continuity_policy_with_entries(&[(0x11, mask, 1), (0x22, mask, 2)]);
+        let attr = mask.to_le_bytes();
+        assert!(verify_continuity_order(&mapping, &[0x11; 48], &attr, &[0x22; 48], &attr).is_ok());
         assert!(matches!(
-            verify_continuity_order(
-                &mapping,
-                &[0x11; 48],
-                &1u64.to_le_bytes(),
-                &[0x22; 48],
-                &[0; 8],
-            ),
+            verify_continuity_order(&mapping, &[0x22; 48], &attr, &[0x11; 48], &attr),
+            Err(PolicyError::SvnMismatch)
+        ));
+    }
+
+    #[test]
+    fn initial_attr_must_match_the_mapping_entry() {
+        let mask = policy::SERVTD_ATTR_IGNORE_MROWNER;
+        let mapping = continuity_policy_with_entries(&[(0x11, mask, 1), (0x22, 0, 2)]);
+        // The 0x11 entry was computed with `mask`; claiming attr 0 is a miss.
+        assert!(matches!(
+            verify_continuity_order(&mapping, &[0x11; 48], &[0; 8], &[0x22; 48], &[0; 8]),
+            Err(PolicyError::UnqualifiedMigTdInfo)
+        ));
+        assert!(verify_continuity_order(
+            &mapping,
+            &[0x11; 48],
+            &mask.to_le_bytes(),
+            &[0x22; 48],
+            &[0; 8],
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn peer_cur_attr_comes_from_servtd_ext() {
+        let mask = policy::SERVTD_ATTR_IGNORE_MROWNER;
+        let mut servtd_ext =
+            ServtdExt::read_from_bytes(&[0; core::mem::size_of::<ServtdExt>()]).unwrap();
+        assert!(matches!(peer_cur_servtd_attr(servtd_ext.as_bytes()), Ok(0)));
+        servtd_ext.cur_servtd_attr = mask.to_le_bytes();
+        assert!(matches!(
+            peer_cur_servtd_attr(servtd_ext.as_bytes()),
+            Ok(attr) if attr == mask
+        ));
+        servtd_ext.cur_servtd_attr = (1u64 << 32).to_le_bytes();
+        assert!(matches!(
+            peer_cur_servtd_attr(servtd_ext.as_bytes()),
             Err(PolicyError::UnqualifiedMigTdInfo)
         ));
         assert!(matches!(
-            verify_continuity_order(
-                &mapping,
-                &[0x11; 48],
-                &[0; 8],
-                &[0x22; 48],
-                &1u64.to_le_bytes(),
-            ),
-            Err(PolicyError::UnqualifiedMigTdInfo)
+            peer_cur_servtd_attr(&[0; 8]),
+            Err(PolicyError::InvalidParameter)
         ));
     }
 }

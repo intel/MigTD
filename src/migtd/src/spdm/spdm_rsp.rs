@@ -7,6 +7,9 @@ use crate::mig_policy;
 use crate::migration::pre_session_data::local_peer_data;
 #[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
 use crate::migration::rebinding::{write_rebinding_session_token, write_servtd_rebind_attr};
+use crate::migration::servtd_ext::read_servtd_ext;
+#[cfg(all(feature = "main", feature = "policy_v2", feature = "vmcall-raw"))]
+use crate::migration::servtd_ext::rebinding_new_servtd_ext;
 #[cfg(feature = "policy_v2")]
 use crate::migration::servtd_ext::{write_approved_servtd_ext_hash, ServtdExt};
 use crate::migration::MigrationResult;
@@ -649,6 +652,27 @@ pub fn handle_exchange_mig_attest_info_req(
         .extend_from_slice(&mig_policy_dst_hash)
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
+    // SERVTD_EXT of the destination, so the source knows its CUR_ATTR
+    {
+        let servtd_ext = match &unsafe { upcast_mut(responder_context) }.info {
+            ResponderContextExInfo::MigrationInformation { mig_info, .. } => {
+                read_servtd_ext(mig_info.binding_handle, &mig_info.target_td_uuid)
+                    .map_err(|_| SPDM_STATUS_INVALID_STATE_LOCAL)?
+            }
+            _ => return Err(SPDM_STATUS_INVALID_STATE_LOCAL),
+        };
+        let servtd_ext_element = VdmMessageElement {
+            element_type: VdmMessageElementType::SerVtdExt,
+            length: servtd_ext.as_bytes().len() as u32,
+        };
+        cnt += servtd_ext_element
+            .encode(&mut writer)
+            .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+        cnt += writer
+            .extend_from_slice(servtd_ext.as_bytes())
+            .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+    }
+
     Ok(cnt)
 }
 
@@ -1221,6 +1245,19 @@ pub fn handle_exchange_rebind_attest_info_req(
         .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
     cnt += writer
         .extend_from_slice(&mig_policy_dst_hash)
+        .ok_or(SPDM_STATUS_BUFFER_FULL)?;
+
+    // SERVTD_EXT of the new MigTD, so the old one knows its CUR_ATTR
+    let servtd_ext = rebinding_new_servtd_ext();
+    let servtd_ext_element = VdmMessageElement {
+        element_type: VdmMessageElementType::SerVtdExt,
+        length: servtd_ext.as_bytes().len() as u32,
+    };
+    cnt += servtd_ext_element
+        .encode(&mut writer)
+        .map_err(|_| SPDM_STATUS_BUFFER_FULL)?;
+    cnt += writer
+        .extend_from_slice(servtd_ext.as_bytes())
         .ok_or(SPDM_STATUS_BUFFER_FULL)?;
 
     Ok(cnt)

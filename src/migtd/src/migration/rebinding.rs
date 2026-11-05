@@ -13,7 +13,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use tdx_tdcall::tdx::{tdcall_servtd_rebind_approve, tdcall_vm_write};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use crate::migration::servtd_ext::read_servtd_ext;
+use crate::migration::servtd_ext::{read_servtd_ext, rebinding_new_servtd_ext};
 use crate::migration::transport::*;
 #[cfg(feature = "spdm_attestation")]
 use crate::spdm;
@@ -366,22 +366,25 @@ async fn rebinding_new_prepare(
     peer_data: Vec<u8>,
 ) -> Result<(), MigrationResult> {
     // TLS server
-    let mut ratls_server = ratls::server_rebinding(transport, peer_data).map_err(|e| {
-        #[cfg(feature = "vmcall-raw")]
-        data.extend_from_slice(
-            &format!(
-                "Error: rebinding_new(): Failed in ratls transport. Migration ID: {:x}\n",
-                info.mig_request_id
-            )
-            .into_bytes(),
-        );
-        log::error!(
-            "rebinding_new(): Failed in ratls transport. Migration ID: {} Error: {:?}\n",
-            info.mig_request_id,
-            e
-        );
-        e
-    })?;
+    let mut ratls_server =
+        ratls::server_rebinding(transport, peer_data, &rebinding_new_servtd_ext()).map_err(
+            |e| {
+                #[cfg(feature = "vmcall-raw")]
+                data.extend_from_slice(
+                    &format!(
+                        "Error: rebinding_new(): Failed in ratls transport. Migration ID: {:x}\n",
+                        info.mig_request_id
+                    )
+                    .into_bytes(),
+                );
+                log::error!(
+                    "rebinding_new(): Failed in ratls transport. Migration ID: {} Error: {:?}\n",
+                    info.mig_request_id,
+                    e
+                );
+                e
+            },
+        )?;
 
     let rebind_token = tls_receive_rebind_token(&mut ratls_server).await?;
 
