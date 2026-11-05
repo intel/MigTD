@@ -21,6 +21,8 @@ const DEFAULT_IMAGE_FORMAT: &str = "tdvf";
 const MIGTD_TD_INFO_GUID: &str = "dbbdfad7-9cba-4aae-b498-c0fd425860b4";
 const MIGTD_MAX_VCPU_COUNT: u32 = 1;
 const MIGTD_SIGNER_ANCHOR_SIZE: usize = 48;
+const MAX_SERVTD_TCB_MAPPING_SIZE: u64 = 512 * 1024;
+const MAX_SERVTD_CORIM_SIZE: u64 = 64 * 1024;
 
 lazy_static! {
     static ref PROJECT_ROOT: &'static Path =
@@ -95,6 +97,9 @@ pub(crate) struct BuildArgs {
     /// `--policy-issuer-chain`.
     #[clap(long)]
     signer_anchor: Option<PathBuf>,
+    /// Path of the standalone signed JSON ServTD TCB mapping.
+    #[clap(long)]
+    servtd_tcb_mapping: Option<PathBuf>,
     /// Path of the signed ServTD TCB-mapping CoRIM (`COSE_Sign1`).
     #[clap(long)]
     servtd_corim: Option<PathBuf>,
@@ -226,8 +231,56 @@ impl BuildArgs {
             if let Some(anchor) = &self.signer_anchor {
                 self.check_direct_anchor_configuration(anchor)?;
             }
+            if self.servtd_tcb_mapping.is_some() && self.servtd_corim.is_some() {
+                return Err(anyhow::anyhow!(
+                    "--servtd-tcb-mapping and --servtd-corim are mutually exclusive"
+                ));
+            }
+            if self.servtd_tcb_mapping.is_some()
+                && self.features.as_deref().is_some_and(|features| {
+                    features
+                        .split(',')
+                        .any(|feature| feature.trim() == "servtd_corim")
+                })
+            {
+                return Err(anyhow::anyhow!(
+                    "--servtd-tcb-mapping cannot be used with the servtd_corim feature"
+                ));
+            }
+            if self.servtd_tcb_mapping.is_none() && self.servtd_corim.is_none() {
+                return Err(anyhow::anyhow!(
+                    "policy_v2 requires --servtd-tcb-mapping or --servtd-corim"
+                ));
+            }
+            if self.servtd_tcb_mapping.is_some() && self.policy_issuer_chain.is_none() {
+                return Err(anyhow::anyhow!(
+                    "--servtd-tcb-mapping requires --policy-issuer-chain"
+                ));
+            }
+            if let Some(path) = &self.servtd_tcb_mapping {
+                let len = fs::metadata(path)
+                    .with_context(|| format!("Failed to read {}", path.display()))?
+                    .len();
+                if len == 0 || len > MAX_SERVTD_TCB_MAPPING_SIZE {
+                    return Err(anyhow::anyhow!(
+                        "--servtd-tcb-mapping must be nonempty and at most 512 KiB"
+                    ));
+                }
+            }
+            if let Some(path) = &self.servtd_corim {
+                let len = fs::metadata(path)
+                    .with_context(|| format!("Failed to read {}", path.display()))?
+                    .len();
+                if len == 0 || len > MAX_SERVTD_CORIM_SIZE {
+                    return Err(anyhow::anyhow!(
+                        "--servtd-corim must be nonempty and at most 64 KiB"
+                    ));
+                }
+            }
         } else if self.servtd_corim.is_some() {
             return Err(anyhow::anyhow!("--servtd-corim requires --policy-v2"));
+        } else if self.servtd_tcb_mapping.is_some() {
+            return Err(anyhow::anyhow!("--servtd-tcb-mapping requires --policy-v2"));
         } else if self.signer_anchor.is_some() {
             return Err(anyhow::anyhow!("--signer-anchor requires --policy-v2"));
         }
@@ -254,30 +307,6 @@ impl BuildArgs {
         let collateral = policy_data
             .get("servtdCollateral")
             .filter(|value| !value.is_null());
-        if let Some(collateral) = collateral {
-            let collateral = collateral
-                .as_object()
-                .context("servtdCollateral must be a JSON object")?;
-            if !collateral
-                .get("servtdTcbMapping")
-                .is_some_and(serde_json::Value::is_object)
-            {
-                return Err(anyhow::anyhow!(
-                    "Retained servtdCollateral requires a signed servtdTcbMapping"
-                ));
-            }
-            collateral
-                .get("servtdTcbMappingIssuerChain")
-                .and_then(serde_json::Value::as_str)
-                .filter(|chain| !chain.trim().is_empty())
-                .context(
-                    "--signer-anchor requires an explicit servtdTcbMappingIssuerChain for retained JSON collateral, even with --servtd-corim or --policy-issuer-chain",
-                )?;
-        } else if self.servtd_corim.is_none() {
-            return Err(anyhow::anyhow!(
-                "--signer-anchor requires JSON servtdCollateral or an enrolled --servtd-corim"
-            ));
-        }
 
         let top_level_crl = policy_data
             .get("servtdCrl")
@@ -298,13 +327,6 @@ impl BuildArgs {
             .filter(|crl| !crl.trim().is_empty())
             .context("--signer-anchor requires a nonempty servtdCrl in the policy")?;
 
-        if let Some(path) = &self.servtd_corim {
-            let corim = fs::read(path)
-                .with_context(|| format!("Failed to read servtd CoRIM {}", path.display()))?;
-            if corim.is_empty() {
-                return Err(anyhow::anyhow!("--servtd-corim must not be empty"));
-            }
-        }
         Ok(())
     }
 
@@ -478,14 +500,28 @@ impl BuildArgs {
             ])
         };
 
-        // Enroll the signed ServTD TCB-mapping CoRIM under its own FFS GUID.
-        // This file is not measured (see config::MIGTD_SERVTD_CORIM_FFS_GUID),
-        // so it does not affect the image tdinfo_hash.
-        let corim_path = self.servtd_corim()?;
-        let cmd = if let Some(corim) = &corim_path {
+        // JSON mapping builds need the PEM chain even when a direct RTMR1
+        // anchor is enrolled, because the mapping signature is verified with
+        // that chain and then bound back to the anchor.
+        let cmd = if self.policy_v2
+            && self.signer_anchor.is_some()
+            && self.servtd_tcb_mapping.is_some()
+            && self.policy_issuer_chain.is_some()
+        {
             cmd.args(&[
-                "7E5B9C11-2D4A-4F6E-9B3C-1A2B3C4D5E6F",
-                corim.to_str().unwrap(),
+                "3F2FB27A-9596-431C-A68D-D3EAB39F8AEB",
+                self.policy_issuer_chain()?.to_str().unwrap(),
+            ])
+        } else {
+            cmd
+        };
+
+        // Both mapping formats use the same unmeasured FFS slot.
+        let mapping_path = self.servtd_tcb_mapping()?.or(self.servtd_corim()?);
+        let cmd = if let Some(mapping) = &mapping_path {
+            cmd.args(&[
+                "8073AC3C-7D49-4DA9-9B20-4DC1D1DB3CFB",
+                mapping.to_str().unwrap(),
             ])
         } else {
             cmd
@@ -645,6 +681,13 @@ impl BuildArgs {
         fs::canonicalize(path).map_err(|e| e.into())
     }
 
+    fn servtd_tcb_mapping(&self) -> Result<Option<PathBuf>> {
+        self.servtd_tcb_mapping
+            .as_ref()
+            .map(|path| fs::canonicalize(path).map_err(Into::into))
+            .transpose()
+    }
+
     /// Canonicalized path of the signed ServTD TCB-mapping CoRIM, if provided.
     fn servtd_corim(&self) -> Result<Option<PathBuf>> {
         match self.servtd_corim.as_ref() {
@@ -764,18 +807,13 @@ mod tests {
         assert!(image_args(&[]).check_arguments().is_ok());
     }
 
-    fn anchor_policy(json_mapping: bool) -> Value {
+    fn anchor_policy(json_collateral: bool) -> Value {
         let mut policy: Value = serde_json::from_str(include_str!(
             "../../src/policy/test/policy_v2/policy_v2.json"
         ))
         .unwrap();
         let data = policy["policyData"].as_object_mut().unwrap();
-        if json_mapping {
-            data["servtdCollateral"]["servtdTcbMappingIssuerChain"] = Value::String(
-                include_str!("../../src/policy/test/policy_v2/cert_chain/policy_issuer_chain.pem")
-                    .to_string(),
-            );
-        } else {
+        if !json_collateral {
             let collateral = data.remove("servtdCollateral").unwrap();
             data.insert("servtdCrl".to_string(), collateral["servtdCrl"].clone());
         }
@@ -806,12 +844,22 @@ mod tests {
 
     #[test]
     fn direct_anchor_accepts_json_with_an_explicit_mapping_chain() {
-        for corim in [false, true] {
-            let (dir, mut args) = anchor_args(&anchor_policy(true), corim);
-            args.policy_issuer_chain = Some(dir.path().join("not-enrolled.pem"));
-            args.features = Some("servtd_corim".to_string());
-            assert!(args.check_arguments().is_ok());
-        }
+        let (dir, mut args) = anchor_args(&anchor_policy(true), false);
+        let chain = dir.path().join("policy-chain.pem");
+        let mapping = dir.path().join("mapping.json");
+        fs::write(
+            &chain,
+            include_bytes!("../../src/policy/test/policy_v2/cert_chain/policy_issuer_chain.pem"),
+        )
+        .unwrap();
+        fs::write(
+            &mapping,
+            include_bytes!("../../src/policy/test/policy_v2/tcb_mapping_signed.json"),
+        )
+        .unwrap();
+        args.policy_issuer_chain = Some(chain);
+        args.servtd_tcb_mapping = Some(mapping);
+        assert!(args.check_arguments().is_ok());
     }
 
     #[test]
@@ -823,7 +871,13 @@ mod tests {
             .remove("servtdCrl")
             .unwrap();
         policy["policyData"]["servtdCrl"] = crl;
-        let (_dir, args) = anchor_args(&policy, false);
+        let (dir, mut args) = anchor_args(&policy, false);
+        let chain = dir.path().join("policy-chain.pem");
+        let mapping = dir.path().join("mapping.json");
+        fs::write(&chain, b"chain").unwrap();
+        fs::write(&mapping, b"mapping").unwrap();
+        args.policy_issuer_chain = Some(chain);
+        args.servtd_tcb_mapping = Some(mapping);
         assert!(args.check_arguments().is_ok());
     }
 
@@ -834,35 +888,43 @@ mod tests {
     }
 
     #[test]
-    fn retained_json_requires_its_chain_even_with_corim_or_outer_pem() {
-        for corim in [false, true] {
-            for chain in [Value::Null, json!(""), json!("  ")] {
-                let mut policy = anchor_policy(true);
-                policy["policyData"]["servtdCollateral"]["servtdTcbMappingIssuerChain"] = chain;
-                let (dir, mut args) = anchor_args(&policy, corim);
-                args.policy_issuer_chain = Some(dir.path().join("not-enrolled.pem"));
-                assert!(args
-                    .check_arguments()
-                    .unwrap_err()
-                    .to_string()
-                    .contains("explicit servtdTcbMappingIssuerChain"));
-            }
-        }
+    fn standalone_json_mapping_requires_policy_chain() {
+        let (dir, mut args) = anchor_args(&anchor_policy(true), false);
+        let mapping = dir.path().join("mapping.json");
+        fs::write(&mapping, b"mapping").unwrap();
+        args.servtd_tcb_mapping = Some(mapping);
+        assert_eq!(
+            args.check_arguments().unwrap_err().to_string(),
+            "--servtd-tcb-mapping requires --policy-issuer-chain"
+        );
     }
 
     #[test]
-    fn retained_json_mapping_is_required_even_with_corim() {
-        let mut policy = anchor_policy(true);
-        policy["policyData"]["servtdCollateral"]
-            .as_object_mut()
-            .unwrap()
-            .remove("servtdTcbMapping");
-        let (_dir, args) = anchor_args(&policy, true);
-        assert!(args
-            .check_arguments()
-            .unwrap_err()
-            .to_string()
-            .contains("signed servtdTcbMapping"));
+    fn json_mapping_and_corim_are_mutually_exclusive() {
+        let (dir, mut args) = anchor_args(&anchor_policy(true), true);
+        let mapping = dir.path().join("mapping.json");
+        fs::write(&mapping, b"mapping").unwrap();
+        args.servtd_tcb_mapping = Some(mapping);
+        assert_eq!(
+            args.check_arguments().unwrap_err().to_string(),
+            "--servtd-tcb-mapping and --servtd-corim are mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn json_mapping_rejects_corim_feature() {
+        let (dir, mut args) = anchor_args(&anchor_policy(true), false);
+        let mapping = dir.path().join("mapping.json");
+        let chain = dir.path().join("chain.pem");
+        fs::write(&mapping, b"mapping").unwrap();
+        fs::write(&chain, b"chain").unwrap();
+        args.servtd_tcb_mapping = Some(mapping);
+        args.policy_issuer_chain = Some(chain);
+        args.features = Some("spdm_attestation,servtd_corim".to_string());
+        assert_eq!(
+            args.check_arguments().unwrap_err().to_string(),
+            "--servtd-tcb-mapping cannot be used with the servtd_corim feature"
+        );
     }
 
     #[test]
@@ -872,7 +934,7 @@ mod tests {
             .check_arguments()
             .unwrap_err()
             .to_string()
-            .contains("an enrolled --servtd-corim"));
+            .contains("--servtd-tcb-mapping or --servtd-corim"));
     }
 
     #[test]
@@ -922,13 +984,13 @@ mod tests {
             .check_arguments()
             .unwrap_err()
             .to_string()
-            .contains("--servtd-corim must not be empty"));
+            .contains("--servtd-corim must be nonempty and at most 64 KiB"));
         fs::remove_file(args.servtd_corim.as_ref().unwrap()).unwrap();
         assert!(args
             .check_arguments()
             .unwrap_err()
             .to_string()
-            .contains("Failed to read servtd CoRIM"));
+            .contains("Failed to read"));
     }
 
     #[test]

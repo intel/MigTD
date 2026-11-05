@@ -43,7 +43,7 @@ cargo image --features spdm_attestation,test_stack_size,test_heap_size --policy 
 Policy V2:
 
 ```bash
-cargo image --features spdm_attestation,test_stack_size,test_heap_size --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem -l info
+cargo image --features spdm_attestation,test_stack_size,test_heap_size --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json -l info
 ```
 
 ## Run the test

@@ -29,6 +29,7 @@ class LauncherArtifactTests(unittest.TestCase):
         self.policy = self.file("policy.json", b"{}")
         self.chain = self.file("chain.pem", b"issuer chain")
         self.anchor = self.file("anchor.bin", bytes(range(48)))
+        self.mapping = self.file("mapping.json", b"standalone signed JSON mapping")
         self.corim = self.file("mapping.corim", b"opaque signed CoRIM")
         self.file("config/policy.json", b"{}")
         self.file("config/Intel_SGX_Provisioning_Certification_RootCA.cer", b"root CA")
@@ -54,7 +55,8 @@ class LauncherArtifactTests(unittest.TestCase):
             "import json, os, pathlib, sys\n"
             "role = sys.argv[sys.argv.index('--role') + 1]\n"
             "names = ('MIGTD_POLICY_FILE', 'MIGTD_POLICY_ISSUER_CHAIN_FILE', "
-            "'MIGTD_SIGNER_ANCHOR_FILE', 'MIGTD_SERVTD_CORIM_FILE')\n"
+            "'MIGTD_SIGNER_ANCHOR_FILE', 'MIGTD_SERVTD_TCB_MAPPING_FILE', "
+            "'MIGTD_SERVTD_CORIM_FILE')\n"
             "record = {'args': sys.argv[1:], "
             "'env': {name: os.environ.get(name) for name in names}}\n"
             "pathlib.Path('record-' + role + '.json').write_text(json.dumps(record))\n",
@@ -80,6 +82,7 @@ class LauncherArtifactTests(unittest.TestCase):
         environment = os.environ.copy()
         environment["PATH"] = str(self.root / "bin") + os.pathsep + environment["PATH"]
         environment["MIGTD_SIGNER_ANCHOR_FILE"] = "ambient anchor must not leak"
+        environment["MIGTD_SERVTD_TCB_MAPPING_FILE"] = "ambient mapping must not leak"
         environment["MIGTD_SERVTD_CORIM_FILE"] = "ambient CoRIM must not leak"
         result = subprocess.run(
             ["bash", str(self.root / "migtdemu.sh"), "--mock-report", "--no-sudo", *arguments],
@@ -145,35 +148,43 @@ class LauncherArtifactTests(unittest.TestCase):
                 self.assertEqual(environment["MIGTD_SIGNER_ANCHOR_FILE"], self.anchor)
                 self.assertEqual(environment["MIGTD_SERVTD_CORIM_FILE"], self.corim)
 
-    def test_anchor_takes_precedence_over_an_unused_pem_path(self):
+    def test_direct_anchor_json_keeps_the_mapping_verification_chain(self):
         self.run_launcher(
             "--policy-v2", "--policy-file", self.policy,
-            "--policy-issuer-chain-file", str(self.root / "not-enrolled.pem"),
+            "--policy-issuer-chain-file", self.chain,
             "--signer-anchor-file", self.anchor,
-        )
-        self.assertEqual(self.runtime_environment()["MIGTD_SIGNER_ANCHOR_FILE"], self.anchor)
-
-    def test_corim_feature_alone_allows_json_and_clears_ambient_artifacts(self):
-        self.run_launcher(
-            "--policy-v2", "--policy-file", self.policy,
-            "--policy-issuer-chain-file", self.chain, "--features", "servtd_corim",
+            "--servtd-tcb-mapping-file", self.mapping,
         )
         environment = self.runtime_environment()
         self.assertEqual(environment["MIGTD_POLICY_ISSUER_CHAIN_FILE"], self.chain)
-        self.assertEqual(environment["MIGTD_SIGNER_ANCHOR_FILE"], "")
-        self.assertEqual(environment["MIGTD_SERVTD_CORIM_FILE"], "")
+        self.assertEqual(environment["MIGTD_SIGNER_ANCHOR_FILE"], self.anchor)
+        self.assertEqual(environment["MIGTD_SERVTD_TCB_MAPPING_FILE"], self.mapping)
+
+    def test_corim_mode_clears_ambient_json_artifacts(self):
+        self.run_launcher(
+            "--policy-v2", "--policy-file", self.policy,
+            "--signer-anchor-file", self.anchor,
+            "--servtd-corim-file", self.corim, "--features", "servtd_corim",
+        )
+        environment = self.runtime_environment()
+        self.assertEqual(environment["MIGTD_POLICY_ISSUER_CHAIN_FILE"], "")
+        self.assertEqual(environment["MIGTD_SIGNER_ANCHOR_FILE"], self.anchor)
+        self.assertEqual(environment["MIGTD_SERVTD_TCB_MAPPING_FILE"], "")
+        self.assertEqual(environment["MIGTD_SERVTD_CORIM_FILE"], self.corim)
         self.assertIn("servtd_corim", self.features())
 
     def test_legacy_mode_does_not_inherit_new_artifacts(self):
         self.run_launcher()
         environment = self.runtime_environment()
         self.assertEqual(environment["MIGTD_SIGNER_ANCHOR_FILE"], "")
+        self.assertEqual(environment["MIGTD_SERVTD_TCB_MAPPING_FILE"], "")
         self.assertEqual(environment["MIGTD_SERVTD_CORIM_FILE"], "")
         self.assertNotIn("servtd_corim", self.features())
 
     def test_new_artifacts_and_feature_require_policy_v2(self):
         for option, value in (
             ("--signer-anchor-file", self.anchor),
+            ("--servtd-tcb-mapping-file", self.mapping),
             ("--servtd-corim-file", self.corim),
             ("--features", "servtd_corim"),
         ):
@@ -205,7 +216,11 @@ class LauncherArtifactTests(unittest.TestCase):
         )
 
     def test_missing_file_option_values_are_rejected(self):
-        for option in ("--signer-anchor-file", "--servtd-corim-file"):
+        for option in (
+            "--signer-anchor-file",
+            "--servtd-tcb-mapping-file",
+            "--servtd-corim-file",
+        ):
             with self.subTest(option=option):
                 self.run_launcher(option, error="requires a file path")
 
@@ -220,12 +235,18 @@ class NativeArtifactInitializationTests(unittest.TestCase):
             policy.write_bytes(b"{}")
             anchor = root / "anchor.bin"
             anchor.write_bytes(bytes(48))
+            corim = root / "mapping.corim"
+            shutil.copy2(
+                REPOSITORY / "src/policy/test/policy_v2/corim/tcb_mapping.corim",
+                corim,
+            )
             environment = os.environ.copy()
             environment.update({
                 "MIGTD_POLICY_FILE": str(policy),
                 "MIGTD_POLICY_ISSUER_CHAIN_FILE": "",
                 "MIGTD_SIGNER_ANCHOR_FILE": str(anchor),
-                "MIGTD_SERVTD_CORIM_FILE": "",
+                "MIGTD_SERVTD_TCB_MAPPING_FILE": "",
+                "MIGTD_SERVTD_CORIM_FILE": str(corim),
                 "MIGTD_LOG_FILE": str(root / "migtd.log"),
             })
             for name, variable, data, expected in (

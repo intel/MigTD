@@ -30,10 +30,13 @@ const SIGNER_ANCHOR_SIZE: usize = 48;
 static mut SIGNER_ANCHOR_BUFFER: [u8; SIGNER_ANCHOR_SIZE] = [0; SIGNER_ANCHOR_SIZE];
 static SIGNER_ANCHOR_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-const SERVTD_CORIM_BUFFER_SIZE: usize = 1024 * 1024;
-static mut SERVTD_CORIM_BUFFER: [u8; SERVTD_CORIM_BUFFER_SIZE] = [0; SERVTD_CORIM_BUFFER_SIZE];
-static mut SERVTD_CORIM_SIZE: usize = 0;
-static SERVTD_CORIM_INITIALIZED: AtomicBool = AtomicBool::new(false);
+// Preserve the existing CoRIM capacity while sharing one mapping slot.
+const SERVTD_TCB_MAPPING_BUFFER_SIZE: usize = 1024 * 1024;
+const MAX_JSON_TCB_MAPPING_SIZE: usize = 512 * 1024;
+static mut SERVTD_TCB_MAPPING_BUFFER: [u8; SERVTD_TCB_MAPPING_BUFFER_SIZE] =
+    [0; SERVTD_TCB_MAPPING_BUFFER_SIZE];
+static mut SERVTD_TCB_MAPPING_SIZE: usize = 0;
+static SERVTD_TCB_MAPPING_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Known GUIDs for policy and root CA files in migtd
 const MIGTD_POLICY_FFS_GUID: Guid = Guid::from_fields(
@@ -73,20 +76,20 @@ pub const MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID: Guid = Guid::from_fields(
     &[0x0C, 0x7E, 0x1F, 0x4B, 0x6A, 0x93],
 );
 
-pub const MIGTD_SERVTD_CORIM_FFS_GUID: Guid = Guid::from_fields(
-    0x7E5B9C11,
-    0x2D4A,
-    0x4F6E,
+pub const MIGTD_SERVTD_TCB_MAPPING_FFS_GUID: Guid = Guid::from_fields(
+    0x8073AC3C,
+    0x7D49,
+    0x4DA9,
     0x9B,
-    0x3C,
-    &[0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F],
+    0x20,
+    &[0x4D, 0xC1, 0xD1, 0xDB, 0x3C, 0xFB],
 );
 
 #[cfg(any(feature = "policy_v2", test))]
 pub(crate) fn reset_policy_endorsements() {
     POLICY_ISSUER_CHAIN_INITIALIZED.store(false, Ordering::SeqCst);
     SIGNER_ANCHOR_INITIALIZED.store(false, Ordering::SeqCst);
-    SERVTD_CORIM_INITIALIZED.store(false, Ordering::SeqCst);
+    SERVTD_TCB_MAPPING_INITIALIZED.store(false, Ordering::SeqCst);
 }
 
 /// Set policy data for emulation
@@ -149,17 +152,26 @@ pub fn set_signer_anchor_data(data: &[u8]) -> bool {
     true
 }
 
+/// Set the standalone signed JSON TCB mapping before firmware-volume access.
+pub fn set_servtd_tcb_mapping_data(data: &[u8]) -> bool {
+    data.len() <= MAX_JSON_TCB_MAPPING_SIZE && set_servtd_mapping_data(data)
+}
+
 /// Set the opaque signed CoRIM before firmware-volume access begins.
 pub fn set_servtd_corim_data(data: &[u8]) -> bool {
-    if data.is_empty() || data.len() > SERVTD_CORIM_BUFFER_SIZE {
+    set_servtd_mapping_data(data)
+}
+
+fn set_servtd_mapping_data(data: &[u8]) -> bool {
+    if data.is_empty() || data.len() > SERVTD_TCB_MAPPING_BUFFER_SIZE {
         return false;
     }
     unsafe {
-        let buffer = &mut *ptr::addr_of_mut!(SERVTD_CORIM_BUFFER);
+        let buffer = &mut *ptr::addr_of_mut!(SERVTD_TCB_MAPPING_BUFFER);
         buffer[..data.len()].copy_from_slice(data);
-        *ptr::addr_of_mut!(SERVTD_CORIM_SIZE) = data.len();
+        *ptr::addr_of_mut!(SERVTD_TCB_MAPPING_SIZE) = data.len();
     }
-    SERVTD_CORIM_INITIALIZED.store(true, Ordering::SeqCst);
+    SERVTD_TCB_MAPPING_INITIALIZED.store(true, Ordering::SeqCst);
     true
 }
 
@@ -209,6 +221,11 @@ pub fn load_signer_anchor_from_file(path: &str) -> bool {
     load_file(path, set_signer_anchor_data)
 }
 
+/// Load a standalone signed JSON TCB mapping from a file.
+pub fn load_servtd_tcb_mapping_from_file(path: &str) -> bool {
+    load_file(path, set_servtd_tcb_mapping_data)
+}
+
 /// Load an opaque signed servTD CoRIM from a file.
 pub fn load_servtd_corim_from_file(path: &str) -> bool {
     load_file(path, set_servtd_corim_data)
@@ -221,7 +238,7 @@ pub fn load_servtd_corim_from_file(path: &str) -> bool {
 /// - Root CA files (using MIGTD_ROOT_CA_FFS_GUID)
 /// - Policy issuer chain files (using MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID)
 /// - Signer anchors (using MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID)
-/// - Signed CoRIM files (using MIGTD_SERVTD_CORIM_FFS_GUID)
+/// - Signed JSON or CoRIM TCB mappings (using MIGTD_SERVTD_TCB_MAPPING_FFS_GUID)
 ///
 /// Other files will return None
 pub fn get_file_from_fv(
@@ -258,12 +275,12 @@ pub fn get_file_from_fv(
         && SIGNER_ANCHOR_INITIALIZED.load(Ordering::SeqCst)
     {
         unsafe { Some(&*ptr::addr_of!(SIGNER_ANCHOR_BUFFER)) }
-    } else if file_name == MIGTD_SERVTD_CORIM_FFS_GUID
-        && SERVTD_CORIM_INITIALIZED.load(Ordering::SeqCst)
+    } else if file_name == MIGTD_SERVTD_TCB_MAPPING_FFS_GUID
+        && SERVTD_TCB_MAPPING_INITIALIZED.load(Ordering::SeqCst)
     {
         unsafe {
-            let buffer = &*ptr::addr_of!(SERVTD_CORIM_BUFFER);
-            Some(&buffer[..*ptr::addr_of!(SERVTD_CORIM_SIZE)])
+            let buffer = &*ptr::addr_of!(SERVTD_TCB_MAPPING_BUFFER);
+            Some(&buffer[..*ptr::addr_of!(SERVTD_TCB_MAPPING_SIZE)])
         }
     } else {
         None
@@ -279,10 +296,14 @@ mod tests {
             "anchor" => Some(vec![0x5a; SIGNER_ANCHOR_SIZE]),
             "short-anchor" => Some(vec![0; SIGNER_ANCHOR_SIZE - 1]),
             "hex-anchor" => Some(vec![b'A'; SIGNER_ANCHOR_SIZE * 2]),
+            "mapping" => Some(b"signed JSON mapping bytes".to_vec()),
+            "empty-mapping" => Some(Vec::new()),
+            "largest-mapping" => Some(vec![0; 512 * 1024]),
+            "oversized-mapping" => Some(vec![0; 512 * 1024 + 1]),
             "corim" => Some(b"signed CoRIM bytes".to_vec()),
             "empty-corim" => Some(Vec::new()),
-            "largest-corim" => Some(vec![0; SERVTD_CORIM_BUFFER_SIZE]),
-            "oversized-corim" => Some(vec![0; SERVTD_CORIM_BUFFER_SIZE + 1]),
+            "largest-corim" => Some(vec![0; 1024 * 1024]),
+            "oversized-corim" => Some(vec![0; 1024 * 1024 + 1]),
             "policy" | "root-ca" | "chain" => Some(path.as_bytes().to_vec()),
             _ => None,
         }
@@ -294,19 +315,31 @@ mod tests {
         assert!(
             get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID).is_none()
         );
-        assert!(get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_CORIM_FFS_GUID).is_none());
+        assert!(
+            get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_TCB_MAPPING_FFS_GUID).is_none()
+        );
         assert!(!load_signer_anchor_from_file("missing"));
         assert!(!load_signer_anchor_from_file("short-anchor"));
         assert!(!load_signer_anchor_from_file("hex-anchor"));
+        assert!(!load_servtd_tcb_mapping_from_file("missing"));
+        assert!(!load_servtd_tcb_mapping_from_file("empty-mapping"));
+        assert!(!load_servtd_tcb_mapping_from_file("oversized-mapping"));
+        assert!(load_servtd_tcb_mapping_from_file("largest-mapping"));
+        assert_eq!(
+            get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_TCB_MAPPING_FFS_GUID)
+                .unwrap()
+                .len(),
+            512 * 1024
+        );
         assert!(!load_servtd_corim_from_file("missing"));
         assert!(!load_servtd_corim_from_file("empty-corim"));
         assert!(!load_servtd_corim_from_file("oversized-corim"));
         assert!(load_servtd_corim_from_file("largest-corim"));
         assert_eq!(
-            get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_CORIM_FFS_GUID)
+            get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_TCB_MAPPING_FFS_GUID)
                 .unwrap()
                 .len(),
-            SERVTD_CORIM_BUFFER_SIZE
+            1024 * 1024
         );
 
         assert!(load_policy_from_file("policy"));
@@ -323,7 +356,7 @@ mod tests {
                 &[0x5a; SIGNER_ANCHOR_SIZE],
             ),
             (
-                MIGTD_SERVTD_CORIM_FFS_GUID,
+                MIGTD_SERVTD_TCB_MAPPING_FFS_GUID,
                 b"signed CoRIM bytes".as_slice(),
             ),
         ] {
@@ -331,11 +364,22 @@ mod tests {
             assert!(get_file_from_fv(&[], FV_FILETYPE_RAW + 1, guid).is_none());
         }
 
+        assert!(load_servtd_tcb_mapping_from_file("mapping"));
+        assert_eq!(
+            get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_TCB_MAPPING_FFS_GUID),
+            Some(b"signed JSON mapping bytes".as_slice())
+        );
+        assert!(load_servtd_corim_from_file("corim"));
+        assert_eq!(
+            get_file_from_fv(&[], FV_FILETYPE_RAW, MIGTD_SERVTD_TCB_MAPPING_FFS_GUID),
+            Some(b"signed CoRIM bytes".as_slice())
+        );
+
         reset_policy_endorsements();
         for guid in [
             MIGTD_POLICY_ISSUER_CHAIN_FFS_GUID,
             MIGTD_SERVTD_SIGNER_ANCHOR_FFS_GUID,
-            MIGTD_SERVTD_CORIM_FFS_GUID,
+            MIGTD_SERVTD_TCB_MAPPING_FFS_GUID,
         ] {
             assert!(get_file_from_fv(&[], FV_FILETYPE_RAW, guid).is_none());
         }

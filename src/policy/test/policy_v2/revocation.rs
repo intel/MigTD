@@ -13,7 +13,6 @@ pub fn policy_json(crl: &[u8]) -> serde_json::Value {
     let collateral = &mut policy["policyData"]["servtdCollateral"];
     collateral["servtdIdentityIssuerChain"] = core::str::from_utf8(IDENTITY_CHAIN).unwrap().into();
     collateral["servtdIdentity"] = serde_json::from_slice(SIGNED_IDENTITY).unwrap();
-    collateral["servtdTcbMapping"] = serde_json::from_slice(SIGNED_MAPPING).unwrap();
     collateral["servtdCrl"] =
         serde_json::Value::String(core::str::from_utf8(crl).unwrap().to_string());
     policy

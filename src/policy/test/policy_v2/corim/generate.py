@@ -93,10 +93,10 @@ def signed_corim(payload, leaf, issuer, root, key):
     return cbor2.dumps(cose)
 
 
-def generate(policy_path):
+def generate(policy_path, mapping_path):
     output = Path(__file__).resolve().parent
     source = json.loads(policy_path.read_text())["policyData"]["servtdCollateral"]
-    mapping = source["servtdTcbMapping"]["tdTcbMapping"]
+    mapping = json.loads(mapping_path.read_text())["tdTcbMapping"]
     identity = source["servtdIdentity"]["tdIdentity"]
     identity = {
         name: identity[name]
@@ -193,8 +193,6 @@ def generate(policy_path):
     collateral = {
         "majorVersion": 1,
         "minorVersion": 0,
-        "servtdTcbMappingIssuerChain": chain_pem.decode(),
-        "servtdTcbMapping": signed_json("tdTcbMapping", mapping, leaf_key),
         "servtdIdentityIssuerChain": chain_pem.decode(),
         "servtdIdentity": signed_json("tdIdentity", identity, leaf_key),
         "servtdCrl": (output / "servtd.crl.pem").read_text(),
@@ -207,4 +205,6 @@ def generate(policy_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", type=Path, required=True, help="Generated mock-report v2 policy")
-    generate(parser.parse_args().policy)
+    parser.add_argument("--mapping", type=Path, required=True, help="Standalone signed JSON mapping")
+    args = parser.parse_args()
+    generate(args.policy, args.mapping)

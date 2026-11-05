@@ -48,6 +48,13 @@ fn merge_servtd_collateral(
 ) -> Result<()> {
     let removed = match servtd_collateral {
         Some(collateral) => {
+            if collateral.get("servtdTcbMapping").is_some()
+                || collateral.get("servtdTcbMappingIssuerChain").is_some()
+            {
+                return Err(anyhow!(
+                    "servTD TCB mapping must be supplied as a standalone component"
+                ));
+            }
             map.insert("servtdCollateral".to_string(), collateral);
             None
         }
@@ -172,8 +179,8 @@ mod tests {
     }
 
     #[test]
-    fn supplied_json_collateral_and_its_crl_are_preserved() {
-        let collateral = json!({"servtdTcbMapping": {"current": true}, "servtdCrl": CRL});
+    fn supplied_json_identity_collateral_and_its_crl_are_preserved() {
+        let collateral = json!({"servtdIdentity": {"current": true}, "servtdCrl": CRL});
         let result = merge(
             json!({"servtdCollateral": {"stale": true}}),
             Some(collateral.clone()),
@@ -185,12 +192,21 @@ mod tests {
 
     #[test]
     fn json_collateral_can_use_the_top_level_crl() {
-        let collateral = json!({"servtdTcbMapping": {"current": true}});
+        let collateral = json!({"servtdIdentity": {"current": true}});
         let result = merge(json!({}), Some(collateral.clone()), Some(CRL)).unwrap();
         assert_eq!(
             result,
             json!({"servtdCollateral": collateral, "servtdCrl": CRL})
         );
+    }
+
+    #[test]
+    fn embedded_tcb_mapping_is_rejected() {
+        for field in ["servtdTcbMapping", "servtdTcbMappingIssuerChain"] {
+            let mut collateral = json!({"servtdCrl": CRL});
+            collateral[field] = json!({"legacy": true});
+            assert!(merge(json!({}), Some(collateral), None).is_err());
+        }
     }
 
     #[test]

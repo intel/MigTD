@@ -58,14 +58,17 @@ show_usage() {
     echo "  --root-ca-file FILE          Set root CA file path (default: config/Intel_SGX_Provisioning_Certification_RootCA.cer)"
     echo "  --policy-issuer-chain-file FILE Policy issuer chain (policy v2, unless an anchor is supplied)"
     echo "  --signer-anchor-file FILE    Raw 48-byte signer anchor (policy v2; takes precedence over the chain)"
+    echo "  --servtd-tcb-mapping-file FILE Standalone signed JSON TCB mapping"
     echo "  --servtd-corim-file FILE     Signed servTD CoRIM (policy v2; enables servtd_corim)"
     echo "  --src-policy-file FILE       Set source-specific policy file (overrides --policy-file for source)"
     echo "  --src-policy-issuer-chain-file FILE Set source-specific policy issuer chain file"
     echo "  --src-signer-anchor-file FILE Set source-specific signer anchor"
+    echo "  --src-servtd-tcb-mapping-file FILE Set source-specific signed JSON TCB mapping"
     echo "  --src-servtd-corim-file FILE Set source-specific signed CoRIM"
     echo "  --dst-policy-file FILE       Set destination-specific policy file (overrides --policy-file for destination)"
     echo "  --dst-policy-issuer-chain-file FILE Set destination-specific policy issuer chain file"
     echo "  --dst-signer-anchor-file FILE Set destination-specific signer anchor"
+    echo "  --dst-servtd-tcb-mapping-file FILE Set destination-specific signed JSON TCB mapping"
     echo "  --dst-servtd-corim-file FILE Set destination-specific signed CoRIM"
     echo "  --debug                      Build in debug mode (default: release)"
     echo "  --release                    Build in release mode (default)"
@@ -105,8 +108,8 @@ show_usage() {
     echo "    (e.g., 2 means CPUs 0-1, 4 means CPUs 0-3). Default is 1 CPU for single-threaded behavior."
     echo "  - The rebinding operation ('rebind') always requires policy_v2, which is enabled"
     echo "    automatically. Specify a policy and an issuer chain or signer anchor."
-    echo "  - Anchor-only JSON policies need an embedded servtdTcbMappingIssuerChain. CoRIM-only"
-    echo "    policies need --servtd-corim-file and a numbered servtdCrl in policyData."
+    echo "  - JSON mapping builds need --servtd-tcb-mapping-file and a policy issuer chain."
+    echo "    CoRIM-only policies need --servtd-corim-file and a numbered servtdCrl in policyData."
     echo "    Explicit per-side policies or endorsement files disable automatic policy generation."
     echo "  - The 'rebind' operation performs the complete single-phase rebinding handshake"
     echo "    (TLS/SPDM session, token exchange, and approval) per GHCI 1.5."
@@ -240,14 +243,17 @@ POLICY_FILE="$DEFAULT_POLICY_FILE"
 ROOT_CA_FILE="$DEFAULT_ROOT_CA_FILE"
 POLICY_ISSUER_CHAIN_FILE=""  # Policy v2 signer, unless an anchor is provided
 SIGNER_ANCHOR_FILE=""
+SERVTD_TCB_MAPPING_FILE=""
 SERVTD_CORIM_FILE=""
 SRC_POLICY_FILE=""          # Per-side overrides (optional)
 SRC_POLICY_ISSUER_CHAIN_FILE=""
 SRC_SIGNER_ANCHOR_FILE=""
+SRC_SERVTD_TCB_MAPPING_FILE=""
 SRC_SERVTD_CORIM_FILE=""
 DST_POLICY_FILE=""
 DST_POLICY_ISSUER_CHAIN_FILE=""
 DST_SIGNER_ANCHOR_FILE=""
+DST_SERVTD_TCB_MAPPING_FILE=""
 DST_SERVTD_CORIM_FILE=""
 BUILD_MODE="$DEFAULT_BUILD_MODE"
 NUM_CPUS="$DEFAULT_NUM_CPUS"
@@ -300,6 +306,11 @@ while [[ $# -gt 0 ]]; do
             SERVTD_CORIM_FILE="$2"
             shift 2
             ;;
+        --servtd-tcb-mapping-file)
+            require_file_argument "$@"
+            SERVTD_TCB_MAPPING_FILE="$2"
+            shift 2
+            ;;
         --src-policy-file)
             SRC_POLICY_FILE="$2"
             shift 2
@@ -318,6 +329,11 @@ while [[ $# -gt 0 ]]; do
             SRC_SERVTD_CORIM_FILE="$2"
             shift 2
             ;;
+        --src-servtd-tcb-mapping-file)
+            require_file_argument "$@"
+            SRC_SERVTD_TCB_MAPPING_FILE="$2"
+            shift 2
+            ;;
         --dst-policy-file)
             DST_POLICY_FILE="$2"
             shift 2
@@ -334,6 +350,11 @@ while [[ $# -gt 0 ]]; do
         --dst-servtd-corim-file)
             require_file_argument "$@"
             DST_SERVTD_CORIM_FILE="$2"
+            shift 2
+            ;;
+        --dst-servtd-tcb-mapping-file)
+            require_file_argument "$@"
+            DST_SERVTD_TCB_MAPPING_FILE="$2"
             shift 2
             ;;
         --debug)
@@ -424,8 +445,9 @@ if [[ -n "$SERVTD_CORIM_FILE$SRC_SERVTD_CORIM_FILE$DST_SERVTD_CORIM_FILE" ||
 fi
 if [[ "$USE_POLICY_V2" != true &&
       ( "$USE_SERVTD_CORIM" == true ||
-        -n "$SIGNER_ANCHOR_FILE$SRC_SIGNER_ANCHOR_FILE$DST_SIGNER_ANCHOR_FILE" ) ]]; then
-    echo -e "${RED}Error: Signer anchors and servTD CoRIM require --policy-v2${NC}" >&2
+        -n "$SIGNER_ANCHOR_FILE$SRC_SIGNER_ANCHOR_FILE$DST_SIGNER_ANCHOR_FILE" ||
+        -n "$SERVTD_TCB_MAPPING_FILE$SRC_SERVTD_TCB_MAPPING_FILE$DST_SERVTD_TCB_MAPPING_FILE" ) ]]; then
+    echo -e "${RED}Error: Signer anchors and servTD mappings require --policy-v2${NC}" >&2
     exit 1
 fi
 
@@ -517,12 +539,14 @@ if [[ "$USE_POLICY_V2" == true && "$USE_MOCK_REPORT" == true &&
       "$EXPLICIT_POLICY_FILE" != true && "$EXPLICIT_POLICY_ISSUER_CHAIN" != true &&
       -z "$SRC_POLICY_FILE$DST_POLICY_FILE$SRC_POLICY_ISSUER_CHAIN_FILE$DST_POLICY_ISSUER_CHAIN_FILE" &&
       -z "$SIGNER_ANCHOR_FILE$SRC_SIGNER_ANCHOR_FILE$DST_SIGNER_ANCHOR_FILE" &&
+      -z "$SERVTD_TCB_MAPPING_FILE$SRC_SERVTD_TCB_MAPPING_FILE$DST_SERVTD_TCB_MAPPING_FILE" &&
       -z "$SERVTD_CORIM_FILE$SRC_SERVTD_CORIM_FILE$DST_SERVTD_CORIM_FILE" &&
       "$SKIP_POLICY_GENERATION" != true ]]; then
     generate_policy_from_mock_report
     # Use the generated output paths
     POLICY_FILE="./config/AzCVMEmu/policy_v2_signed.json"
     POLICY_ISSUER_CHAIN_FILE="./config/AzCVMEmu/policy_issuer_chain.pem"
+    SERVTD_TCB_MAPPING_FILE="./config/AzCVMEmu/tcb_mapping_signed.json"
 fi
 
 # Validate policy v2 requirements
@@ -544,14 +568,16 @@ fi
 EFFECTIVE_SRC_POLICY_FILE="${SRC_POLICY_FILE:-$POLICY_FILE}"
 EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE="${SRC_POLICY_ISSUER_CHAIN_FILE:-$POLICY_ISSUER_CHAIN_FILE}"
 EFFECTIVE_SRC_SIGNER_ANCHOR_FILE="${SRC_SIGNER_ANCHOR_FILE:-$SIGNER_ANCHOR_FILE}"
+EFFECTIVE_SRC_SERVTD_TCB_MAPPING_FILE="${SRC_SERVTD_TCB_MAPPING_FILE:-$SERVTD_TCB_MAPPING_FILE}"
 EFFECTIVE_SRC_SERVTD_CORIM_FILE="${SRC_SERVTD_CORIM_FILE:-$SERVTD_CORIM_FILE}"
 EFFECTIVE_DST_POLICY_FILE="${DST_POLICY_FILE:-$POLICY_FILE}"
 EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE="${DST_POLICY_ISSUER_CHAIN_FILE:-$POLICY_ISSUER_CHAIN_FILE}"
 EFFECTIVE_DST_SIGNER_ANCHOR_FILE="${DST_SIGNER_ANCHOR_FILE:-$SIGNER_ANCHOR_FILE}"
+EFFECTIVE_DST_SERVTD_TCB_MAPPING_FILE="${DST_SERVTD_TCB_MAPPING_FILE:-$SERVTD_TCB_MAPPING_FILE}"
 EFFECTIVE_DST_SERVTD_CORIM_FILE="${DST_SERVTD_CORIM_FILE:-$SERVTD_CORIM_FILE}"
 
 check_peer_files() {
-    local peer="$1" policy="$2" chain="$3" anchor="$4" corim="$5"
+    local peer="$1" policy="$2" chain="$3" anchor="$4" mapping="$5" corim="$6"
     check_file "$policy" "$peer Policy"
     if [[ "$USE_POLICY_V2" == true ]]; then
         if [[ -n "$anchor" ]]; then
@@ -563,21 +589,32 @@ check_peer_files() {
         else
             check_file "$chain" "$peer Policy Issuer Chain (or supply a signer anchor)"
         fi
-        if [[ -n "$corim" ]]; then
+        if [[ "$USE_SERVTD_CORIM" == true ]]; then
+            if [[ -n "$mapping" ]]; then
+                echo -e "${RED}Error: $peer JSON mapping cannot be used with servtd_corim${NC}" >&2
+                exit 1
+            fi
             check_file "$corim" "$peer ServTD CoRIM"
             if [[ ! -s "$corim" ]]; then
                 echo -e "${RED}Error: $peer servTD CoRIM must not be empty${NC}" >&2
                 exit 1
             fi
+        else
+            if [[ -n "$corim" ]]; then
+                echo -e "${RED}Error: $peer CoRIM requires the servtd_corim feature${NC}" >&2
+                exit 1
+            fi
+            check_file "$mapping" "$peer ServTD TCB Mapping"
+            check_file "$chain" "$peer Policy Issuer Chain for JSON mapping"
         fi
     fi
 }
 
 if [[ "$RUN_BOTH" == true || "$ROLE" == "source" ]]; then
-    check_peer_files "Source" "$EFFECTIVE_SRC_POLICY_FILE" "$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "$EFFECTIVE_SRC_SIGNER_ANCHOR_FILE" "$EFFECTIVE_SRC_SERVTD_CORIM_FILE"
+    check_peer_files "Source" "$EFFECTIVE_SRC_POLICY_FILE" "$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE" "$EFFECTIVE_SRC_SIGNER_ANCHOR_FILE" "$EFFECTIVE_SRC_SERVTD_TCB_MAPPING_FILE" "$EFFECTIVE_SRC_SERVTD_CORIM_FILE"
 fi
 if [[ "$RUN_BOTH" == true || "$ROLE" == "destination" ]]; then
-    check_peer_files "Destination" "$EFFECTIVE_DST_POLICY_FILE" "$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "$EFFECTIVE_DST_SIGNER_ANCHOR_FILE" "$EFFECTIVE_DST_SERVTD_CORIM_FILE"
+    check_peer_files "Destination" "$EFFECTIVE_DST_POLICY_FILE" "$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE" "$EFFECTIVE_DST_SIGNER_ANCHOR_FILE" "$EFFECTIVE_DST_SERVTD_TCB_MAPPING_FILE" "$EFFECTIVE_DST_SERVTD_CORIM_FILE"
 fi
 if [[ "$USE_POLICY_V2" != true ]]; then
     check_file "$ROOT_CA_FILE" "Root CA"
@@ -730,10 +767,12 @@ else
     echo "  Source policy file: $EFFECTIVE_SRC_POLICY_FILE"
     echo "  Source issuer chain: $EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE"
     echo "  Source signer anchor: $EFFECTIVE_SRC_SIGNER_ANCHOR_FILE"
+    echo "  Source servTD TCB mapping: $EFFECTIVE_SRC_SERVTD_TCB_MAPPING_FILE"
     echo "  Source servTD CoRIM: $EFFECTIVE_SRC_SERVTD_CORIM_FILE"
     echo "  Dest policy file: $EFFECTIVE_DST_POLICY_FILE"
     echo "  Dest issuer chain: $EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE"
     echo "  Dest signer anchor: $EFFECTIVE_DST_SIGNER_ANCHOR_FILE"
+    echo "  Dest servTD TCB mapping: $EFFECTIVE_DST_SERVTD_TCB_MAPPING_FILE"
     echo "  Dest servTD CoRIM: $EFFECTIVE_DST_SERVTD_CORIM_FILE"
 fi
 
@@ -779,6 +818,7 @@ if [[ "$RUN_BOTH" == true ]]; then
         "MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE"
         "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE"
         "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_DST_SIGNER_ANCHOR_FILE"
+        "MIGTD_SERVTD_TCB_MAPPING_FILE=$EFFECTIVE_DST_SERVTD_TCB_MAPPING_FILE"
         "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_DST_SERVTD_CORIM_FILE"
         "MIGTD_LOG_FILE=$DEST_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
     )
@@ -827,6 +867,7 @@ if [[ "$RUN_BOTH" == true ]]; then
         "MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE"
         "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE"
         "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_SRC_SIGNER_ANCHOR_FILE"
+        "MIGTD_SERVTD_TCB_MAPPING_FILE=$EFFECTIVE_SRC_SERVTD_TCB_MAPPING_FILE"
         "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_SRC_SERVTD_CORIM_FILE"
         "MIGTD_LOG_FILE=$SRC_LOG_FILE" "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
     )
@@ -893,6 +934,7 @@ else
             "MIGTD_POLICY_FILE=$EFFECTIVE_SRC_POLICY_FILE"
             "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_SRC_POLICY_ISSUER_CHAIN_FILE"
             "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_SRC_SIGNER_ANCHOR_FILE"
+            "MIGTD_SERVTD_TCB_MAPPING_FILE=$EFFECTIVE_SRC_SERVTD_TCB_MAPPING_FILE"
             "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_SRC_SERVTD_CORIM_FILE"
             "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
         )
@@ -901,6 +943,7 @@ else
             "MIGTD_POLICY_FILE=$EFFECTIVE_DST_POLICY_FILE"
             "MIGTD_POLICY_ISSUER_CHAIN_FILE=$EFFECTIVE_DST_POLICY_ISSUER_CHAIN_FILE"
             "MIGTD_SIGNER_ANCHOR_FILE=$EFFECTIVE_DST_SIGNER_ANCHOR_FILE"
+            "MIGTD_SERVTD_TCB_MAPPING_FILE=$EFFECTIVE_DST_SERVTD_TCB_MAPPING_FILE"
             "MIGTD_SERVTD_CORIM_FILE=$EFFECTIVE_DST_SERVTD_CORIM_FILE"
             "RUST_BACKTRACE=$RUST_BACKTRACE" "RUST_LOG=$RUST_LOG"
         )

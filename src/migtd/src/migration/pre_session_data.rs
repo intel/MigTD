@@ -362,23 +362,24 @@ pub(super) async fn exchange_hello_packet<T: AsyncRead + AsyncWrite + Unpin>(
         .ok_or(MigrationResult::InvalidParameter)
 }
 
-/// Attacker-influenced (VMM-relayed) peer servTD CoRIM size ceiling, enforced
-/// at decode time before any CBOR/COSE parsing allocates
-/// (`ServtdCorim::decode_signed`). Production TCB-mapping CoRIMs enrolled via
-/// the policy-v2 tooling are on the order of a few KB per mapped release; 64
-/// KiB comfortably covers a multi-release cumulative mapping while remaining
-/// far below the overall 1 MiB pre-session payload cap
-/// (`MAX_PRE_SESSION_PAYLOAD_SIZE`).
-pub(crate) const MAX_PEER_SERVTD_CORIM_SIZE: usize = 64 * 1024;
+/// Attacker-influenced (VMM-relayed) peer mapping size ceilings, enforced at
+/// decode time before JSON or CBOR/COSE parsing allocates.
+#[cfg(not(feature = "servtd_corim"))]
+pub(crate) const MAX_PEER_SERVTD_TCB_MAPPING_SIZE: usize = 512 * 1024;
+#[cfg(feature = "servtd_corim")]
+pub(crate) const MAX_PEER_SERVTD_TCB_MAPPING_SIZE: usize = 64 * 1024;
 
-/// Borrowed `(policy, issuer_chain, servtd_corim)` slices decoded from a
-/// peer-data blob. `servtd_corim` is `None` when the peer sent no TCB mapping item.
-pub(crate) type PeerData<'a> = (&'a [u8], &'a [u8], Option<&'a [u8]>);
+/// Borrowed policy-v2 artifacts decoded from a peer-data blob.
+pub(crate) struct PeerData<'a> {
+    pub policy: &'a [u8],
+    pub issuer_chain: &'a [u8],
+    pub servtd_tcb_mapping: Option<&'a [u8]>,
+}
 
 // Peer-data TLV item types: one item per MigTD CFV artifact.
 const PEER_ITEM_POLICY_ISSUER_CHAIN: u32 = 0x0001;
 const PEER_ITEM_POLICY_DATA: u32 = 0x0002;
-// servTD TCB mapping. Optional: omitted when no mapping is enrolled.
+// Signed JSON or CoRIM TCB mapping. Preserve the existing CoRIM wire type.
 const PEER_ITEM_SERVTD_TCB_MAPPING: u32 = 0x0003;
 /// Type (u32 LE) + Length (u32 LE).
 const PEER_ITEM_HEADER_SIZE: usize = 8;
@@ -391,9 +392,8 @@ fn push_peer_item(blob: &mut Vec<u8>, item_type: u32, value: &[u8]) -> Option<()
     Some(())
 }
 
-/// Encode `(policy, issuer_chain, servtd_corim)` into the peer-data blob as TLV
-/// items in ascending type order: issuer chain, policy, then the TCB mapping item,
-/// which is omitted when empty.
+/// Encode policy-v2 artifacts into the peer-data blob as TLV items in ascending
+/// type order. The build selects the signed mapping format: JSON or CoRIM.
 ///
 /// Format: repeated `[u32 LE type][u32 LE length][value]`.
 ///
@@ -401,32 +401,31 @@ fn push_peer_item(blob: &mut Vec<u8>, item_type: u32, value: &[u8]) -> Option<()
 pub(crate) fn encode_peer_data(
     policy: &[u8],
     issuer_chain: &[u8],
-    servtd_corim: &[u8],
+    servtd_tcb_mapping: &[u8],
 ) -> Option<Vec<u8>> {
     let mut blob = Vec::with_capacity(
-        3 * PEER_ITEM_HEADER_SIZE + issuer_chain.len() + policy.len() + servtd_corim.len(),
+        3 * PEER_ITEM_HEADER_SIZE + issuer_chain.len() + policy.len() + servtd_tcb_mapping.len(),
     );
     push_peer_item(&mut blob, PEER_ITEM_POLICY_ISSUER_CHAIN, issuer_chain)?;
     push_peer_item(&mut blob, PEER_ITEM_POLICY_DATA, policy)?;
-    if !servtd_corim.is_empty() {
-        push_peer_item(&mut blob, PEER_ITEM_SERVTD_TCB_MAPPING, servtd_corim)?;
+    if !servtd_tcb_mapping.is_empty() {
+        push_peer_item(&mut blob, PEER_ITEM_SERVTD_TCB_MAPPING, servtd_tcb_mapping)?;
     }
     Some(blob)
 }
 
 /// Decode a peer-data blob produced by [`encode_peer_data`].
 ///
-/// Returns borrowed `(policy, issuer_chain, servtd_corim)` slices. Rejects
+/// Returns borrowed policy-v2 artifact slices. Rejects
 /// out-of-order or duplicate types, unknown types, truncated items, trailing
-/// bytes, a missing issuer chain or policy, an empty TCB mapping item, and a
-/// mapping larger than [`MAX_PEER_SERVTD_CORIM_SIZE`] before the caller can
-/// allocate/parse it.
+/// bytes, a missing issuer chain or policy, empty mapping items, oversized
+/// mappings, and blobs containing more than one mapping.
 pub(crate) fn decode_peer_data(data: &[u8]) -> Option<PeerData<'_>> {
     let mut rest = data;
     let mut last_type: Option<u32> = None;
     let mut issuer_chain = None;
     let mut policy = None;
-    let mut servtd_corim = None;
+    let mut servtd_tcb_mapping = None;
 
     while !rest.is_empty() {
         if rest.len() < PEER_ITEM_HEADER_SIZE {
@@ -451,42 +450,50 @@ pub(crate) fn decode_peer_data(data: &[u8]) -> Option<PeerData<'_>> {
             PEER_ITEM_POLICY_ISSUER_CHAIN => issuer_chain = Some(value),
             PEER_ITEM_POLICY_DATA => policy = Some(value),
             PEER_ITEM_SERVTD_TCB_MAPPING => {
-                if value.is_empty() || value.len() > MAX_PEER_SERVTD_CORIM_SIZE {
+                if value.is_empty() || value.len() > MAX_PEER_SERVTD_TCB_MAPPING_SIZE {
                     return None;
                 }
-                servtd_corim = Some(value);
+                servtd_tcb_mapping = Some(value);
             }
             _ => return None,
         }
     }
 
-    Some((policy?, issuer_chain?, servtd_corim))
+    Some(PeerData {
+        policy: policy?,
+        issuer_chain: issuer_chain?,
+        servtd_tcb_mapping,
+    })
 }
 
-/// Build the local peer-data blob from configured policy, issuer chain, and
-/// (when enrolled) signed servTD TCB-mapping CoRIM.
+/// Build the local peer-data blob from the configured policy, signer-anchor
+/// source, and signed servTD TCB mapping (standalone JSON or CoRIM).
 #[cfg(feature = "policy_v2")]
 pub(crate) fn local_peer_data() -> Option<Vec<u8>> {
     let policy = crate::config::get_policy()?;
-    // Send the signer-anchor source: the enrolled 48-byte digest, else
-    // the policy issuer chain PEM. Both use `policy::resolve_signer_anchor`.
-    let issuer_chain = crate::config::get_signer_anchor_source()?;
-    // Send our own signed CoRIM (if enrolled) so the peer resolves *our*
-    // current/init hashes through *our* authenticated mapping instead of
-    // theirs. Absent the `servtd_corim` feature, or when nothing is
-    // enrolled, send an explicit zero length. The peer must then use our JSON
-    // `servtdCollateral` mapping, or reject us if it is absent.
     #[cfg(feature = "servtd_corim")]
-    let servtd_corim = crate::config::get_servtd_corim().unwrap_or(&[]);
+    {
+        // CoRIM carries its signer chain, so a directly enrolled signer anchor
+        // remains sufficient.
+        let issuer_chain = crate::config::get_signer_anchor_source()?;
+        let servtd_corim = crate::config::get_servtd_corim()?;
+        encode_peer_data(policy, issuer_chain, servtd_corim)
+    }
     #[cfg(not(feature = "servtd_corim"))]
-    let servtd_corim: &[u8] = &[];
-    encode_peer_data(policy, issuer_chain, servtd_corim)
+    {
+        // The standalone JSON mapping signature is verified with this PEM.
+        let issuer_chain = crate::config::get_policy_issuer_chain()?;
+        let servtd_tcb_mapping = crate::config::get_servtd_tcb_mapping()?;
+        encode_peer_data(policy, issuer_chain, servtd_tcb_mapping)
+    }
 }
 
-/// Exchange peer-data blobs (policy + issuer chain) with the remote.
+/// Exchange peer-data blobs (policy, signer-anchor source, and active signed
+/// servTD TCB mapping) with the remote.
 ///
-/// Returns the peer's blob, validated to be well-formed with non-empty
-/// policy and issuer chain.
+/// Returns the peer's blob, validated to be well-formed with non-empty policy
+/// and signer-anchor source, and a non-empty signed mapping. The build-selected
+/// mapping verifier authenticates its format after the exchange.
 #[cfg(feature = "policy_v2")]
 pub(crate) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>(
     transport: &mut T,
@@ -508,13 +515,16 @@ pub(crate) async fn pre_session_data_exchange<T: AsyncRead + AsyncWrite + Unpin>
         .await
         .log_err("pre_session_data_exchange: receive_pre_session_data_packet")?;
 
-    let (peer_policy, peer_issuer_chain, _peer_servtd_corim) = decode_peer_data(&peer_blob)
-        .ok_or_else(|| {
-            log::error!("pre_session_data_exchange: malformed peer_data blob\n");
-            MigrationResult::InvalidParameter
-        })?;
-    if peer_policy.is_empty() || peer_issuer_chain.is_empty() {
+    let peer = decode_peer_data(&peer_blob).ok_or_else(|| {
+        log::error!("pre_session_data_exchange: malformed peer_data blob\n");
+        MigrationResult::InvalidParameter
+    })?;
+    if peer.policy.is_empty() || peer.issuer_chain.is_empty() {
         log::error!("pre_session_data_exchange: Received empty policy or issuer chain from peer\n");
+        return Err(MigrationResult::InvalidParameter);
+    }
+    if peer.servtd_tcb_mapping.is_none() {
+        log::error!("pre_session_data_exchange: missing servTD TCB mapping\n");
         return Err(MigrationResult::InvalidParameter);
     }
 
@@ -544,23 +554,22 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_with_corim() {
-        let blob = encode_peer_data(b"policy", b"chain", b"corim").unwrap();
-        let (policy, chain, corim) = decode_peer_data(&blob).unwrap();
-        assert_eq!(policy, b"policy");
-        assert_eq!(chain, b"chain");
-        assert_eq!(corim, Some(b"corim".as_slice()));
+    fn round_trip_with_mapping() {
+        let blob = encode_peer_data(b"policy", b"chain", b"mapping").unwrap();
+        let peer = decode_peer_data(&blob).unwrap();
+        assert_eq!(peer.policy, b"policy");
+        assert_eq!(peer.issuer_chain, b"chain");
+        assert_eq!(peer.servtd_tcb_mapping, Some(b"mapping".as_slice()));
     }
 
     #[test]
     fn empty_mapping_omits_the_item() {
         let blob = encode_peer_data(b"p", b"c", b"").unwrap();
         assert_eq!(blob, b"\x01\0\0\0\x01\0\0\0c\x02\0\0\0\x01\0\0\0p");
-        let (policy, chain, mapping) = decode_peer_data(&blob).unwrap();
-        assert_eq!(
-            (policy, chain, mapping),
-            (b"p".as_slice(), b"c".as_slice(), None)
-        );
+        let peer = decode_peer_data(&blob).unwrap();
+        assert_eq!(peer.policy, b"p");
+        assert_eq!(peer.issuer_chain, b"c");
+        assert_eq!(peer.servtd_tcb_mapping, None);
     }
 
     #[test]
@@ -639,15 +648,15 @@ mod tests {
     }
 
     #[test]
-    fn oversized_mapping_is_rejected_and_limit_is_accepted() {
-        let oversized = vec![0u8; MAX_PEER_SERVTD_CORIM_SIZE + 1];
+    fn mapping_size_limit_is_enforced() {
+        let oversized = vec![0u8; MAX_PEER_SERVTD_TCB_MAPPING_SIZE + 1];
         let blob = encode_peer_data(b"p", b"c", &oversized).unwrap();
         assert!(decode_peer_data(&blob).is_none());
 
-        let at_limit = vec![0x42u8; MAX_PEER_SERVTD_CORIM_SIZE];
+        let at_limit = vec![0x42u8; MAX_PEER_SERVTD_TCB_MAPPING_SIZE];
         let blob = encode_peer_data(b"p", b"c", &at_limit).unwrap();
-        let (_, _, mapping) = decode_peer_data(&blob).unwrap();
-        assert_eq!(mapping, Some(at_limit.as_slice()));
+        let peer = decode_peer_data(&blob).unwrap();
+        assert_eq!(peer.servtd_tcb_mapping, Some(at_limit.as_slice()));
     }
 
     #[test]

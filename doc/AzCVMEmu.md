@@ -161,7 +161,9 @@ What the script prints/shows:
 ./migtdemu.sh --debug --mock-report --both
 
 # Policy v2 example
-./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem --both
+./migtdemu.sh --policy-v2 --policy-file ./config/AzCVMEmu/policy_v2_signed.json \
+  --policy-issuer-chain-file ./config/AzCVMEmu/policy_issuer_chain.pem \
+  --servtd-tcb-mapping-file ./config/AzCVMEmu/tcb_mapping_signed.json --both
 
 # CoRIM-only policy with a direct signer anchor
 ./migtdemu.sh --policy-v2 --policy-file /path/to/corim_policy.json \
@@ -172,12 +174,11 @@ What the script prints/shows:
 ./migtdemu.sh --features spdm_attestation --both
 ```
 
-Explicit per-side policies or signer/CoRIM files suppress automatic mock-policy
-generation. A CoRIM-only policy still requires a numbered signer CRL at
-`policyData.servtdCrl`. If JSON collateral is retained with a direct anchor,
-it must include `servtdTcbMappingIssuerChain`; an unused outer PEM path does
-not provide the fallback. See [direct enrollment](policy_v2.md#direct-signer-anchor-enrollment).
-Enabling `servtd_corim` without supplying a CoRIM remains valid for JSON policies.
+Explicit per-side policies, mappings, or signer/CoRIM files suppress automatic
+mock-policy generation. A CoRIM-only policy still requires a numbered signer
+CRL at `policyData.servtdCrl`. JSON mappings require a policy issuer PEM even
+when a direct anchor is enrolled; the chain-derived anchor must match the
+direct anchor. See [direct enrollment](policy_v2.md#direct-signer-anchor-enrollment).
 
 Both PEM and direct enrollment use the root-certificate/full Subject DN/EKU
 anchor. Endorsement authentication must reproduce the enrolled anchor from

@@ -1,7 +1,9 @@
 
 ## migtd-policy-verifier tool
 
-This tool can be used to verify MigTD signed policy files and issuer certificate chains.
+This tool verifies the signed servTD artifacts in policy v2: the optional identity
+and the standalone JSON TCB mapping, including their issuer chains and signer
+revocation. The outer policy envelope has no signature.
 
 ### How to build
 
@@ -18,7 +20,7 @@ popd
     ./target/debug/migtd-policy-verifier -h
     ```
 
-- Verify a signed policy and issuer chain:
+- Verify a policy, standalone signed mapping, and issuer chain:
     ```
-    ./target/debug/migtd-policy-verifier --policy <path/to/policy_v2_signed.json> --cert-chain <path/to/policy_issuer_chain.pem>
+    ./target/debug/migtd-policy-verifier --policy <path/to/policy_v2_signed.json> --cert-chain <path/to/policy_issuer_chain.pem> --servtd-tcb-mapping <path/to/tcb_mapping_signed.json>
     ```

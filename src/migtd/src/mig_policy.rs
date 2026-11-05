@@ -100,13 +100,26 @@ mod v2 {
     /// Initialize the global verified policy once
     pub fn init_policy(
         policy_json: &'static [u8],
-        cert_chain: &[u8],
+        signer_anchor_source: &[u8],
+        json_mapping: Option<(&[u8], &[u8])>,
     ) -> Result<String, PolicyError> {
         let raw = RawPolicyData::deserialize_from_json(policy_json)?;
 
         // Get the root CA from collaterals and set it for quote verification
-        #[cfg_attr(not(feature = "servtd_corim"), allow(unused_mut))]
-        let mut verified_policy = raw.verify(cert_chain)?;
+        let mut verified_policy = raw.verify(signer_anchor_source)?;
+
+        #[cfg(not(feature = "servtd_corim"))]
+        {
+            let (mapping, mapping_chain) =
+                json_mapping.ok_or(PolicyError::InvalidServtdTcbMapping)?;
+            verified_policy.attach_verified_json_mapping(mapping, mapping_chain)?;
+            verified_policy
+                .verify_signer_chains_not_revoked(verified_policy.servtd_crl.as_bytes())?;
+        }
+        #[cfg(feature = "servtd_corim")]
+        if json_mapping.is_some() {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        }
 
         // Attach the optional CoRIM hash endorsement enrolled in the CFV. Its
         // COSE signer chain must reproduce the RTMR1 anchor enrolled directly
@@ -117,8 +130,10 @@ mod v2 {
         // MigTD has no trusted wall clock. `decode_signed` rejects CWT
         // `nbf`/`exp`; zero is used only for inner CoRIM validity validation.
         #[cfg(feature = "servtd_corim")]
-        if let Some(cose) = crate::config::get_servtd_corim() {
-            let anchor = resolve_signer_anchor(cert_chain)?;
+        {
+            let cose =
+                crate::config::get_servtd_corim().ok_or(PolicyError::InvalidServtdTcbMapping)?;
+            let anchor = resolve_signer_anchor(signer_anchor_source)?;
             let corim = ServtdCorim::decode_signed(cose, 0, &anchor)?;
             verified_policy.set_servtd_corim(corim);
             log::info!("Loaded signed ServTD CoRIM endorsement");
@@ -163,24 +178,23 @@ mod v2 {
         policy_peer: &[u8],
         event_log_peer: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (policy_peer, peer_issuer_chain, peer_servtd_corim) =
-            crate::migration::pre_session_data::decode_peer_data(policy_peer)
-                .ok_or(PolicyError::InvalidParameter)?;
+        let peer = crate::migration::pre_session_data::decode_peer_data(policy_peer)
+            .ok_or(PolicyError::InvalidParameter)?;
         if is_src {
             authenticate_migration_dest(
                 quote_peer,
                 event_log_peer,
-                policy_peer,
-                peer_issuer_chain,
-                peer_servtd_corim,
+                peer.policy,
+                peer.issuer_chain,
+                peer.servtd_tcb_mapping,
             )
         } else {
             evaluate_migration_source(
                 quote_peer,
                 event_log_peer,
-                policy_peer,
-                peer_issuer_chain,
-                peer_servtd_corim,
+                peer.policy,
+                peer.issuer_chain,
+                peer.servtd_tcb_mapping,
             )
         }
     }
@@ -258,15 +272,14 @@ mod v2 {
         event_log_dst: &[u8],
         mig_policy_dst: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (mig_policy_dst, peer_issuer_chain, peer_servtd_corim) =
-            crate::migration::pre_session_data::decode_peer_data(mig_policy_dst)
-                .ok_or(PolicyError::InvalidParameter)?;
+        let peer = crate::migration::pre_session_data::decode_peer_data(mig_policy_dst)
+            .ok_or(PolicyError::InvalidParameter)?;
         let (evaluation_data_dst, verified_policy_dst, tdx_report) = authenticate_rebinding_common(
             tdreport_dst,
             event_log_dst,
-            mig_policy_dst,
-            peer_issuer_chain,
-            peer_servtd_corim,
+            peer.policy,
+            peer.issuer_chain,
+            peer.servtd_tcb_mapping,
         )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
@@ -298,16 +311,15 @@ mod v2 {
         mig_policy_src: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (mig_policy_src, peer_issuer_chain, peer_servtd_corim) =
-            crate::migration::pre_session_data::decode_peer_data(mig_policy_src)
-                .ok_or(PolicyError::InvalidParameter)?;
+        let peer = crate::migration::pre_session_data::decode_peer_data(mig_policy_src)
+            .ok_or(PolicyError::InvalidParameter)?;
         // Verify quote src / event log src / policy src
         let (evaluation_data_src, verified_policy_src, tdx_report) = authenticate_rebinding_common(
             tdreport_src,
             event_log_src,
-            mig_policy_src,
-            peer_issuer_chain,
-            peer_servtd_corim,
+            peer.policy,
+            peer.issuer_chain,
+            peer.servtd_tcb_mapping,
         )?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
@@ -439,8 +451,7 @@ mod v2 {
         event_log: &[u8],
         mig_policy: &'p [u8],
         policy_issuer_chain: &[u8],
-        #[cfg_attr(not(feature = "servtd_corim"), allow(unused_variables))]
-        peer_servtd_corim: Option<&[u8]>,
+        peer_servtd_mapping: Option<&[u8]>,
         rtmrs: &[[u8; SHA384_DIGEST_SIZE]; 4],
     ) -> Result<VerifiedPolicy<'p>, PolicyError> {
         let unverified_policy = RawPolicyData::deserialize_from_json(mig_policy)?;
@@ -454,15 +465,27 @@ mod v2 {
         // 2. Verify the peer policy using its RTMR1-bound anchor source.
         let local_policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
         let local_servtd_crl = local_policy.servtd_crl.as_bytes();
-        #[cfg_attr(not(feature = "servtd_corim"), allow(unused_mut))]
         let mut verified_policy = unverified_policy
             .verify_with_authoritative_servtd_crl(policy_issuer_chain, local_servtd_crl)?;
 
+        #[cfg(feature = "servtd_corim")]
+        if let Some(peer_corim_cose) = peer_servtd_mapping {
+            verified_policy
+                .attach_verified_peer_servtd_corim(peer_corim_cose)
+                .log_err("Peer servtd CoRIM verification")?;
+        }
+        #[cfg(not(feature = "servtd_corim"))]
+        verified_policy
+            .attach_verified_json_mapping(
+                peer_servtd_mapping.ok_or(PolicyError::InvalidServtdTcbMapping)?,
+                policy_issuer_chain,
+            )
+            .log_err("Peer JSON TCB mapping verification")?;
+
         // 3. Compare the peer's RTMR1 signer anchor (root certificate DER,
         //    full Subject DN DER, and dedicated EKU), not full chain PEM.
-        //    This supports direct-anchor enrollment without a PEM chain.
-        //    Policy verification has already bound the peer's embedded mapping
-        //    chain to `signer_anchor`.
+        //    CoRIM supports direct-anchor enrollment; standalone JSON mappings
+        //    use the separately enrolled policy issuer PEM.
         if local_policy.signer_anchor != verified_policy.signer_anchor {
             return Err(PolicyError::PeerCertChainValidation);
         }
@@ -502,13 +525,6 @@ mod v2 {
             _ => return Err(PolicyError::PeerCertChainValidation),
         }
 
-        // Peer SVN lookups must use the authenticated peer TCB-mapping CoRIM.
-        #[cfg(feature = "servtd_corim")]
-        if let Some(peer_corim_cose) = peer_servtd_corim {
-            verified_policy
-                .attach_verified_peer_servtd_corim(peer_corim_cose)
-                .log_err("Peer servtd CoRIM verification")?;
-        }
         verify_peer_signer_revocation(&verified_policy, local_policy)?;
 
         // 4. Check the integrity of the policy with its event log
@@ -707,16 +723,15 @@ mod v2 {
         event_log_src: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
-        let (mig_policy_src, peer_issuer_chain, peer_servtd_corim) =
-            crate::migration::pre_session_data::decode_peer_data(peer_data)
-                .ok_or(PolicyError::InvalidParameter)?;
+        let peer = crate::migration::pre_session_data::decode_peer_data(peer_data)
+            .ok_or(PolicyError::InvalidParameter)?;
 
         let (evaluation_data_src, verified_policy_src, suppl_data) = authenticate_remote_common(
             quote_src,
             event_log_src,
-            mig_policy_src,
-            peer_issuer_chain,
-            peer_servtd_corim,
+            peer.policy,
+            peer.issuer_chain,
+            peer.servtd_tcb_mapping,
         )?;
 
         let relative_reference = get_local_tcb_evaluation_info()?;
@@ -750,10 +765,28 @@ mod v2 {
 
     #[cfg(test)]
     fn load_policy<'a>(input: &'a [u8], chain: &[u8]) -> VerifiedPolicy<'a> {
-        RawPolicyData::deserialize_from_json(input)
+        load_policy_with_mapping(
+            input,
+            chain,
+            include_bytes!("../../policy/test/policy_v2/tcb_mapping_signed.json"),
+        )
+    }
+
+    #[cfg(test)]
+    fn load_policy_with_mapping<'a>(
+        input: &'a [u8],
+        chain: &[u8],
+        mapping: &[u8],
+    ) -> VerifiedPolicy<'a> {
+        let mut policy = RawPolicyData::deserialize_from_json(input)
             .unwrap()
             .verify(chain)
-            .unwrap()
+            .unwrap();
+        policy.attach_verified_json_mapping(mapping, chain).unwrap();
+        policy
+            .verify_signer_chains_not_revoked(policy.servtd_crl.as_bytes())
+            .unwrap();
+        policy
     }
 
     #[cfg(test)]
@@ -778,8 +811,6 @@ mod v2 {
         fn peer_crl_number_is_not_replaced_by_local_crl_number() {
             let policy_input = |crl: &[u8]| {
                 let mut policy = fixtures::policy_json(crl);
-                policy["policyData"]["servtdCollateral"]["servtdTcbMapping"] =
-                    serde_json::from_slice(fixtures::SIGNED_MAPPING_ROTATED).unwrap();
                 let collateral = policy["policyData"]["servtdCollateral"]
                     .as_object_mut()
                     .unwrap();
@@ -790,8 +821,16 @@ mod v2 {
             };
             let local_input = policy_input(fixtures::REVOKED_POLICY_CRL);
             let peer_input = policy_input(fixtures::EMPTY_CRL);
-            let mut local = load_policy(&local_input, fixtures::ROTATED_POLICY_CHAIN);
-            let mut peer = load_policy(&peer_input, fixtures::ROTATED_POLICY_CHAIN);
+            let mut local = load_policy_with_mapping(
+                &local_input,
+                fixtures::ROTATED_POLICY_CHAIN,
+                fixtures::SIGNED_MAPPING_ROTATED,
+            );
+            let mut peer = load_policy_with_mapping(
+                &peer_input,
+                fixtures::ROTATED_POLICY_CHAIN,
+                fixtures::SIGNED_MAPPING_ROTATED,
+            );
             verify_peer_signer_revocation(&peer, &local).unwrap();
 
             let tdreport =
@@ -806,15 +845,21 @@ mod v2 {
 
         #[test]
         fn peer_cannot_replace_local_revocations_with_its_own_crl() {
-            let mut local_json = fixtures::policy_json(fixtures::REVOKED_POLICY_CRL);
-            local_json["policyData"]["servtdCollateral"]["servtdTcbMapping"] =
-                serde_json::from_slice(fixtures::SIGNED_MAPPING_ROTATED).unwrap();
+            let local_json = fixtures::policy_json(fixtures::REVOKED_POLICY_CRL);
             let local_input = serde_json::to_vec(&local_json).unwrap();
-            let local = load_policy(&local_input, fixtures::ROTATED_POLICY_CHAIN);
+            let local = load_policy_with_mapping(
+                &local_input,
+                fixtures::ROTATED_POLICY_CHAIN,
+                fixtures::SIGNED_MAPPING_ROTATED,
+            );
 
             let peer_input =
                 serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
-            let peer = load_policy(&peer_input, fixtures::POLICY_CHAIN);
+            let peer = load_policy_with_mapping(
+                &peer_input,
+                fixtures::POLICY_CHAIN,
+                fixtures::SIGNED_MAPPING,
+            );
             crypto::validate_peer_cert_chain(
                 local
                     .servtd_tcb_mapping_issuer_chain
@@ -838,11 +883,19 @@ mod v2 {
         fn peer_revocation_accepts_empty_local_crl() {
             let peer_input =
                 serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
-            let peer = load_policy(&peer_input, fixtures::POLICY_CHAIN);
+            let peer = load_policy_with_mapping(
+                &peer_input,
+                fixtures::POLICY_CHAIN,
+                fixtures::SIGNED_MAPPING,
+            );
 
             let local_input =
                 serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
-            let local = load_policy(&local_input, fixtures::POLICY_CHAIN);
+            let local = load_policy_with_mapping(
+                &local_input,
+                fixtures::POLICY_CHAIN,
+                fixtures::SIGNED_MAPPING,
+            );
             verify_peer_signer_revocation(&peer, &local).unwrap();
         }
 
@@ -850,7 +903,11 @@ mod v2 {
         fn peer_identity_must_use_the_local_crl_intermediate() {
             let local_input =
                 serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
-            let local = load_policy(&local_input, fixtures::POLICY_CHAIN);
+            let local = load_policy_with_mapping(
+                &local_input,
+                fixtures::POLICY_CHAIN,
+                fixtures::SIGNED_MAPPING,
+            );
 
             let mut peer_json = fixtures::policy_json(fixtures::ROOT_EMPTY_CRL);
             let collateral = &mut peer_json["policyData"]["servtdCollateral"];
@@ -1213,7 +1270,10 @@ mod v2 {
             }
 
             fn load_corim_policy(input: &[u8]) -> VerifiedPolicy<'_> {
-                let mut policy = load_policy(input, ANCHOR);
+                let mut policy = RawPolicyData::deserialize_from_json(input)
+                    .unwrap()
+                    .verify(ANCHOR)
+                    .unwrap();
                 policy.attach_verified_peer_servtd_corim(COSE).unwrap();
                 policy.verify_signer_chains_not_revoked(CRL).unwrap();
                 policy

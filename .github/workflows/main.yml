@@ -56,7 +56,7 @@ jobs:
             fi
           fi
           if [ "${{matrix.policy_version}}" = "v2" ]; then
-            BUILD_CMD="$BUILD_CMD --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem"
+            BUILD_CMD="$BUILD_CMD --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json"
           fi
           if [ "${{ matrix.build_type }}" = "debug" ]; then
             BUILD_CMD="$BUILD_CMD --debug"

@@ -17,8 +17,8 @@ use crate::{
         measurement::extract_canonical_policy_data_bytes, policy, resolve_signer_anchor,
         verify_event_hash,
     },
-    CcEvent, Collaterals, EventName, PolicyError, Report, ServtdCollateral, TdIdentity,
-    TdTcbMapping,
+    CcEvent, Collaterals, EventName, PolicyError, RawServtdTcbMapping, Report, ServtdCollateral,
+    TdIdentity, TdTcbMapping,
 };
 use crypto::SHA384_DIGEST_SIZE;
 
@@ -193,7 +193,7 @@ pub struct VerifiedPolicy<'a> {
     pub policy_data: policy::PolicyData<'a>,
     /// JSON TCB mapping; absent for CoRIM-only policies.
     pub servtd_tcb_mapping: Option<TdTcbMapping>,
-    /// JSON mapping signer chain retained for CRL checks.
+    /// Standalone JSON mapping signer chain retained for CRL checks.
     pub servtd_tcb_mapping_issuer_chain: Option<String>,
     /// Optional JSON TD Identity for date and status lookup.
     pub servtd_identity: Option<TdIdentity>,
@@ -228,6 +228,26 @@ impl VerifiedPolicy<'_> {
     #[cfg(feature = "servtd_corim")]
     pub fn set_servtd_corim(&mut self, corim: ServtdCorim) {
         self.servtd_corim = Some(corim);
+    }
+
+    /// Verify and attach a standalone signed JSON TCB mapping.
+    pub fn attach_verified_json_mapping(
+        &mut self,
+        mapping_json: &[u8],
+        mapping_issuer_chain: &[u8],
+    ) -> Result<(), PolicyError> {
+        let mapping_anchor = compute_signer_anchor_from_chain_pem(mapping_issuer_chain)?;
+        if self.signer_anchor != mapping_anchor {
+            return Err(PolicyError::SignerAnchorMismatch);
+        }
+
+        let mapping = RawServtdTcbMapping::deserialize_from_json(mapping_json)?
+            .verify_signature(mapping_issuer_chain)?;
+        let mapping_issuer_chain = core::str::from_utf8(mapping_issuer_chain)
+            .map_err(|_| PolicyError::InvalidServtdTcbMapping)?;
+        self.servtd_tcb_mapping = Some(mapping);
+        self.servtd_tcb_mapping_issuer_chain = Some(mapping_issuer_chain.to_string());
+        Ok(())
     }
 
     /// Verify and attach a peer's TCB-mapping CoRIM using its signer anchor.
@@ -407,23 +427,8 @@ impl<'a> RawPolicyData<'a> {
         }
         .ok_or(PolicyError::InvalidPolicy)?;
 
-        let (
-            servtd_tcb_mapping,
-            servtd_tcb_mapping_issuer_chain,
-            servtd_identity,
-            servtd_identity_issuer_chain,
-        ) = match &policy_data.servtd_collateral {
+        let (servtd_identity, servtd_identity_issuer_chain) = match &policy_data.servtd_collateral {
             Some(servtd_collateral) => {
-                let mapping_chain =
-                    match servtd_collateral.servtd_tcb_mapping_issuer_chain.as_deref() {
-                        Some(mapping_chain) => mapping_chain,
-                        None => core::str::from_utf8(issuer_chain)
-                            .map_err(|_| PolicyError::InvalidServtdTcbMapping)?,
-                    };
-                let servtd_tcb_mapping = servtd_collateral
-                    .servtd_tcb_mapping
-                    .verify_signature(mapping_chain.as_bytes())?;
-
                 // Identity and its signer chain must be present together.
                 let servtd_identity = match (
                     servtd_collateral.servtd_identity.as_ref(),
@@ -436,20 +441,12 @@ impl<'a> RawPolicyData<'a> {
                     _ => return Err(PolicyError::InvalidServtdIdentity),
                 };
 
-                let mapping_anchor =
-                    compute_signer_anchor_from_chain_pem(mapping_chain.as_bytes())?;
-                if cfv_anchor != mapping_anchor {
-                    return Err(PolicyError::SignerAnchorMismatch);
-                }
-
                 (
-                    Some(servtd_tcb_mapping),
-                    Some(mapping_chain.to_string()),
                     servtd_identity,
                     servtd_collateral.servtd_identity_issuer_chain.clone(),
                 )
             }
-            None => (None, None, None, None),
+            None => (None, None),
         };
 
         if !policy_data.validate() {
@@ -458,8 +455,8 @@ impl<'a> RawPolicyData<'a> {
 
         Ok(VerifiedPolicy {
             policy_data,
-            servtd_tcb_mapping,
-            servtd_tcb_mapping_issuer_chain,
+            servtd_tcb_mapping: None,
+            servtd_tcb_mapping_issuer_chain: None,
             servtd_identity,
             servtd_identity_issuer_chain,
             servtd_crl,
@@ -1134,12 +1131,23 @@ mod test {
         assert!(serde_json::from_str::<PolicyData>(policy).is_ok());
     }
 
-    fn verified_test_policy() -> VerifiedPolicy<'static> {
+    fn verified_test_policy_without_mapping() -> VerifiedPolicy<'static> {
         let policy_data = include_bytes!("../../test/policy_v2/policy_v2.json");
         let policy = RawPolicyData::deserialize_from_json(policy_data).unwrap();
         let issuer_chain =
             include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
         policy.verify(issuer_chain).unwrap()
+    }
+
+    fn verified_test_policy() -> VerifiedPolicy<'static> {
+        let mut policy = verified_test_policy_without_mapping();
+        policy
+            .attach_verified_json_mapping(
+                include_bytes!("../../test/policy_v2/tcb_mapping_signed.json"),
+                include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem"),
+            )
+            .unwrap();
+        policy
     }
 
     #[test]
@@ -1185,7 +1193,7 @@ mod test {
     #[cfg(feature = "servtd_corim")]
     #[test]
     fn corim_without_json_identity_stays_svn_only() {
-        let mut policy = verified_test_policy();
+        let mut policy = verified_test_policy_without_mapping();
         policy.servtd_identity = None;
         policy.servtd_identity_issuer_chain = None;
         let hash = vec![0xAA; SHA384_DIGEST_SIZE];
@@ -1239,7 +1247,7 @@ mod test {
     #[cfg(feature = "servtd_corim")]
     #[test]
     fn corim_with_identity_but_no_tcb_level_fails_closed() {
-        let mut policy = verified_test_policy();
+        let mut policy = verified_test_policy_without_mapping();
         policy.servtd_identity.as_mut().unwrap().tcb_levels.clear();
         let hash = vec![0xAA; SHA384_DIGEST_SIZE];
         let payload = crate::v2::servtd_corim::test::build_tcb_mapping(&[(hash.clone(), 7)]);
@@ -1365,10 +1373,16 @@ mod test {
         ] {
             let input = serde_json::to_vec(&fixtures::policy_json(crl)).unwrap();
             let policy = RawPolicyData::deserialize_from_json(&input).unwrap();
-            assert!(matches!(
-                policy.verify(fixtures::POLICY_CHAIN),
-                Err(PolicyError::SignerRevoked)
-            ));
+            let result = policy
+                .verify(fixtures::POLICY_CHAIN)
+                .and_then(|mut policy| {
+                    policy.attach_verified_json_mapping(
+                        fixtures::SIGNED_MAPPING,
+                        fixtures::POLICY_CHAIN,
+                    )?;
+                    policy.verify_signer_chains_not_revoked(policy.servtd_crl.as_bytes())
+                });
+            assert!(matches!(result, Err(PolicyError::SignerRevoked)));
         }
     }
 
@@ -1401,12 +1415,18 @@ mod test {
         let input =
             serde_json::to_vec(&fixtures::policy_json(fixtures::REVOKED_POLICY_CRL)).unwrap();
         let raw = RawPolicyData::deserialize_from_json(&input).unwrap();
-        assert!(matches!(
-            raw.verify(fixtures::POLICY_CHAIN),
-            Err(PolicyError::SignerRevoked)
-        ));
-        let peer = raw
+        let result = raw.verify(fixtures::POLICY_CHAIN).and_then(|mut policy| {
+            policy
+                .attach_verified_json_mapping(fixtures::SIGNED_MAPPING, fixtures::POLICY_CHAIN)?;
+            policy.verify_signer_chains_not_revoked(policy.servtd_crl.as_bytes())
+        });
+        assert!(matches!(result, Err(PolicyError::SignerRevoked)));
+        let mut peer = raw
             .verify_with_authoritative_servtd_crl(fixtures::POLICY_CHAIN, fixtures::EMPTY_CRL)
+            .unwrap();
+        peer.attach_verified_json_mapping(fixtures::SIGNED_MAPPING, fixtures::POLICY_CHAIN)
+            .unwrap();
+        peer.verify_signer_chains_not_revoked(fixtures::EMPTY_CRL)
             .unwrap();
         assert_eq!(
             crypto::crl::get_crl_number(peer.servtd_crl.as_bytes()).unwrap(),
@@ -1414,26 +1434,33 @@ mod test {
         );
         for crl in [fixtures::TAMPERED_CRL, fixtures::ROOT_EMPTY_CRL] {
             let input = serde_json::to_vec(&fixtures::policy_json(crl)).unwrap();
-            assert!(matches!(
-                RawPolicyData::deserialize_from_json(&input)
-                    .unwrap()
-                    .verify_with_authoritative_servtd_crl(
+            let result = RawPolicyData::deserialize_from_json(&input)
+                .unwrap()
+                .verify_with_authoritative_servtd_crl(fixtures::POLICY_CHAIN, fixtures::EMPTY_CRL)
+                .and_then(|mut policy| {
+                    policy.attach_verified_json_mapping(
+                        fixtures::SIGNED_MAPPING,
                         fixtures::POLICY_CHAIN,
-                        fixtures::EMPTY_CRL
-                    ),
-                Err(PolicyError::SignerRevoked)
-            ));
+                    )?;
+                    policy.verify_signer_chains_not_revoked(fixtures::EMPTY_CRL)
+                });
+            assert!(matches!(result, Err(PolicyError::SignerRevoked)));
         }
         let input = serde_json::to_vec(&fixtures::policy_json(fixtures::EMPTY_CRL)).unwrap();
-        assert!(matches!(
-            RawPolicyData::deserialize_from_json(&input)
-                .unwrap()
-                .verify_with_authoritative_servtd_crl(
+        let result = RawPolicyData::deserialize_from_json(&input)
+            .unwrap()
+            .verify_with_authoritative_servtd_crl(
+                fixtures::POLICY_CHAIN,
+                fixtures::REVOKED_POLICY_CRL,
+            )
+            .and_then(|mut policy| {
+                policy.attach_verified_json_mapping(
+                    fixtures::SIGNED_MAPPING,
                     fixtures::POLICY_CHAIN,
-                    fixtures::REVOKED_POLICY_CRL
-                ),
-            Err(PolicyError::SignerRevoked)
-        ));
+                )?;
+                policy.verify_signer_chains_not_revoked(fixtures::REVOKED_POLICY_CRL)
+            });
+        assert!(matches!(result, Err(PolicyError::SignerRevoked)));
     }
 
     #[test]

@@ -19,12 +19,6 @@ use crypto::{hash::digest_sha384, SHA384_DIGEST_SIZE};
 pub struct ServtdCollateral<'a> {
     pub major_version: u32,
     pub minor_version: u32,
-    /// Mapping signer chain. When omitted, verification uses the policy issuer
-    /// chain enrolled in the CFV, not `servtdIdentityIssuerChain`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub servtd_tcb_mapping_issuer_chain: Option<String>,
-    #[serde(borrow)]
-    pub servtd_tcb_mapping: RawServtdTcbMapping<'a>,
     /// Optional TD Identity issuer chain (PEM). Present only when the optional
     /// `servtdIdentity` is shipped. The chain and signed identity remain
     /// measured in RTMR2.
@@ -489,20 +483,14 @@ mod test {
     }
 
     #[test]
-    fn verify_servtd_collateral_signatures() {
-        let servtd_collateral = include_bytes!("../../test/policy_v2/servtd_collateral.json");
-        let collateral: ServtdCollateral =
-            serde_json::from_slice(servtd_collateral).expect("Failed to parse collateral");
-        let issuer_chain = collateral
-            .servtd_tcb_mapping_issuer_chain
-            .as_deref()
-            .unwrap_or_else(|| {
-                include_str!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem")
-            });
-        assert!(collateral
-            .servtd_tcb_mapping
-            .verify_signature(issuer_chain.as_bytes())
-            .is_ok());
+    fn verify_standalone_servtd_tcb_mapping_signature() {
+        let mapping = RawServtdTcbMapping::deserialize_from_json(include_bytes!(
+            "../../test/policy_v2/tcb_mapping_signed.json"
+        ))
+        .unwrap();
+        let issuer_chain =
+            include_bytes!("../../test/policy_v2/cert_chain/policy_issuer_chain.pem");
+        assert!(mapping.verify_signature(issuer_chain).is_ok());
     }
 
     #[test]
@@ -523,7 +511,8 @@ mod test {
         let result = mapping.verify_signature(chain);
         assert!(
             matches!(result, Err(PolicyError::InvalidServtdTcbMapping)),
-            "{result:?}"
+            "{:?}",
+            result
         );
     }
 
@@ -561,8 +550,6 @@ mod test {
         let with_identity = r#"{
             "majorVersion": 1,
             "minorVersion": 0,
-            "servtdTcbMappingIssuerChain": "chain",
-            "servtdTcbMapping": { "tdTcbMapping": {}, "signature": "aa" },
             "servtdIdentityIssuerChain": "chain",
             "servtdIdentity": { "tdIdentity": {}, "signature": "bb" }
         }"#;
@@ -574,9 +561,7 @@ mod test {
         // SVN-only: omitting the identity fields is valid and leaves them None.
         let svn_only = r#"{
             "majorVersion": 1,
-            "minorVersion": 0,
-            "servtdTcbMappingIssuerChain": "chain",
-            "servtdTcbMapping": { "tdTcbMapping": {}, "signature": "aa" }
+            "minorVersion": 0
         }"#;
         let coll: ServtdCollateral =
             serde_json::from_slice(svn_only.as_bytes()).expect("parse svn-only");
