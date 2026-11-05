@@ -26,9 +26,6 @@ pub const VDM_MESSAGE_MINOR_VERSION: u8 = 0;
 
 pub const VDM_MESSAGE_EXCHANGE_PUB_KEY_REQ_ELEMENT_COUNT: u8 = 1;
 pub const VDM_MESSAGE_EXCHANGE_PUB_KEY_RSP_ELEMENT_COUNT: u8 = 1;
-#[cfg(not(feature = "policy_v2"))]
-pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT: u8 = 5;
-#[cfg(feature = "policy_v2")]
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT: u8 = 4;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_RSP_ELEMENT_COUNT: u8 = 3;
 pub const VDM_MESSAGE_EXCHANGE_MIGRATION_INFO_REQ_ELEMENT_COUNT: u8 = 2;
@@ -112,8 +109,6 @@ enum_builder! {
         EventLogMy => 0x04,
         MigPolicyMy => 0x05,
         ServtdExt => 0x10,
-        TdReportInit => 0x12,
-        EventLogInit => 0x14,
         MigrationExportVersion => 0x81,
         MigrationImportVersion => 0x82,
         ForwardMigrationSessionKey => 0x83,
@@ -682,15 +677,12 @@ mod tests {
 
     #[test]
     fn migration_attestation_header_matches_element_count() {
-        let mut elements = Vec::from([
+        let elements = [
             VdmMessageElementType::QuoteMy,
             VdmMessageElementType::EventLogMy,
             VdmMessageElementType::MigPolicyMy,
             VdmMessageElementType::ServtdExt,
-        ]);
-        if !cfg!(feature = "policy_v2") {
-            elements.push(VdmMessageElementType::TdReportInit);
-        }
+        ];
         assert_encoded_element_count(
             VdmMessageOpCode::ExchangeMigrationAttestInfoReq,
             VDM_MESSAGE_EXCHANGE_MIGRATION_ATTEST_INFO_REQ_ELEMENT_COUNT,
