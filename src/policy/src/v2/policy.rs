@@ -584,15 +584,6 @@ impl<'a> PolicyData<'a> {
 
         Ok(())
     }
-
-    pub fn evaluate_against_policy(&self, other_policy: &PolicyData) -> Result<(), PolicyError> {
-        // Check if the SVN in this policy is qualified
-        if self.policy_svn < other_policy.policy_svn {
-            return Err(PolicyError::SvnMismatch);
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
