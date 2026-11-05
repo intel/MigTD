@@ -839,6 +839,7 @@ mod verify {
             let policy_check_result = mig_policy::authenticate_policy(
                 is_client,
                 verified_report_local.as_slice(),
+                quote_report,
                 verified_report_peer.as_slice(),
                 event_log,
             );

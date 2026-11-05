@@ -678,6 +678,7 @@ fn rsp_verify_peer_attestation_v1(
         let policy_check_result = mig_policy::authenticate_policy(
             false,
             verified_report_local,
+            quote_peer,
             verified_report_peer.as_slice(),
             event_log_peer,
         );

@@ -13,6 +13,8 @@ pub use v1::*;
 mod v2;
 #[cfg(feature = "policy_v2")]
 pub use v2::*;
+mod quote;
+pub use quote::verify_migtd_tee_tcb_svn2;
 #[path = "v2/measurement.rs"]
 pub mod measurement;
 #[cfg(not(feature = "policy_v2"))]
