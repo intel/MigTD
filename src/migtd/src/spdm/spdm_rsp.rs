@@ -518,7 +518,7 @@ pub fn handle_exchange_mig_attest_info_req(
 
     // SERVTD_EXT from src
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
+    if vdm_element.element_type != VdmMessageElementType::ServtdExt {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
@@ -1101,7 +1101,7 @@ pub fn handle_exchange_rebind_attest_info_req(
 
     // SERVTD_EXT
     let vdm_element = VdmMessageElement::read(reader).ok_or(SPDM_STATUS_INVALID_MSG_SIZE)?;
-    if vdm_element.element_type != VdmMessageElementType::SerVtdExt {
+    if vdm_element.element_type != VdmMessageElementType::ServtdExt {
         error!(
             "Invalid VDM message element_type: {:x?}\n",
             vdm_element.element_type
