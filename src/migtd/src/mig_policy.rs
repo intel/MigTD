@@ -192,7 +192,7 @@ mod v2 {
         policy_issuer_chain: &[u8],
         peer_servtd_corim: Option<&[u8]>,
     ) -> Result<Vec<u8>, PolicyError> {
-        let (evaluation_data_dst, verified_policy_dst, suppl_data) = authenticate_remote_common(
+        let (evaluation_data_dst, _verified_policy_dst, suppl_data) = authenticate_remote_common(
             quote_dst,
             event_log_dst,
             mig_policy_dst,
@@ -212,11 +212,6 @@ mod v2 {
             &relative_reference,
             false,
         )?;
-
-        // Verify the destination's policy against local policy
-        verified_policy_dst
-            .policy_data
-            .evaluate_against_policy(&policy.policy_data)?;
 
         Ok(suppl_data)
     }
@@ -261,13 +256,14 @@ mod v2 {
         let (mig_policy_dst, peer_issuer_chain, peer_servtd_corim) =
             crate::migration::pre_session_data::decode_peer_data(mig_policy_dst)
                 .ok_or(PolicyError::InvalidParameter)?;
-        let (evaluation_data_dst, verified_policy_dst, tdx_report) = authenticate_rebinding_common(
-            tdreport_dst,
-            event_log_dst,
-            mig_policy_dst,
-            peer_issuer_chain,
-            peer_servtd_corim,
-        )?;
+        let (evaluation_data_dst, _verified_policy_dst, tdx_report) =
+            authenticate_rebinding_common(
+                tdreport_dst,
+                event_log_dst,
+                mig_policy_dst,
+                peer_issuer_chain,
+                peer_servtd_corim,
+            )?;
         let relative_reference = get_local_tcb_evaluation_info()?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
@@ -281,11 +277,6 @@ mod v2 {
             &relative_reference,
             true,
         )?;
-
-        // Verify the destination's policy against local policy
-        verified_policy_dst
-            .policy_data
-            .evaluate_against_policy(&policy.policy_data)?;
 
         Ok(tdx_report.as_bytes().to_vec())
     }
