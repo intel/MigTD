@@ -47,12 +47,11 @@ pub use td_uefi_pi::fv::{
 #[cfg(feature = "policy_v2")]
 pub use td_uefi_pi::fv::{
     load_policy_issuer_chain_from_file, load_servtd_corim_from_file,
-    load_signer_anchor_from_file,
+    load_servtd_tcb_mapping_from_file, load_signer_anchor_from_file,
 };
 
+pub use file_ops::init_file_based_emulation_with_real_files;
 #[cfg(feature = "policy_v2")]
 pub use file_ops::{
-    init_file_based_emulation_with_policy_chain,
-    init_file_based_emulation_with_policy_endorsements,
+    init_file_based_emulation_with_policy_chain, init_file_based_emulation_with_policy_endorsements,
 };
-pub use file_ops::init_file_based_emulation_with_real_files;

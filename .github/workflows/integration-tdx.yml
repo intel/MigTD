@@ -60,7 +60,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image --no-tdinfo --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -75,7 +75,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --no-tdinfo --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --no-tdinfo --features spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json
 
       - name: Run Tests - Test pre-binding
         run: |
@@ -139,7 +139,7 @@ jobs:
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Release)
-        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer
       
       - name: Run Tests
         run: |
@@ -151,7 +151,7 @@ jobs:
         run: cargo clean
       
       - name: Build Migration TD binary (policy v2 + TLS + Debug)
-        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json --root-ca config/Intel_SGX_Provisioning_Certification_RootCA_preproduction.cer --debug
       
       - name: Run Tests
         run: |
@@ -196,7 +196,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Release)
-        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json
 
       - name: Run Tests
         run: |
@@ -208,7 +208,7 @@ jobs:
         run: cargo clean
 
       - name: Build Migration TD binary (policy v2 + SPDM + Debug)
-        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --debug
+        run: cargo image --no-tdinfo --no-default-features --features stack-guard,virtio-serial,spdm_attestation --policy-v2 --policy config/templates/policy_v2_signed.json --policy-issuer-chain config/templates/policy_issuer_chain.pem --servtd-tcb-mapping config/templates/tcb_mapping_signed.json --debug
 
       - name: Run Tests
         run: |

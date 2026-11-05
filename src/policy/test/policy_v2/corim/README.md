@@ -31,7 +31,8 @@ Python environment with `cryptography` and `cbor2` installed:
 ```sh
 ./sh_script/build_AzCVMEmu_policy_and_test.sh --mock-report --skip-test
 python3 src/policy/test/policy_v2/corim/generate.py \
-  --policy config/AzCVMEmu/policy_v2_signed.json
+  --policy config/AzCVMEmu/policy_v2_signed.json \
+  --mapping config/AzCVMEmu/tcb_mapping_signed.json
 ```
 
 Regeneration replaces this directory's public fixtures together. It does not

@@ -55,6 +55,7 @@ pub fn main() {
 /// Initialize emulation layer
 fn initialize_emulation() {
     let signer_anchor_path = optional_file_path("MIGTD_SIGNER_ANCHOR_FILE");
+    let servtd_tcb_mapping_path = optional_file_path("MIGTD_SERVTD_TCB_MAPPING_FILE");
     let servtd_corim_path = optional_file_path("MIGTD_SERVTD_CORIM_FILE");
     if signer_anchor_path.is_some() && !cfg!(feature = "policy_v2") {
         eprintln!("MIGTD_SIGNER_ANCHOR_FILE requires the policy_v2 feature");
@@ -62,6 +63,17 @@ fn initialize_emulation() {
     }
     if servtd_corim_path.is_some() && !cfg!(feature = "servtd_corim") {
         eprintln!("MIGTD_SERVTD_CORIM_FILE requires the servtd_corim feature");
+        process::exit(1);
+    }
+    if servtd_tcb_mapping_path.is_some() && cfg!(feature = "servtd_corim") {
+        eprintln!("MIGTD_SERVTD_TCB_MAPPING_FILE is not used by the servtd_corim build");
+        process::exit(1);
+    }
+    if cfg!(feature = "policy_v2")
+        && !cfg!(feature = "servtd_corim")
+        && servtd_tcb_mapping_path.is_none()
+    {
+        eprintln!("MIGTD_SERVTD_TCB_MAPPING_FILE is required for JSON mapping builds");
         process::exit(1);
     }
 
@@ -96,6 +108,7 @@ fn initialize_emulation() {
             policy_path,
             issuer_chain_path.as_deref(),
             signer_anchor_path.as_deref(),
+            servtd_tcb_mapping_path.as_deref(),
             servtd_corim_path.as_deref(),
         )
         .unwrap_or_else(|error| {
@@ -141,6 +154,7 @@ fn initialize_emulation() {
                 chain_file
             );
             log::info!("  Signer Anchor: {:?}\n", signer_anchor_path);
+            log::info!("  ServTD TCB Mapping: {:?}\n", servtd_tcb_mapping_path);
             log::info!("  ServTD CoRIM: {:?}\n", servtd_corim_path);
         }
     } else {
@@ -415,6 +429,7 @@ fn print_usage() {
     println!("  MIGTD_ROOT_CA_FILE         Path to the root CA certificate file (not used with policy_v2)");
     println!("  MIGTD_POLICY_ISSUER_CHAIN_FILE Policy issuer chain (policy_v2, unless an anchor is supplied)");
     println!("  MIGTD_SIGNER_ANCHOR_FILE   Optional 48-byte raw signer anchor (policy_v2 only; takes precedence over the chain)");
+    println!("  MIGTD_SERVTD_TCB_MAPPING_FILE Standalone signed JSON TCB mapping (policy_v2 JSON mapping builds)");
     println!(
         "  MIGTD_SERVTD_CORIM_FILE    Optional signed servTD CoRIM (requires servtd_corim feature)"
     );

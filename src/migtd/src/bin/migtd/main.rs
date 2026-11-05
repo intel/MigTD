@@ -450,8 +450,8 @@ fn initialize_policy() -> String {
             );
         }
     };
-    let policy_issuer_chain = match config::get_signer_anchor_source() {
-        Some(chain) => chain,
+    let signer_anchor_source = match config::get_signer_anchor_source() {
+        Some(source) => source,
         None => {
             log::error!("Fail to get policy signer anchor / issuer chain from CFV\n");
             panic_with_guest_crash_reg_report(
@@ -460,14 +460,35 @@ fn initialize_policy() -> String {
             );
         }
     };
+    #[cfg(not(feature = "servtd_corim"))]
+    let json_mapping = {
+        let mapping = config::get_servtd_tcb_mapping().unwrap_or_else(|| {
+            log::error!("Fail to get standalone servTD TCB mapping from CFV\n");
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Fail to get servTD TCB mapping from CFV",
+            );
+        });
+        let mapping_chain = config::get_policy_issuer_chain().unwrap_or_else(|| {
+            log::error!("Fail to get JSON mapping issuer chain from CFV\n");
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Fail to get JSON mapping issuer chain from CFV",
+            );
+        });
+        Some((mapping, mapping_chain))
+    };
+    #[cfg(feature = "servtd_corim")]
+    let json_mapping = None;
     // Initialize and verify the migration policy
-    let version = mig_policy::init_policy(policy, policy_issuer_chain).map_err(|e| {
-        log::error!("Failed to initialize migration policy: {:?}\n", e);
-        panic_with_guest_crash_reg_report(
-            MigrationResult::InvalidPolicyError as u64,
-            b"Failed to initialize migration policy",
-        );
-    });
+    let version =
+        mig_policy::init_policy(policy, signer_anchor_source, json_mapping).map_err(|e| {
+            log::error!("Failed to initialize migration policy: {:?}\n", e);
+            panic_with_guest_crash_reg_report(
+                MigrationResult::InvalidPolicyError as u64,
+                b"Failed to initialize migration policy",
+            );
+        });
 
     version.expect("Failed to initialize migration policy")
 }

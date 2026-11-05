@@ -12,7 +12,7 @@
 #   - Updates policy templates with extracted measurements
 #   - Generates certificate chain for signing
 #   - Signs td_identity and tcb_mapping, then emits an unsigned policy envelope
-#   - Creates test-ready signed policy
+#   - Exports the policy, issuer chain, and standalone signed mapping
 #   - Optionally tests the generated policy with migtdemu.sh
 #
 # Prerequisites:
@@ -48,16 +48,17 @@
 #   6. Generates certificate chain (root CA + policy signing cert)
 #   7. Signs td_identity.json with policy signing key (testing only)
 #   8. Signs tcb_mapping.json with policy signing key (testing only)
-#   9. Generates servtd_collateral.json from signed components
+#   9. Generates servtd_collateral.json from signed identity and CRL
 #   10. Merges policy data with collaterals
-#   11. Signs final policy with policy signing key
-#   12. Copies certificate chain to output directory
+#   11. Wraps policyData without an outer signature
+#   12. Copies certificate chain and signed mapping to output directory
 #   13. Securely deletes private key with shred
 #   14. Optionally tests with ./migtdemu.sh (with --mock-report for mock data)
 #
 # Outputs:
-#   - config/Azure/policy_v2_signed.json (196 KB) - Signed policy with your measurements
+#   - config/Azure/policy_v2_signed.json (196 KB) - Unsigned policy envelope with your measurements
 #   - config/Azure/policy_issuer_chain.pem (1.5 KB) - Certificate chain for verification
+#   - config/Azure/tcb_mapping_signed.json - Standalone signed TCB mapping
 #
 # Expected result from testing: ✅ "Migration key exchange successful!"
 #
@@ -101,6 +102,7 @@ POLICY_DATA_MERGED="$TEMP_DIR/policy_data_merged.json"
 # Output files
 OUTPUT_POLICY="$OUTPUT_DIR/policy_v2_signed.json"
 OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
+OUTPUT_MAPPING="$OUTPUT_DIR/tcb_mapping_signed.json"
 CERT_DIR="$TEMP_DIR/certs"
 PRIVATE_KEY="$CERT_DIR/policy_signing_pkcs8.key"
 
@@ -228,6 +230,7 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             OUTPUT_POLICY="$OUTPUT_DIR/policy_v2_signed.json"
             OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
+            OUTPUT_MAPPING="$OUTPUT_DIR/tcb_mapping_signed.json"
             shift 2
             ;;
         --skip-test)
@@ -541,8 +544,6 @@ IDENTITY_CHAIN="$CERT_DIR/policy_issuer_chain.pem"
 "$TOOLS_DIR/servtd-collateral-generator" \
     --identity "$TD_IDENTITY_SIGNED" \
     --identity-chain "$IDENTITY_CHAIN" \
-    --mapping "$TCB_MAPPING_SIGNED" \
-    --mapping-chain "$CERT_DIR/policy_issuer_chain.pem" \
     --servtd-crl "$CERT_DIR/servtd.crl.pem" \
     --output "$SERVTD_COLLATERAL"
 
@@ -572,12 +573,14 @@ echo -e "${GREEN}✓ Policy generated: $OUTPUT_POLICY${NC}"
 echo
 
 #
-# Step 11: Copy certificate chain to output directory
+# Step 11: Copy certificate chain and signed mapping to output directory
 #
-echo -e "${BLUE}=== Step 11: Copying Certificate Chain ===${NC}"
+echo -e "${BLUE}=== Step 11: Copying Certificate Chain and TCB Mapping ===${NC}"
 cp "$CERT_DIR/policy_issuer_chain.pem" "$OUTPUT_CERT_CHAIN"
+cp "$TCB_MAPPING_SIGNED" "$OUTPUT_MAPPING"
 
 echo -e "${GREEN}✓ Certificate chain copied: $OUTPUT_CERT_CHAIN${NC}"
+echo -e "${GREEN}✓ TCB mapping copied: $OUTPUT_MAPPING${NC}"
 echo
 
 #
@@ -598,6 +601,7 @@ echo
 echo "Generated files:"
 echo "  📄 Policy: $OUTPUT_POLICY"
 echo "  📄 Certificate chain: $OUTPUT_CERT_CHAIN"
+echo "  📄 Signed TCB mapping: $OUTPUT_MAPPING"
 echo
 
 echo "Policy contains MOCK measurements for testing:"
@@ -610,7 +614,7 @@ echo
 #
 # Step 13: Test the policy (optional)
 #
-TEST_CMD="./migtdemu.sh --policy-v2 --policy-file $OUTPUT_POLICY --policy-issuer-chain-file $OUTPUT_CERT_CHAIN --debug --both"
+TEST_CMD="./migtdemu.sh --policy-v2 --policy-file $OUTPUT_POLICY --policy-issuer-chain-file $OUTPUT_CERT_CHAIN --servtd-tcb-mapping-file $OUTPUT_MAPPING --debug --both"
 TEST_CMD="$TEST_CMD --mock-report"
 
 if [ -z "$SKIP_TEST" ]; then

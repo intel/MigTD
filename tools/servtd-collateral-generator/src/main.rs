@@ -25,13 +25,6 @@ struct Cli {
     /// PEM issuer chain for identity (required iff `--identity` is given)
     #[arg(long, value_name = "FILE", requires = "identity")]
     identity_chain: Option<PathBuf>,
-    /// Signed ServTD TCB mapping JSON file (contains tcb mapping and signature)
-    #[arg(long, value_name = "FILE")]
-    mapping: PathBuf,
-    /// PEM issuer chain for mapping (required even when an identity chain
-    /// is supplied).
-    #[arg(long, value_name = "FILE")]
-    mapping_chain: PathBuf,
     /// Required CA-signed PEM CRL with a CRL-number extension for the servTD signer
     /// chains, even if its revocation list is empty.
     #[arg(long, value_name = "FILE")]
@@ -47,8 +40,6 @@ fn main() {
     let bytes = build_servtd_collateral(
         cli.identity.as_deref(),
         cli.identity_chain.as_deref(),
-        &cli.mapping,
-        &cli.mapping_chain,
         &cli.servtd_crl,
     )
     .unwrap_or_else(|e| {
@@ -73,10 +64,6 @@ mod tests {
             "identity.json",
             "--identity-chain",
             "chain.pem",
-            "--mapping",
-            "mapping.json",
-            "--mapping-chain",
-            "mapping-chain.pem",
             "--output",
             "collateral.json",
         ];
@@ -90,48 +77,13 @@ mod tests {
         let cli = Cli::try_parse_from(args.into_iter().chain(["--servtd-crl", "servtd.crl.pem"]))
             .unwrap();
         assert_eq!(cli.servtd_crl, PathBuf::from("servtd.crl.pem"));
-        assert_eq!(cli.mapping_chain, PathBuf::from("mapping-chain.pem"));
         assert_eq!(cli.identity_chain, Some(PathBuf::from("chain.pem")));
-    }
-
-    #[test]
-    fn mapping_chain_is_required_with_or_without_identity() {
-        let args = [
-            "servtd-collateral-generator",
-            "--mapping",
-            "mapping.json",
-            "--servtd-crl",
-            "servtd.crl.pem",
-            "--output",
-            "collateral.json",
-        ];
-        for identity_args in [
-            &[][..],
-            &[
-                "--identity",
-                "identity.json",
-                "--identity-chain",
-                "identity-chain.pem",
-            ][..],
-        ] {
-            let error = Cli::try_parse_from(args.into_iter().chain(identity_args.iter().copied()))
-                .unwrap_err();
-            assert_eq!(
-                error.kind(),
-                clap::error::ErrorKind::MissingRequiredArgument
-            );
-            assert!(error.to_string().contains("--mapping-chain"));
-        }
     }
 
     #[test]
     fn identity_remains_optional_and_paired_with_its_chain() {
         let args = [
             "servtd-collateral-generator",
-            "--mapping",
-            "mapping.json",
-            "--mapping-chain",
-            "mapping-chain.pem",
             "--servtd-crl",
             "servtd.crl.pem",
             "--output",

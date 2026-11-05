@@ -149,11 +149,13 @@ pub fn init_file_based_emulation_with_real_files(policy_path: &str, root_ca_path
 pub fn init_file_based_emulation_with_policy_chain(
     policy_path: &str,
     policy_issuer_chain_path: &str,
+    servtd_tcb_mapping_path: &str,
 ) -> bool {
     init_file_based_emulation_with_policy_endorsements(
         policy_path,
         Some(policy_issuer_chain_path),
         None,
+        Some(servtd_tcb_mapping_path),
         None,
     )
     .is_ok()
@@ -166,9 +168,17 @@ pub fn init_file_based_emulation_with_policy_endorsements(
     policy_path: &str,
     policy_issuer_chain_path: Option<&str>,
     signer_anchor_path: Option<&str>,
+    servtd_tcb_mapping_path: Option<&str>,
     servtd_corim_path: Option<&str>,
 ) -> Result<(), &'static str> {
     use crate::td_uefi_pi::fv;
+
+    if servtd_tcb_mapping_path.is_some() == servtd_corim_path.is_some() {
+        return Err("Policy v2 requires exactly one servtd mapping format");
+    }
+    if servtd_tcb_mapping_path.is_some() && policy_issuer_chain_path.is_none() {
+        return Err("JSON servtd mapping requires a policy issuer chain");
+    }
 
     fv::reset_policy_endorsements();
     fv::set_file_reader(real_file_reader);
@@ -179,12 +189,18 @@ pub fn init_file_based_emulation_with_policy_endorsements(
         if !fv::load_signer_anchor_from_file(path) {
             return Err("Failed to load signer anchor (expected exactly 48 raw bytes)");
         }
-    } else if let Some(path) = policy_issuer_chain_path {
+    }
+    if let Some(path) = policy_issuer_chain_path {
         if !fv::load_policy_issuer_chain_from_file(path) {
             return Err("Failed to load policy issuer chain file");
         }
-    } else {
+    } else if signer_anchor_path.is_none() {
         return Err("Policy v2 requires a signer anchor or policy issuer chain");
+    }
+    if let Some(path) = servtd_tcb_mapping_path {
+        if !fv::load_servtd_tcb_mapping_from_file(path) {
+            return Err("Failed to load servtd TCB mapping (must be nonempty and at most 512 KiB)");
+        }
     }
     if let Some(path) = servtd_corim_path {
         if !fv::load_servtd_corim_from_file(path) {

@@ -210,6 +210,11 @@ OUTPUT_POLICY_B="$OUTPUT_DIR/policy_v2_signed_b.json"
 OUTPUT_POLICY_PM_B="$OUTPUT_DIR/policy_v2_signed_pm_b.json"
 # Variant B with policy/mapping and td_identity leaf certs all rotated
 OUTPUT_POLICY_PMI_B="$OUTPUT_DIR/policy_v2_signed_pmi_b.json"
+OUTPUT_MAPPING="$OUTPUT_DIR/tcb_mapping_signed.json"
+OUTPUT_MAPPING_A="$OUTPUT_DIR/tcb_mapping_signed_a.json"
+OUTPUT_MAPPING_B="$OUTPUT_DIR/tcb_mapping_signed_b.json"
+OUTPUT_MAPPING_PM_B="$OUTPUT_DIR/tcb_mapping_signed_pm_b.json"
+OUTPUT_MAPPING_PMI_B="$OUTPUT_DIR/tcb_mapping_signed_pmi_b.json"
 OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
 OUTPUT_CERT_CHAIN_A="$OUTPUT_DIR/policy_issuer_chain_a.pem"
 OUTPUT_CERT_CHAIN_B="$OUTPUT_DIR/policy_issuer_chain_b.pem"
@@ -371,6 +376,11 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_POLICY_B="$OUTPUT_DIR/policy_v2_signed_b.json"
             OUTPUT_POLICY_PM_B="$OUTPUT_DIR/policy_v2_signed_pm_b.json"
             OUTPUT_POLICY_PMI_B="$OUTPUT_DIR/policy_v2_signed_pmi_b.json"
+            OUTPUT_MAPPING="$OUTPUT_DIR/tcb_mapping_signed.json"
+            OUTPUT_MAPPING_A="$OUTPUT_DIR/tcb_mapping_signed_a.json"
+            OUTPUT_MAPPING_B="$OUTPUT_DIR/tcb_mapping_signed_b.json"
+            OUTPUT_MAPPING_PM_B="$OUTPUT_DIR/tcb_mapping_signed_pm_b.json"
+            OUTPUT_MAPPING_PMI_B="$OUTPUT_DIR/tcb_mapping_signed_pmi_b.json"
             OUTPUT_CERT_CHAIN="$OUTPUT_DIR/policy_issuer_chain.pem"
             OUTPUT_CERT_CHAIN_A="$OUTPUT_DIR/policy_issuer_chain_a.pem"
             OUTPUT_CERT_CHAIN_B="$OUTPUT_DIR/policy_issuer_chain_b.pem"
@@ -731,9 +741,10 @@ echo
 # Each variant is built by:
 #   1. Signing td_identity with an identity leaf key
 #   2. Signing tcb_mapping with the RTMR1-bound policy leaf key
-#   3. Building servtd_collateral embedding the mapping and identity issuer chains
+#   3. Building measured servtd_collateral with optional identity and CRL
 #   4. Merging policy data with collaterals + servtd_collateral
-#   5. Wrapping policyData without an outer signature
+#   5. Writing the signed mapping as a standalone artifact
+#   6. Wrapping policyData without an outer signature
 #
 # Each family's a/b leaves share root DER, full Subject DN DER, and dedicated
 # EKU, so key rotation preserves that family's signer identity.
@@ -749,11 +760,11 @@ build_signed_policy_variant() {
     local identity_suffix="$2"   # a or b
     local policy_suffix="$3"     # a or b
     local output_policy="$4"
+    local output_mapping="$5"
 
     local identity_key="$CERT_DIR/identity_signing_${identity_suffix}_pkcs8.key"
     local policy_key="$CERT_DIR/policy_signing_${policy_suffix}_pkcs8.key"
     local identity_chain="$CERT_DIR/identity_issuer_chain_${identity_suffix}.pem"
-    local mapping_chain="$CERT_DIR/policy_issuer_chain_${policy_suffix}.pem"
 
     local td_identity_signed="$TEMP_DIR/td_identity_signed_${label}.json"
     local tcb_mapping_signed="$TEMP_DIR/tcb_mapping_signed_${label}.json"
@@ -779,8 +790,6 @@ build_signed_policy_variant() {
     "$TOOLS_DIR/servtd-collateral-generator" \
         --identity "$td_identity_signed" \
         --identity-chain "$identity_chain" \
-        --mapping "$tcb_mapping_signed" \
-        --mapping-chain "$mapping_chain" \
         --servtd-crl "$CERT_DIR/servtd.crl.pem" \
         --output "$servtd_collateral"
 
@@ -791,18 +800,21 @@ build_signed_policy_variant() {
         --output "$policy_data_merged"
 
     jq -c '{policyData: .}' "$policy_data_merged" > "$output_policy"
+    cp "$tcb_mapping_signed" "$output_mapping"
 
     echo -e "${GREEN}✓ Policy generated (${label}): $output_policy${NC}"
+    echo -e "${GREEN}✓ TCB mapping generated (${label}): $output_mapping${NC}"
 }
 
 echo -e "${BLUE}=== Step 6-10: Building Policy Variants ===${NC}"
-build_signed_policy_variant "a"     a a "$OUTPUT_POLICY_A"
-build_signed_policy_variant "b"     a b "$OUTPUT_POLICY_B"
-build_signed_policy_variant "pm_b"  a b "$OUTPUT_POLICY_PM_B"
-build_signed_policy_variant "pmi_b" b b "$OUTPUT_POLICY_PMI_B"
+build_signed_policy_variant "a"     a a "$OUTPUT_POLICY_A" "$OUTPUT_MAPPING_A"
+build_signed_policy_variant "b"     a b "$OUTPUT_POLICY_B" "$OUTPUT_MAPPING_B"
+build_signed_policy_variant "pm_b"  a b "$OUTPUT_POLICY_PM_B" "$OUTPUT_MAPPING_PM_B"
+build_signed_policy_variant "pmi_b" b b "$OUTPUT_POLICY_PMI_B" "$OUTPUT_MAPPING_PMI_B"
 
 # Also keep a default signed policy (variant a) for backward compat
 cp "$OUTPUT_POLICY_A" "$OUTPUT_POLICY"
+cp "$OUTPUT_MAPPING_A" "$OUTPUT_MAPPING"
 
 echo -e "${GREEN}✓ Default policy: $OUTPUT_POLICY${NC}"
 echo
@@ -845,6 +857,9 @@ echo "  📄 Policy (dest/b, policy leaf rotated):                  $OUTPUT_POLI
 echo "  📄 Policy (dest, policy + tcb_mapping leaves rotated):    $OUTPUT_POLICY_PM_B"
 echo "  📄 Policy (dest, policy + tcb_mapping + td_identity all rotated): $OUTPUT_POLICY_PMI_B"
 echo "  📄 Policy (default):       $OUTPUT_POLICY"
+echo "  📄 TCB mapping (source/a): $OUTPUT_MAPPING_A"
+echo "  📄 TCB mapping (dest/b):   $OUTPUT_MAPPING_B"
+echo "  📄 TCB mapping (default):  $OUTPUT_MAPPING"
 echo "  📄 Cert chain (a):         $OUTPUT_CERT_CHAIN_A"
 echo "  📄 Cert chain (b):         $OUTPUT_CERT_CHAIN_B"
 echo "  📄 Cert chain (default):   $OUTPUT_CERT_CHAIN"
@@ -870,7 +885,7 @@ echo
 # Pass --skip-policy-generation: this script already generated the policy
 # files, so migtdemu.sh must not re-run the generator (which would clobber
 # the variants we want to test).
-TEST_CMD="./migtdemu.sh --policy-v2 --src-policy-file $OUTPUT_POLICY_A --src-policy-issuer-chain-file $OUTPUT_CERT_CHAIN_A --dst-policy-file $OUTPUT_POLICY_B --dst-policy-issuer-chain-file $OUTPUT_CERT_CHAIN_B --skip-policy-generation --debug --both"
+TEST_CMD="./migtdemu.sh --policy-v2 --src-policy-file $OUTPUT_POLICY_A --src-policy-issuer-chain-file $OUTPUT_CERT_CHAIN_A --src-servtd-tcb-mapping-file $OUTPUT_MAPPING_A --dst-policy-file $OUTPUT_POLICY_B --dst-policy-issuer-chain-file $OUTPUT_CERT_CHAIN_B --dst-servtd-tcb-mapping-file $OUTPUT_MAPPING_B --skip-policy-generation --debug --both"
 if [ "$USE_MOCK_REPORT" = true ]; then
     TEST_CMD="$TEST_CMD --mock-report"
 

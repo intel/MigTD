@@ -65,21 +65,20 @@ are not supported. Leaf-key rotation under the same intermediate is supported.
 Changing measured collateral still requires a new image and TDINFO endorsement.
 These restrictions apply only to `servtdCrl`, not Intel platform CRLs.
 
-Produce the ServTD identity, TCB mapping, and CRL collateral bundle:
+Produce the measured ServTD identity and CRL collateral:
 
 ```sh
 cargo build -p servtd-collateral-generator
-./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --mapping /path/to/tcb_mapping_signed.json --mapping-chain /path/to/mapping_issuer_chain.pem --servtd-crl /path/to/servtd_signers.crl.pem -o servtd_collateral.json
+./target/debug/servtd-collateral-generator --identity /path/to/td_identity_signed.json --identity-chain /path/to/identity_issuer_chain.pem --servtd-crl /path/to/servtd_signers.crl.pem -o servtd_collateral.json
 ```
 
-`--mapping-chain` is required and is always embedded as
-`servtdTcbMappingIssuerChain`. Omit both `--identity` and `--identity-chain` for
-SVN-only collateral; otherwise the identity retains its separate issuer chain.
+Omit both `--identity` and `--identity-chain` for SVN-only collateral; otherwise
+the identity retains its issuer chain.
 
-Result: `servtd_collateral.json` contains the signed TCB mapping, its issuer
-chain, the CRL, and any signed ServTD identity with its issuer chain. MigTD
-verifies the mapping with its explicit chain and requires that chain to resolve
-to the signer anchor measured into RTMR1.
+Result: `servtd_collateral.json` contains the CRL and any signed ServTD identity
+with its issuer chain. Keep the signed TCB mapping as a separate artifact.
+MigTD verifies it with the policy issuer chain and requires that chain to
+resolve to the signer anchor measured into RTMR1.
 
 Missing, null, malformed, or unauthenticated CRLs are rejected during policy
 verification, as are CRLs without a CRL-number extension. MigTD checks peer
@@ -94,8 +93,9 @@ cumulative TCB mapping. Policy v1 is unchanged.
 Peer authentication verifies the JSON or CoRIM mapping signature and requires
 its signing chain to resolve to the peer's attested RTMR1 signer anchor. That
 anchor must match the local enrolled anchor, whether derived from a PEM chain
-or supplied directly as 48 raw bytes. Direct-anchor enrollment does not
-require a local PEM chain.
+or supplied directly as 48 raw bytes. CoRIM direct-anchor enrollment does not
+require a local PEM chain; JSON mappings still require the policy issuer PEM
+to verify their signature.
 
 The signer anchor binds the root certificate, complete leaf Subject DN,
 and selected dedicated signer-purpose EKU, not the full issuer-chain bytes.
@@ -177,10 +177,10 @@ Package the generated policy data without an outer signature:
 jq -c '{policyData: .}' policy_v2.json > policy_v2_signed.json
 ```
 
-RTMR2 measures canonical `policyData` with `servtdTcbMapping` and its
-`servtdTcbMappingIssuerChain` removed to
-avoid the mapping/image circular dependency. The TCB mapping remains separately
-signed by the RTMR1-bound policy issuer.
+RTMR2 measures the complete canonical `policyData`. The TCB mapping is a
+separate signed artifact to avoid the mapping/image circular dependency.
+Legacy policies embedding `servtdTcbMapping` or
+`servtdTcbMappingIssuerChain` are rejected.
 
 ### Release SVN and policy SVN
 
@@ -200,7 +200,7 @@ does not establish numeric ordering between releases.
 The existing current-policy check remains: the source/old MigTD requires the
 destination/new MigTD's `policySvn` to be no lower than its own.
 
-## 4. Build Final MigTD Image with Policy and Issuer Chain
+## 4. Build Final MigTD Image with Policy, Issuer Chain, and Mapping
 
 Place artifacts where the build expects them (e.g. under `config/templates`):
 
@@ -208,6 +208,7 @@ Place artifacts where the build expects them (e.g. under `config/templates`):
 config/templates/
   policy_v2_signed.json
   policy_issuer_chain.pem
+  tcb_mapping_signed.json
 ```
 
 Build image (with option `--policy-v2`):
@@ -215,7 +216,8 @@ Build image (with option `--policy-v2`):
 ```sh
 cargo image --policy-v2 \
   --policy config/templates/policy_v2_signed.json \
-  --policy-issuer-chain config/templates/policy_issuer_chain.pem
+  --policy-issuer-chain config/templates/policy_issuer_chain.pem \
+  --servtd-tcb-mapping config/templates/tcb_mapping_signed.json
 ```
 
 During startup:
@@ -297,14 +299,25 @@ to an earlier formula.
 or a PEM chain. Checking its length is not authentication. JSON/CoRIM
 verification must reproduce the enrolled value from the endorsement signer.
 PEM enrollment derives the same anchor from the supplied chain.
-If both `--signer-anchor` and `--policy-issuer-chain` are supplied, only the
-anchor is enrolled; the unused PEM argument does not provide a runtime fallback.
+If both `--signer-anchor` and `--policy-issuer-chain` are supplied, the anchor
+is enrolled in RTMR1 and the PEM chain is enrolled separately to verify the
+standalone JSON mapping. MigTD requires the chain-derived anchor to match the
+directly enrolled anchor.
 
-A policy retaining JSON `servtdCollateral` must contain a signed
-`servtdTcbMapping` and an explicit nonempty `servtdTcbMappingIssuerChain`.
-This remains required when a CoRIM is also enrolled, because JSON collateral
-is verified before the CoRIM is attached. JSON-only policies with that explicit
-chain do not require a CoRIM.
+For the JSON path, supply the signed mapping and policy issuer chain separately:
+
+```sh
+cargo image --policy-v2 \
+  --policy policy.json \
+  --policy-issuer-chain policy_issuer_chain.pem \
+  --servtd-tcb-mapping tcb_mapping_signed.json
+```
+
+JSON and CoRIM mappings are mutually exclusive. Both use the unmeasured
+`MIGTD_SERVTD_TCB_MAPPING_FFS_GUID` slot
+(`8073AC3C-7D49-4DA9-9B20-4DC1D1DB3CFB`); the build selects the mapping verifier.
+New CoRIM images use this common GUID instead of the former CoRIM-only GUID,
+so build them with matching updated firmware and enrollment tools.
 
 Without JSON collateral, supply the signed CoRIM and retain the mandatory CRL
 at `policyData.servtdCrl`:
@@ -320,6 +333,10 @@ The image builder checks these enrollment combinations and required artifact
 presence before building. MigTD still authenticates signatures, signer-anchor
 bindings, and the numbered CRL at runtime.
 
+Pre-session data uses one signed-mapping TLV item (type 3) for either JSON or
+CoRIM, selected by the build. This preserves the existing CoRIM wire encoding.
+The format-specific verifier authenticates the mapping after framing checks.
+
 ## 5. Finalize the cumulative TCB mapping
 
 Prepare the signing keys and complete steps 1-3 **before** measuring the release.
@@ -334,10 +351,16 @@ generator. It consumes the already-signed identity and rejects changes to
 measured policy data rather than silently invalidating the recorded hash.
 
 ### Build with the prepared policy
+
+Use the previous signed cumulative mapping for this first build, or a signed
+provisional mapping for the first release. Its bytes do not affect RTMR2; the
+current release's hash is added and the mapping re-signed below.
+
 ```sh
 cargo image --policy-v2 \
  --policy config/templates/policy_v2_signed.json \
- --policy-issuer-chain key/migtd_issuer_chain.pem
+ --policy-issuer-chain key/migtd_issuer_chain.pem \
+ --servtd-tcb-mapping config/templates/tcb_mapping_signed.json
 ```
 
 ### Build migtd-hash tool
@@ -365,7 +388,8 @@ bash sh_script/build_policy_v2.sh preprod \
 ```sh
 cargo image --policy-v2 \
  --policy config/templates/policy_v2_signed.json \
- --policy-issuer-chain key/migtd_issuer_chain.pem
+ --policy-issuer-chain key/migtd_issuer_chain.pem \
+ --servtd-tcb-mapping config/templates/tcb_mapping_signed.json
 ```
 
 Require the rebuilt image to retain the recorded release hash. Do not publish
@@ -382,7 +406,7 @@ cmp --silent target/release/expected_tdinfo_hash.txt target/release/final_tdinfo
 ## Summary Flow
 
 1. Platform collaterals -> `collateral_*.json`
-2. Sign the ServTD identity and cumulative TCB mapping -> generate `servtd_collateral.json`
+2. Sign the ServTD identity and cumulative TCB mapping; keep the mapping separate from `servtd_collateral.json`
 3. Generate policy data -> package it as `policy_v2_signed.json` without an outer signature
 4. Build the image with measured policy data and signer anchor
 5. Record its `tdinfo_hash` and update the cumulative mapping

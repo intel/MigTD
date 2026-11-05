@@ -365,9 +365,8 @@ fn rtmr2(cfv: &[u8], is_ra_disabled: bool, is_policy_v2: bool) -> Result<Vec<u8>
             .ok_or(anyhow!("Unable to get policy from image"))?;
 
         if is_policy_v2 {
-            // v2 (single-extend RTMR2): one extend over the canonical bytes
-            // of `policyData` with `servtdCollateral.servtdTcbMapping`
-            // removed so the mapping remains updateable after publication.
+            // v2 (single-extend RTMR2): one extend over the complete canonical
+            // `policyData`. The mapping is enrolled as a separate artifact.
             // The exact same helper is used by the runtime
             // (`get_policy_and_measure`) and the integrity verifier
             // (`check_policy_integrity`), so a mismatch here would also break
