@@ -901,9 +901,11 @@ mod v2 {
                 serde_json::json!([{
                     "servtd": {
                         "migtdIdentity": {},
-                        "servtdCrlNum": {
-                            "operation": "greater-or-equal",
-                            "reference": "self"
+                        "crl": {
+                            "servtdCrlNum": {
+                                "operation": "greater-or-equal",
+                                "reference": "self"
+                            }
                         }
                     }
                 }]),
@@ -1128,9 +1130,11 @@ mod v2 {
                 serde_json::json!([{
                     "servtd": {
                         "migtdIdentity": {},
-                        "servtdCrlNum": {
-                            "operation": "greater-or-equal",
-                            "reference": "self"
+                        "crl": {
+                            "servtdCrlNum": {
+                                "operation": "greater-or-equal",
+                                "reference": "self"
+                            }
                         }
                     }
                 }]),

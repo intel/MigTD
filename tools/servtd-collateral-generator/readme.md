@@ -48,4 +48,5 @@ signer chain lacks that CA or cannot authenticate the CRL.
 MigTD uses its local policy's CRL to check peer signers. Missing or invalid CRLs
 are rejected during policy verification; a peer-provided CRL is not a substitute
 for the local CRL. Existing v2 policies without a CRL must be regenerated. See the
-[policy v2 guide](../../doc/policy_v2.md) for configuring the `servtdCrlNum` floor.
+[policy v2 guide](../../doc/policy_v2.md) for configuring the
+`servtd.crl.servtdCrlNum` floor.

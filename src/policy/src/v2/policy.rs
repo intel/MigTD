@@ -751,10 +751,33 @@ impl CrlPolicy {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ServtdPolicy {
     migtd_identity: MigTdIdentityPolicy,
+    crl: Option<ServtdCrlPolicy>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ServtdCrlPolicy {
     servtd_crl_num: Option<PolicyProperty>,
+}
+
+impl ServtdCrlPolicy {
+    fn evaluate(
+        &self,
+        value: &PolicyEvaluationInfo,
+        relative_reference: &PolicyEvaluationInfo,
+    ) -> Result<(), PolicyError> {
+        if let Some(property) = &self.servtd_crl_num {
+            let servtd_crl_num = value.servtd_crl_num.ok_or(PolicyError::CrlEvaluation)?;
+            if !property.evaluate_integer(servtd_crl_num, relative_reference.servtd_crl_num)? {
+                return Err(PolicyError::CrlEvaluation);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl ServtdPolicy {
@@ -804,11 +827,8 @@ impl ServtdPolicy {
             }
         }
 
-        if let Some(property) = &self.servtd_crl_num {
-            let servtd_crl_num = value.servtd_crl_num.ok_or(PolicyError::CrlEvaluation)?;
-            if !property.evaluate_integer(servtd_crl_num, relative_reference.servtd_crl_num)? {
-                return Err(PolicyError::CrlEvaluation);
-            }
+        if let Some(crl_policy) = &self.crl {
+            crl_policy.evaluate(value, relative_reference)?;
         }
 
         Ok(())
@@ -1264,7 +1284,7 @@ mod test {
     #[test]
     fn servtd_policy_enforces_servtd_crl_num_floor() {
         let policy: ServtdPolicy = serde_json::from_str(
-            r#"{"migtdIdentity":{},"servtdCrlNum":{"operation":"greater-or-equal","reference":4097}}"#,
+            r#"{"migtdIdentity":{},"crl":{"servtdCrlNum":{"operation":"greater-or-equal","reference":4097}}}"#,
         )
         .unwrap();
         let reference = PolicyEvaluationInfo::default();
@@ -1470,9 +1490,27 @@ mod test {
     }
 
     #[test]
+    fn test_servtd_policy_rejects_flat_servtd_crl_floor() {
+        let error = serde_json::from_str::<ServtdPolicy>(
+            r#"{"migtdIdentity":{},"servtdCrlNum":{"operation":"greater-or-equal","reference":5}}"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field `servtdCrlNum`"));
+    }
+
+    #[test]
+    fn test_servtd_crl_policy_rejects_global_crl_floor() {
+        let error = serde_json::from_str::<ServtdPolicy>(
+            r#"{"migtdIdentity":{},"crl":{"pckCrlNum":{"operation":"greater-or-equal","reference":5}}}"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field `pckCrlNum`"));
+    }
+
+    #[test]
     fn test_servtd_crl_floor_with_absolute_reference() {
         let policy = serde_json::from_str::<ServtdPolicy>(
-            r#"{"migtdIdentity":{},"servtdCrlNum":{"operation":"greater-or-equal","reference":5}}"#,
+            r#"{"migtdIdentity":{},"crl":{"servtdCrlNum":{"operation":"greater-or-equal","reference":5}}}"#,
         )
         .unwrap();
         let relative = PolicyEvaluationInfo::default();
@@ -1499,7 +1537,7 @@ mod test {
     #[test]
     fn test_servtd_crl_floor_self_reference_requires_local_crl() {
         let policy = serde_json::from_str::<ServtdPolicy>(
-            r#"{"migtdIdentity":{},"servtdCrlNum":{"operation":"greater-or-equal","reference":"self"}}"#,
+            r#"{"migtdIdentity":{},"crl":{"servtdCrlNum":{"operation":"greater-or-equal","reference":"self"}}}"#,
         )
         .unwrap();
         let value = PolicyEvaluationInfo {
@@ -1533,7 +1571,9 @@ mod test {
             }}},
             {"servtd":{
                 "migtdIdentity":{},
-                "servtdCrlNum":{"operation":"greater-or-equal","reference":"self"}
+                "crl":{
+                    "servtdCrlNum":{"operation":"greater-or-equal","reference":"self"}
+                }
             }}
         ]"#;
         let mut policy = serde_json::from_str::<PolicyData>(include_str!(

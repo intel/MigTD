@@ -32,7 +32,9 @@ def prepare(base, output, with_identity):
     servtd_rule = {
         "servtd": {
             "migtdIdentity": identity_rules,
-            "servtdCrlNum": {"operation": "greater-or-equal", "reference": 7},
+            "crl": {
+                "servtdCrlNum": {"operation": "greater-or-equal", "reference": 7},
+            },
         }
     }
     data["policy"].append(servtd_rule)

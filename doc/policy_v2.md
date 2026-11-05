@@ -125,9 +125,11 @@ An optional servTD signer CRL floor belongs in a `servtd` entry in the applicabl
 {
   "servtd": {
     "migtdIdentity": {},
-    "servtdCrlNum": {
-      "operation": "greater-or-equal",
-      "reference": "self"
+    "crl": {
+      "servtdCrlNum": {
+        "operation": "greater-or-equal",
+        "reference": "self"
+      }
     }
   }
 }
@@ -142,7 +144,8 @@ signature, profile, and number are checked, but its revocation entries never
 override or supplement the local revocation decision.
 The CRL itself remains in `servtdCrl` or `servtdCollateral.servtdCrl` within
 `policyData`. `global.crl` accepts only
-`pckCrlNum` and `rootCaCrlNum`; placing `servtdCrlNum` there is rejected.
+`pckCrlNum` and `rootCaCrlNum`; the servTD floor belongs at
+`servtd.crl.servtdCrlNum`.
 
 When the new MigTD authenticates the old MigTD during rebinding, it evaluates
 common `policy` servTD constraints followed by `backwardPolicy`. An absent or
