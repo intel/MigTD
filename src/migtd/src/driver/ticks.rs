@@ -35,11 +35,8 @@ fn now() -> u64 {
 /// Runs a given future with a timeout.
 #[cfg(not(feature = "AzCVMEmu"))]
 pub async fn with_timeout<F: Future>(timeout: Duration, fut: F) -> Result<F::Output, TimeoutError> {
-    use futures_util::{
-        future::{select, Either},
-        pin_mut,
-    };
-    pin_mut!(fut);
+    use futures_util::future::{select, Either};
+    let fut = core::pin::pin!(fut);
     let timeout_fut = Timer::after(timeout);
     match select(fut, timeout_fut).await {
         Either::Left((r, _)) => Ok(r),
