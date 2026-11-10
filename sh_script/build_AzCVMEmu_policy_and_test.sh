@@ -696,7 +696,7 @@ echo -e "${GREEN}✓ TD Identity updated: $TD_IDENTITY_UPDATED${NC}"
 echo
 
 #
-# Step 4: Update the cumulative tcb_mapping.json with the v2 tdinfo_hash
+# Step 4: Update the cumulative tcb_mapping.json with the v2 servTD info hash
 # Make sure no ending newline is added (important for signing)
 #
 # The Rust helper retains all supported historical hashes, replaces the
@@ -706,7 +706,7 @@ echo
 #
 echo -e "${BLUE}=== Step 4: Updating Cumulative TCB Mapping ===${NC}"
 
-TDINFO_HASH_FILE="$TEMP_DIR/tdinfo_hash.hex"
+SERVTD_INFO_HASH_FILE="$TEMP_DIR/servtd_info_hash.hex"
 MAPPING_UPDATE_ARGS=(
     --update-tcb-mapping "$TCB_MAPPING_SOURCE"
     --output-tcb-mapping "$TCB_MAPPING_UPDATED"
@@ -715,14 +715,14 @@ MAPPING_UPDATE_ARGS=(
 "$TOOLS_DIR/migtd-hash" \
     --policy-v2 \
     --from-report "$REPORT_DATA_FILE" \
-    --output-tdinfo-hash "$TDINFO_HASH_FILE" \
+    --output-servtd-info-hash "$SERVTD_INFO_HASH_FILE" \
     "${MAPPING_UPDATE_ARGS[@]}"
 # Uppercase to match the convention used by signed policies.
-TDINFO_HASH=$(tr 'a-z' 'A-Z' < "$TDINFO_HASH_FILE")
+SERVTD_INFO_HASH=$(tr 'a-z' 'A-Z' < "$SERVTD_INFO_HASH_FILE")
 
 echo -e "${GREEN}✓ TCB Mapping updated: $TCB_MAPPING_UPDATED${NC}"
 echo -e "  history source = $TCB_MAPPING_SOURCE"
-echo -e "  tdinfo_hash = $TDINFO_HASH"
+echo -e "  servtd_info_hash = $SERVTD_INFO_HASH"
 cp "$TCB_MAPPING_UPDATED" "$OUTPUT_DIR/tcb_mapping.json"
 echo
 
