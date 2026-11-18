@@ -362,10 +362,9 @@ pub async fn send_and_receive_sdm_migration_attest_info(
     let report_data = build_report_data(b"MigTDReq", &th1)?;
 
     //quote src
-    let quote_src = gen_quote_spdm(&report_data)?;
-    // Self-quote verification is only needed for policy v1, which uses
-    // verified_report_local in authenticate_policy(). Policy v2 re-verifies
-    // the quote internally via authenticate_remote().
+    let generated = gen_quote_spdm(&report_data)?;
+    let quote_src = generated.quote;
+    // Policy v2 retains the verified local evidence from quote generation.
     #[cfg(not(feature = "policy_v2"))]
     let verified_report_local = {
         let res = spdm_verify_quote(quote_src.as_slice());
@@ -592,6 +591,7 @@ pub async fn send_and_receive_sdm_migration_attest_info(
 
     #[cfg(feature = "policy_v2")]
     verify_peer_attestation_v2(
+        generated.local_evidence,
         &quote_dst_vec,
         &event_log_dst_vec,
         &mig_policy_hash_dst,
@@ -683,6 +683,7 @@ fn verify_peer_attestation_v1(
 
 #[cfg(feature = "policy_v2")]
 fn verify_peer_attestation_v2(
+    local_evidence: Option<mig_policy::LocalTcbEvidence>,
     quote_peer: &[u8],
     event_log_peer: &[u8],
     mig_policy_hash_peer: &[u8],
@@ -702,12 +703,13 @@ fn verify_peer_attestation_v2(
     // 2. Authenticate remote (includes quote verification internally)
     #[cfg(not(feature = "test_disable_ra_and_accept_all"))]
     {
-        let policy_check_result = mig_policy::authenticate_remote(
+        let policy_check_result = mig_policy::authenticate_remote_with_evidence(
             true,
             quote_peer,
             peer_data,
             event_log_peer,
             servtd_ext_peer,
+            local_evidence,
         );
         if let Err(e) = &policy_check_result {
             error!("Policy v2 check failed, below is the detail information:\n");
@@ -720,7 +722,7 @@ fn verify_peer_attestation_v2(
             return Err(SpdmStatus::from(MigrationResult::PolicyUnsatisfiedError));
         }
 
-        // 3. Verify REPORTDATA binding using supplemental data from authenticate_remote
+        // 3. Verify REPORTDATA binding using the policy-verified peer evidence
         #[cfg(not(any(
             feature = "AzCVMEmu",
             feature = "test_mock_report",
@@ -741,7 +743,7 @@ fn verify_peer_attestation_v2(
     }
 
     #[cfg(feature = "test_disable_ra_and_accept_all")]
-    let _ = servtd_ext_peer;
+    let _ = (servtd_ext_peer, local_evidence);
 
     Ok(())
 }

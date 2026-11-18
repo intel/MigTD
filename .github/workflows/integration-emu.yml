@@ -289,6 +289,17 @@ jobs:
         run: |
           MIGTD_EMU_BINARY="$PWD/target/release/migtd" python3 sh_script/test_migtdemu_artifacts.py
 
+      - name: Check SPDM local quote reuse
+        if: startsWith(matrix.test-type, 'spdm-policy-v2')
+        run: |
+          for LOG in migtd_migration_source.log migtd_migration_destination.log; do
+            COUNT=$(grep -ac "Quote generated successfully" "$LOG" || true)
+            if [[ "$COUNT" != 1 ]]; then
+              echo "Expected one local quote in $LOG, got $COUNT"
+              exit 1
+            fi
+          done
+
       - name: Check test outputs
         if: always()
         run: |
