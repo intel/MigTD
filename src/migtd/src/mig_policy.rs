@@ -155,6 +155,47 @@ mod v2 {
             .map(|p| p.get_version().to_string())
     }
 
+    /// Verified local evidence kept within one exchange by its callers and consumed once.
+    pub(crate) struct LocalTcbEvidence {
+        fmspc: [u8; 6],
+        supplemental_data: Vec<u8>,
+    }
+
+    impl LocalTcbEvidence {
+        fn into_evaluation_info(
+            self,
+            policy: &VerifiedPolicy,
+        ) -> Result<PolicyEvaluationInfo, PolicyError> {
+            setup_evaluation_data(
+                self.fmspc,
+                &self.supplemental_data,
+                policy,
+                policy.get_collaterals(),
+                crate::migration::servtd_ext::EXPECTED_SERVTD_ATTR,
+            )
+        }
+    }
+
+    /// The caller must supply the TDREPORT generated locally for this quote request,
+    /// never a peer-provided report.
+    #[cfg(all(
+        feature = "spdm_attestation",
+        not(feature = "test_disable_ra_and_accept_all")
+    ))]
+    pub(crate) fn verify_local_tcb_evidence(
+        quote: &[u8],
+        report: &[u8],
+    ) -> Result<LocalTcbEvidence, PolicyError> {
+        let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+        let (fmspc, supplemental_data) = verify_quote(quote, policy.get_collaterals())?;
+        crate::quote::verify_local_report(&supplemental_data, report)
+            .map_err(|_| PolicyError::QuoteVerification)?;
+        Ok(LocalTcbEvidence {
+            fmspc,
+            supplemental_data,
+        })
+    }
+
     /// Generate a fresh local TCB evaluation info on demand by creating a
     /// quote and verifying it against the policy collaterals.
     pub fn get_local_tcb_evaluation_info() -> Result<PolicyEvaluationInfo, PolicyError> {
@@ -176,6 +217,18 @@ mod v2 {
         )
     }
 
+    fn local_reference(
+        evidence: Option<LocalTcbEvidence>,
+    ) -> Result<PolicyEvaluationInfo, PolicyError> {
+        match evidence {
+            Some(evidence) => {
+                let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
+                evidence.into_evaluation_info(policy)
+            }
+            None => get_local_tcb_evaluation_info(),
+        }
+    }
+
     /// Get reference to the global verified policy
     /// Returns None if the policy hasn't been initialized yet
     pub fn get_verified_policy() -> Option<&'static VerifiedPolicy<'static>> {
@@ -189,6 +242,24 @@ mod v2 {
         event_log_peer: &[u8],
         servtd_ext_peer: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        authenticate_remote_with_evidence(
+            is_src,
+            quote_peer,
+            policy_peer,
+            event_log_peer,
+            servtd_ext_peer,
+            None,
+        )
+    }
+
+    pub(crate) fn authenticate_remote_with_evidence(
+        is_src: bool,
+        quote_peer: &[u8],
+        policy_peer: &[u8],
+        event_log_peer: &[u8],
+        servtd_ext_peer: &[u8],
+        local_evidence: Option<LocalTcbEvidence>,
+    ) -> Result<Vec<u8>, PolicyError> {
         let peer = crate::migration::pre_session_data::decode_peer_data(policy_peer)
             .ok_or(PolicyError::InvalidParameter)?;
         if is_src {
@@ -199,6 +270,7 @@ mod v2 {
                 peer.issuer_chain,
                 peer.servtd_tcb_mapping,
                 servtd_ext_peer,
+                local_evidence,
             )
         } else {
             evaluate_migration_source(
@@ -208,6 +280,7 @@ mod v2 {
                 peer.issuer_chain,
                 peer.servtd_tcb_mapping,
                 servtd_ext_peer,
+                local_evidence,
             )
         }
     }
@@ -219,6 +292,7 @@ mod v2 {
         policy_issuer_chain: &[u8],
         peer_servtd_corim: Option<&[u8]>,
         servtd_ext_dst: &[u8],
+        local_evidence: Option<LocalTcbEvidence>,
     ) -> Result<Vec<u8>, PolicyError> {
         let servtd_attr_dst = peer_cur_servtd_attr(servtd_ext_dst)?;
         let (evaluation_data_dst, _verified_policy_dst, suppl_data) = authenticate_remote_common(
@@ -229,7 +303,7 @@ mod v2 {
             peer_servtd_corim,
             servtd_attr_dst,
         )?;
-        let relative_reference = get_local_tcb_evaluation_info()?;
+        let relative_reference = local_reference(local_evidence)?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
         policy.policy_data.evaluate_policy_common(
@@ -253,6 +327,7 @@ mod v2 {
         policy_issuer_chain: &[u8],
         peer_servtd_corim: Option<&[u8]>,
         servtd_ext_src: &[u8],
+        local_evidence: Option<LocalTcbEvidence>,
     ) -> Result<Vec<u8>, PolicyError> {
         let servtd_attr_src = peer_cur_servtd_attr(servtd_ext_src)?;
         let (evaluation_data_src, _verified_policy_src, suppl_data) = authenticate_remote_common(
@@ -263,7 +338,7 @@ mod v2 {
             peer_servtd_corim,
             servtd_attr_src,
         )?;
-        let relative_reference = get_local_tcb_evaluation_info()?;
+        let relative_reference = local_reference(local_evidence)?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
         policy.policy_data.evaluate_policy_common(
@@ -777,6 +852,22 @@ mod v2 {
         event_log_src: &[u8],
         servtd_ext_src: &[u8],
     ) -> Result<Vec<u8>, PolicyError> {
+        authenticate_migration_source_with_evidence(
+            quote_src,
+            peer_data,
+            event_log_src,
+            servtd_ext_src,
+            None,
+        )
+    }
+
+    pub(crate) fn authenticate_migration_source_with_evidence(
+        quote_src: &[u8],
+        peer_data: &[u8],
+        event_log_src: &[u8],
+        servtd_ext_src: &[u8],
+        local_evidence: Option<LocalTcbEvidence>,
+    ) -> Result<Vec<u8>, PolicyError> {
         let servtd_attr_src = peer_cur_servtd_attr(servtd_ext_src)?;
         let peer = crate::migration::pre_session_data::decode_peer_data(peer_data)
             .ok_or(PolicyError::InvalidParameter)?;
@@ -790,7 +881,7 @@ mod v2 {
             servtd_attr_src,
         )?;
 
-        let relative_reference = get_local_tcb_evaluation_info()?;
+        let relative_reference = local_reference(local_evidence)?;
         let policy = get_verified_policy().ok_or(PolicyError::InvalidParameter)?;
 
         // Existing migration-source policy checks (common + backward)
@@ -1088,6 +1179,35 @@ mod v2 {
                 ),
                 setup_evaluation_data_with_tdreport(tdreport, policy, 0),
             ]
+        }
+
+        #[test]
+        fn local_evidence_evaluation_uses_verified_tcb_snapshot() {
+            let input = serde_json::to_vec(&policy_json()).unwrap();
+            let mut policy = load_policy(&input, ISSUER_CHAIN);
+            let tdreport =
+                TdxReport::read_from_bytes(&[0; core::mem::size_of::<TdxReport>()]).unwrap();
+            endorse_test_report(&mut policy, &tdreport);
+
+            let snapshots = [
+                (1_735_689_600u64, "2025-01-01T00:00:00Z", "OutOfDate"),
+                (1_767_225_600u64, "2026-01-01T00:00:00Z", "UpToDate"),
+            ];
+            for (timestamp, expected_date, status) in snapshots {
+                let mut data = vec![0; REPORT_DATA_SIZE];
+                data[Report::R_TCB_DATE].copy_from_slice(&timestamp.to_le_bytes());
+                data[Report::R_TCB_STATUS.start..][..status.len()]
+                    .copy_from_slice(status.as_bytes());
+                let value = LocalTcbEvidence {
+                    fmspc: [0, 0xC0, 0x6F, 0, 0, 0],
+                    supplemental_data: data,
+                }
+                .into_evaluation_info(&policy)
+                .unwrap();
+                assert_eq!(value.tcb_date.as_deref(), Some(expected_date));
+                assert_eq!(value.tcb_status.as_deref(), Some(status));
+                assert_eq!(value.migtd_isvsvn, Some(1));
+            }
         }
 
         fn assert_unendorsed(policy: &VerifiedPolicy, tdreport: &TdxReport) {

@@ -181,10 +181,16 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> SpdmDeviceIo for MigtdTransport<T
     }
 }
 
-pub fn gen_quote_spdm(report_data: &[u8]) -> Result<Vec<u8>, MigrationResult> {
+pub(crate) struct GeneratedQuote {
+    quote: Vec<u8>,
+    #[cfg(feature = "policy_v2")]
+    local_evidence: Option<crate::mig_policy::LocalTcbEvidence>,
+}
+
+pub(crate) fn gen_quote_spdm(report_data: &[u8]) -> Result<GeneratedQuote, MigrationResult> {
     let hash = digest_sha384(report_data)?;
 
-    // Generate the TD Report that contains the public key hash as nonce
+    // Bind the TDREPORT to SHA384(role || TH1).
     let mut additional_data = [0u8; 64];
     additional_data[..hash.len()].copy_from_slice(hash.as_ref());
 
@@ -192,6 +198,14 @@ pub fn gen_quote_spdm(report_data: &[u8]) -> Result<Vec<u8>, MigrationResult> {
         log::error!("get_quote_with_retry failed: {:?}\n", e);
         MigrationResult::MutualAttestationError
     })?;
+    #[cfg(all(feature = "policy_v2", not(feature = "test_disable_ra_and_accept_all")))]
+    let local_evidence = Some(
+        crate::mig_policy::verify_local_tcb_evidence(&quote, &report).map_err(|e| {
+            log::error!("Local quote verification failed: {e:?}\n");
+            MigrationResult::MutualAttestationError
+        })?,
+    );
+    #[cfg(any(not(feature = "policy_v2"), feature = "test_disable_ra_and_accept_all"))]
     crate::quote::verify_local_quote(&quote, &report).map_err(|e| {
         log::error!(
             "Local quote does not match the generated TD report: {:?}\n",
@@ -200,7 +214,13 @@ pub fn gen_quote_spdm(report_data: &[u8]) -> Result<Vec<u8>, MigrationResult> {
         MigrationResult::MutualAttestationError
     })?;
 
-    Ok(quote)
+    Ok(GeneratedQuote {
+        quote,
+        #[cfg(all(feature = "policy_v2", not(feature = "test_disable_ra_and_accept_all")))]
+        local_evidence,
+        #[cfg(all(feature = "policy_v2", feature = "test_disable_ra_and_accept_all"))]
+        local_evidence: None,
+    })
 }
 
 /// Verify that the peer's quote contains the expected REPORTDATA.
