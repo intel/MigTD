@@ -63,7 +63,6 @@ mod v2 {
     use alloc::ffi::CString;
     use alloc::{string::String, string::ToString, vec::Vec};
     use attestation::verify_quote_with_collaterals;
-    use chrono::DateTime;
     use crypto::{crl::get_crl_number, hash::digest_sha384, pem_cert_to_der, SHA384_DIGEST_SIZE};
     use lazy_static::lazy_static;
     use policy::*;
@@ -729,9 +728,9 @@ mod v2 {
     }
 
     fn unix_to_iso8601(unix_timestamp: u64) -> Result<String, PolicyError> {
-        DateTime::from_timestamp(unix_timestamp as i64, 0)
-            .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-            .ok_or(PolicyError::InvalidParameter)
+        jiff::Timestamp::from_second(unix_timestamp as i64)
+            .map(|ts| ts.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .map_err(|_| PolicyError::InvalidParameter)
     }
 
     fn slice_to_string_null_terminated(slice: &[u8]) -> Result<String, PolicyError> {

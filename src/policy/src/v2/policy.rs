@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 
 use alloc::{collections::BTreeMap, string::String, string::ToString, vec::Vec};
-use chrono::NaiveDateTime;
 use core::{
     cmp::Ordering,
     convert::{TryFrom, TryInto},
@@ -882,8 +881,8 @@ struct PolicyProperty {
 fn is_canonical_iso8601(s: &str) -> bool {
     const FORMAT: &str = "%Y-%m-%dT%H:%M:%SZ";
 
-    NaiveDateTime::parse_from_str(s, FORMAT)
-        .map(|timestamp| timestamp.format(FORMAT).to_string() == s)
+    jiff::civil::DateTime::strptime(FORMAT, s)
+        .map(|timestamp| timestamp.strftime(FORMAT).to_string() == s)
         .unwrap_or(false)
 }
 
