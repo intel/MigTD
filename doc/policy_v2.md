@@ -231,6 +231,18 @@ separate signed artifact to avoid the mapping/image circular dependency.
 Legacy policies embedding `servtdTcbMapping` or
 `servtdTcbMappingIssuerChain` are rejected.
 
+### TD-preserving TDX module updates
+
+MigTD must be relaunched after a TD-preserving TDX module update. A peer whose
+`TEE_TCB_SVN2` differs from `TEE_TCB_SVN` was not relaunched and is rejected in
+migration and rebinding, in both directions, independent of policy content.
+Migration reads both values from the TD Report 1.5 body of the peer quote;
+rebinding reads them from the peer TDREPORT when `TEE_TCB_INFO.VALID` reports
+`TEE_TCB_SVN2`.
+
+A stale MigTD cannot act as the old MigTD in rebinding, so rebinding cannot
+move target TDs off a MigTD that survived the update.
+
 ### Release SVN and policy SVN
 
 The mapping's `isvsvn` orders complete TDINFO values, including the measured
