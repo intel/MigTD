@@ -4,29 +4,34 @@
 
 //! CoRIM-based hash endorsement: decodes the signed TCB-mapping CoRIM generated
 //! during a MigTD production release (referred to as the "producer" below) and
-//! resolves a `tdinfo_hash` to a [`ServtdLookup`] (the MigTD ISV SVN). This is
-//! the only alternative to the legacy JSON collateral; the legacy path stays
-//! unchanged from the one-hash redesign.
+//! resolves a `tdinfo_hash` to a [`ServtdLookup`] (the MigTD ISV SVN).
 //!
 //! # One document
 //!
 //! The producer emits a single signed **TCB Mapping CoRIM**
 //! (`SERVTD_INFO_HASH -> isvsvn`), which MigTD carries in its CFV. Each
-//! authorized release contributes two triples in the shared `migration-td`
-//! environment (`class = { vendor: "Intel", model: "TDX" }`,
-//! `instance = #6.560("migration-td")`):
+//! authorized release is represented by two `conditional-endorsements`
+//! triples in the generic
+//! `class = { vendor: "Intel", model: "TDX" }` environment, without an instance:
 //!
-//! * a `reference-triple` whose single `MeasurementMap.mval.digests[0]` is
-//!   the ServTD info hash (authenticity), and
-//! * a `conditional-endorsement-series` (CES) triple whose series record
-//!   *selects* on that digest and *adds* `mval.svn = ExactValue(svn)`.
+//! * `tdx_init_server_td_hash` -> `tdx_init_server_td_svn`, and
+//! * `tdx_curr_server_td_hash` -> `tdx_curr_server_td_svn`.
 //!
 //! The measurement that carries the digest may also carry the `SERVTD_ATTR`
 //! mask the hash was computed with, as `mval.raw-value` (key 4): `#6.560` of
-//! 8 bytes, little endian. It is present in both the reference triple and the
-//! CES selection; absent means 0. An entry is identified by `(hash, attr)`.
+//! 8 bytes, little endian; absent means 0. An entry is identified by `(hash, attr)`.
 //!
-//! The hash -> svn lookup is driven by the CES triples. An optional JSON TD
+//! Each triple has exactly one condition and endorsement, each with one
+//! measurement. Hashes must be SHA-384 (algorithm 7, 48 bytes); SVNs must be
+//! exact `u16` values. No additional environment qualifiers, measurement
+//! values, or authorization constraints are supported. Both phases must
+//! endorse identical `(hash, attr)`-to-SVN maps: the lookup API is phase-independent,
+//! so accepting a phase-only endorsement would broaden its authority.
+//!
+//! Instance-qualified reference/CES mappings remain supported; their reference
+//! and selection must match both hash and attribute. Validated mappings populate
+//! a shared lookup cache. Conflicting SVN assignments for the same hash are
+//! rejected across all attributes, mappings, and CoMIDs. An optional JSON TD
 //! Identity can then supply `tcb_date` / `tcb_status` for that SVN. A CoRIM
 //! lookup miss never falls back to the JSON TCB mapping.
 //!
@@ -53,8 +58,9 @@ use core::convert::{TryFrom, TryInto};
 use corim::{
     types::{
         comid::ComidTag,
-        environment::EnvironmentMap,
-        measurement::{MeasurementMap, RawValueChoice, SvnChoice},
+        common::MeasuredElement,
+        environment::{ClassMap, EnvironmentMap},
+        measurement::{MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice},
         signed::{decode_signed_corim, CoseAlgorithm, CwtClaims},
     },
     validate::decode_and_validate_at,
@@ -70,19 +76,24 @@ use crate::{
 // ---- MigTD CoRIM wire-format constants -----------------------------------
 
 /// Component class for the TCB Mapping: `class = { vendor: "Intel",
-/// model: "TDX" }` (no `class-id`). The producer switched from a shared
-/// class-id UUID to this vendor/model class.
+/// model: "TDX" }` (no `class-id`).
 pub const CLASS_VENDOR: &str = "Intel";
 /// See [`CLASS_VENDOR`].
 pub const CLASS_MODEL: &str = "TDX";
 
-/// Instance bytes for the TCB Mapping environment
+/// Instance selector for instance-qualified mappings
 /// (`environment.instance = #6.560("migration-td")`).
 pub const MIGRATION_TD_INSTANCE_BYTES: &[u8] = b"migration-td";
 
+const INIT_HASH_KEY: &str = "tdx_init_server_td_hash";
+const CURRENT_HASH_KEY: &str = "tdx_curr_server_td_hash";
+const INIT_SVN_KEY: &str = "tdx_init_server_td_svn";
+const CURRENT_SVN_KEY: &str = "tdx_curr_server_td_svn";
+const SHA384_ALG: i64 = 7;
+
 /// Decoded CoRIM servtd collateral: the TCB Mapping document (hash -> svn).
 pub struct ServtdCorim {
-    /// CoMID tags from the TCB Mapping CoRIM (digest-selecting CES).
+    /// CoMID tags from the TCB Mapping CoRIM.
     tcb_mapping: Vec<ComidTag>,
     /// `(SERVTD_INFO_HASH, SERVTD_ATTR) -> isvsvn`.
     svn_mappings: BTreeMap<(Vec<u8>, u64), u16>,
@@ -93,7 +104,8 @@ pub struct ServtdCorim {
 
 impl ServtdCorim {
     /// Decode the TCB Mapping CoRIM blob (CBOR, `#6.501` unsigned wrapper) and
-    /// validate its structure, reference/CES pairing, and hash-to-SVN consistency.
+    /// validate its structure, mapping constraints, initial/current phase
+    /// equivalence, and hash-to-SVN consistency.
     /// `now_epoch_secs` evaluates any embedded validity windows.
     ///
     /// Signature verification of the surrounding `COSE_Sign1` envelope is the
@@ -151,12 +163,8 @@ impl ServtdCorim {
             .map_err(|_| PolicyError::SignerRevoked)
     }
 
-    /// Resolve `SERVTD_INFO_HASH -> isvsvn` via the TCB Mapping CES triples.
-    ///
-    /// The digest is matched by **value** only; the producer currently labels
-    /// the 48-byte SHA-384 ServTD info hash with the SHA-256 algorithm id
-    /// (see the design-review gap note), so the algorithm field is not
-    /// enforced here.
+    /// Resolve `(SERVTD_INFO_HASH, SERVTD_ATTR) -> isvsvn` via validated mappings.
+    /// Named mappings require identical initial/current coverage.
     fn svn_for_hash(&self, hash: &[u8], servtd_attr: u64) -> Option<u16> {
         self.svn_mappings
             .get(&(hash.to_vec(), servtd_attr))
@@ -297,7 +305,7 @@ fn is_migration_td_environment(env: &EnvironmentMap) -> bool {
     class_ok && instance_ok
 }
 
-// ---- TCB Mapping (CES) helpers --------------------------------------------
+// ---- TCB Mapping helpers --------------------------------------------------
 
 fn validated_svn_mappings(
     comids: &[ComidTag],
@@ -352,13 +360,12 @@ fn validated_svn_mappings(
                     .and_then(svn_exact)
                     .and_then(|svn| u16::try_from(svn).ok())
                     .ok_or(PolicyError::InvalidServtdTcbMapping)?;
-                if let Some(previous) = mappings.insert((hash.to_vec(), attr), svn) {
-                    if previous != svn {
-                        return Err(PolicyError::InvalidServtdTcbMapping);
-                    }
-                }
+                insert_svn_mapping(&mut mappings, hash, attr, svn)?;
             }
         }
+    }
+    for ((hash, attr), svn) in validated_conditional_svn_mappings(comids)? {
+        insert_svn_mapping(&mut mappings, &hash, attr, svn)?;
     }
     // The same hash must resolve to one SVN whatever mask the peer claims.
     let mut by_hash: BTreeMap<&[u8], u16> = BTreeMap::new();
@@ -405,6 +412,90 @@ fn measurement_key(m: &MeasurementMap) -> Result<Option<(&[u8], u64)>, PolicyErr
     }
 }
 
+fn insert_svn_mapping(
+    mappings: &mut BTreeMap<(Vec<u8>, u64), u16>,
+    hash: &[u8],
+    attr: u64,
+    svn: u16,
+) -> Result<(), PolicyError> {
+    if let Some(previous) = mappings.insert((hash.to_vec(), attr), svn) {
+        if previous != svn {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        }
+    }
+    Ok(())
+}
+
+fn validated_conditional_svn_mappings(
+    comids: &[ComidTag],
+) -> Result<BTreeMap<(Vec<u8>, u64), u16>, PolicyError> {
+    let environment = EnvironmentMap {
+        class: Some(ClassMap::new(CLASS_VENDOR, CLASS_MODEL)),
+        instance: None,
+        group: None,
+    };
+    let mut initial = BTreeMap::new();
+    let mut current = BTreeMap::new();
+    for triple in comids
+        .iter()
+        .flat_map(|comid| comid.triples.conditional_endorsement.iter().flatten())
+    {
+        let ([condition], [endorsement]) = (triple.0.as_slice(), triple.1.as_slice()) else {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        };
+        let ([selection], [addition]) = (condition.1.as_slice(), endorsement.1.as_slice()) else {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        };
+        if condition.0 != environment
+            || endorsement.0 != environment
+            || selection.authorized_by.is_some()
+            || addition.authorized_by.is_some()
+        {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        }
+        let (mappings, svn_key) = match selection.mkey.as_ref() {
+            Some(MeasuredElement::Text(key)) if key == INIT_HASH_KEY => {
+                (&mut initial, INIT_SVN_KEY)
+            }
+            Some(MeasuredElement::Text(key)) if key == CURRENT_HASH_KEY => {
+                (&mut current, CURRENT_SVN_KEY)
+            }
+            _ => return Err(PolicyError::InvalidServtdTcbMapping),
+        };
+        if !matches!(addition.mkey.as_ref(), Some(MeasuredElement::Text(key)) if key == svn_key)
+            || selection.mval
+                != (MeasurementValuesMap {
+                    digests: selection.mval.digests.clone(),
+                    raw_value: selection.mval.raw_value.clone(),
+                    ..MeasurementValuesMap::new()
+                })
+            || addition.mval
+                != (MeasurementValuesMap {
+                    svn: addition.mval.svn.clone(),
+                    ..MeasurementValuesMap::new()
+                })
+        {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        }
+        let Some([digest]) = selection.mval.digests.as_deref() else {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        };
+        if digest.alg().as_int() != Some(SHA384_ALG) || digest.value().len() != SHA384_DIGEST_SIZE {
+            return Err(PolicyError::InvalidServtdTcbMapping);
+        }
+        let svn = svn_exact(addition)
+            .and_then(|svn| u16::try_from(svn).ok())
+            .ok_or(PolicyError::InvalidServtdTcbMapping)?;
+        insert_svn_mapping(mappings, digest.value(), servtd_attr_of(selection)?, svn)?;
+    }
+    // Callers use the same lookup for initial and current TDINFO evidence.
+    // Do not turn an endorsement for only one phase into an endorsement for both.
+    if initial != current {
+        return Err(PolicyError::InvalidServtdTcbMapping);
+    }
+    Ok(initial)
+}
+
 /// First digest value of a measurement (the ServTD info hash).
 fn digest_value(m: &MeasurementMap) -> Option<&[u8]> {
     Some(m.mval.digests.as_ref()?.first()?.value())
@@ -426,19 +517,20 @@ pub(super) mod test {
     use corim::{
         builder::{ComidBuilder, CorimBuilder},
         types::{
-            common::{InstanceIdChoice, TagIdChoice},
+            common::{ClassIdChoice, GroupIdChoice, InstanceIdChoice, TagIdChoice},
             corim::CorimId,
             environment::{ClassMap, EnvironmentMap},
             measurement::{Digest, MeasurementValuesMap},
             signed::SignedCorimBuilder,
             triples::{
-                CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
-                ReferenceTriple,
+                CesCondition, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
+                ConditionalSeriesRecord, EndorsedTriple, ReferenceTriple,
+                StatefulEnvironmentRecord,
             },
         },
     };
 
-    /// Producer's (mislabeled) digest alg id — see the SHA-256/SHA-384 gap.
+    /// Algorithm identifier used by the reference/CES test fixtures.
     const SHA256_ALG: i64 = 1;
 
     const EMULATION_COSE: &[u8] = include_bytes!("../../test/policy_v2/corim/tcb_mapping.corim");
@@ -771,6 +863,423 @@ pub(super) mod test {
 
     fn hash(byte: u8) -> Vec<u8> {
         vec![byte; 48]
+    }
+
+    fn conditional_triple(hash: &[u8], svn: u16, initial: bool) -> ConditionalEndorsementTriple {
+        let environment = EnvironmentMap {
+            class: Some(class()),
+            instance: None,
+            group: None,
+        };
+        let (hash_key, svn_key) = if initial {
+            (INIT_HASH_KEY, INIT_SVN_KEY)
+        } else {
+            (CURRENT_HASH_KEY, CURRENT_SVN_KEY)
+        };
+        ConditionalEndorsementTriple(
+            vec![StatefulEnvironmentRecord(
+                environment.clone(),
+                vec![MeasurementMap {
+                    mkey: Some(MeasuredElement::Text(hash_key.into())),
+                    mval: MeasurementValuesMap {
+                        digests: Some(vec![Digest::new(SHA384_ALG, hash.to_vec())]),
+                        ..MeasurementValuesMap::new()
+                    },
+                    authorized_by: None,
+                }],
+            )],
+            vec![EndorsedTriple::new(
+                environment,
+                vec![MeasurementMap {
+                    mkey: Some(MeasuredElement::Text(svn_key.into())),
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::ExactValue(u64::from(svn))),
+                        ..MeasurementValuesMap::new()
+                    },
+                    authorized_by: None,
+                }],
+            )],
+        )
+    }
+
+    fn conditional_comid(triples: Vec<ConditionalEndorsementTriple>) -> ComidTag {
+        let mut comid = ComidBuilder::new(TagIdChoice::Text("conditional-mapping".into()))
+            .add_conditional_endorsement(conditional_triple(&hash(0xAA), 5, true))
+            .build()
+            .unwrap();
+        // Permit malformed triples here so negative tests exercise the decoder.
+        comid.triples.conditional_endorsement = Some(triples);
+        comid
+    }
+
+    fn conditional_pair(hash: &[u8], svn: u16) -> Vec<ConditionalEndorsementTriple> {
+        vec![
+            conditional_triple(hash, svn, true),
+            conditional_triple(hash, svn, false),
+        ]
+    }
+
+    fn conditional_pair_attr(
+        hash: &[u8],
+        attr: u64,
+        svn: u16,
+    ) -> Vec<ConditionalEndorsementTriple> {
+        let mut triples = conditional_pair(hash, svn);
+        for triple in &mut triples {
+            triple.0[0].1[0].mval.raw_value =
+                Some(RawValueChoice::Bytes(attr.to_le_bytes().to_vec()));
+        }
+        triples
+    }
+
+    #[test]
+    fn conditional_endorsements_lookup_requires_the_endorsed_attr() {
+        let mut triples = conditional_pair_attr(&hash(0xAA), MASK_A, 5);
+        triples.extend(conditional_pair_attr(&hash(0xAA), MASK_B, 5));
+        let mut zero = conditional_pair_attr(&hash(0xBB), 0, 7);
+        zero[0].0[0].1[0].mval.raw_value = None;
+        triples.extend(zero);
+        let provider =
+            ServtdCorim::decode(&build_corim(vec![conditional_comid(triples)]), 0).unwrap();
+        for attr in [MASK_A, MASK_B] {
+            let hit = provider
+                .lookup_by_servtd_info_hash(&hash(0xAA), attr)
+                .unwrap();
+            assert_eq!((hit.isvsvn, hit.servtd_attr), (5, attr));
+        }
+        assert!(provider.lookup_by_tdinfo_hash(&hash(0xAA)).is_none());
+        assert_eq!(
+            provider.lookup_by_tdinfo_hash(&hash(0xBB)).unwrap().isvsvn,
+            7
+        );
+        assert!(provider
+            .lookup_by_servtd_info_hash(&hash(0xBB), MASK_A)
+            .is_none());
+    }
+
+    #[test]
+    fn conditional_endorsements_require_matching_attrs_and_cross_mask_svns() {
+        let mut mismatched = conditional_pair_attr(&hash(0xAA), MASK_A, 5);
+        mismatched[1].0[0].1[0].mval.raw_value =
+            Some(RawValueChoice::Bytes(MASK_B.to_le_bytes().to_vec()));
+        let mut conflicting = conditional_pair_attr(&hash(0xAA), MASK_A, 5);
+        conflicting.extend(conditional_pair_attr(&hash(0xAA), MASK_B, 7));
+        for triples in [mismatched, conflicting] {
+            assert!(matches!(
+                ServtdCorim::decode(&build_corim(vec![conditional_comid(triples)]), 0),
+                Err(PolicyError::InvalidServtdTcbMapping)
+            ));
+        }
+        for svn in [5, 7] {
+            let legacy = ComidBuilder::new(TagIdChoice::Text("legacy".into()))
+                .add_reference_triple(ref_triple_attr(&hash(0xAA), MASK_A))
+                .add_conditional_endorsement_series(ces_triple_attr(&hash(0xAA), MASK_A, svn))
+                .build()
+                .unwrap();
+            let named = conditional_comid(conditional_pair_attr(&hash(0xAA), MASK_B, 5));
+            for comids in [vec![legacy.clone(), named.clone()], vec![named, legacy]] {
+                assert_eq!(
+                    ServtdCorim::decode(&build_corim(comids), 0).is_ok(),
+                    svn == 5
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_endorsements_reject_invalid_attrs() {
+        for raw_value in [
+            RawValueChoice::Bytes(vec![0; 7]),
+            RawValueChoice::Bytes(vec![0; 9]),
+            RawValueChoice::Bytes((1u64 << 32).to_le_bytes().to_vec()),
+            RawValueChoice::Bytes((1u64 << 34).to_le_bytes().to_vec()),
+            RawValueChoice::Bytes((1u64 << 38).to_le_bytes().to_vec()),
+            RawValueChoice::Masked {
+                value: MASK_A.to_le_bytes().to_vec(),
+                mask: u64::MAX.to_le_bytes().to_vec(),
+            },
+        ] {
+            for phase in 0..2 {
+                let mut triples = conditional_pair_attr(&hash(0xAA), MASK_A, 5);
+                triples[phase].0[0].1[0].mval.raw_value = Some(raw_value.clone());
+                assert!(matches!(
+                    ServtdCorim::decode(&build_corim(vec![conditional_comid(triples)]), 0),
+                    Err(PolicyError::InvalidServtdTcbMapping)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_endorsements_resolve_all_six_producer_sample_entries() {
+        let hashes = [
+            "06905e39f8d772210d9a3fcc924f7040c8d94c4f94917d25fab40f637511f2a4f05b7aae118ae2df9a0db53071c984f6",
+            "b9b77e461e499ce1caeadf7b41a758c00520b52dff071e6e342b13cd4f865ade8965f520cebb52cac3104f0147d66786",
+            "6814ca38cad715d2eb02afa6b675273bee5a67c4dc86fe2210f21f792a89b5d7428b7388475823fcda35b9d7ae8e755a",
+        ]
+        .map(|hash| crate::v2::hex_string_to_bytes(hash).unwrap());
+        let mut triples = Vec::new();
+        for initial in [true, false] {
+            for hash in &hashes {
+                triples.push(conditional_triple(hash, 1, initial));
+            }
+        }
+        let bytes = build_corim(vec![conditional_comid(triples)]);
+        let provider = ServtdCorim::decode(&bytes, 0).unwrap();
+        assert_eq!(provider.comid_count(), 1);
+        for hash in hashes {
+            let lookup = provider.lookup_by_tdinfo_hash(&hash).unwrap();
+            assert_eq!(lookup.isvsvn, 1);
+            assert!(lookup.tcb_date.is_none());
+            assert!(lookup.tcb_status.is_none());
+        }
+        assert!(provider.lookup_by_tdinfo_hash(&hash(0xCC)).is_none());
+        assert!(provider.lookup_by_tdinfo_hash(&[0; 32]).is_none());
+    }
+
+    #[test]
+    fn conditional_endorsements_accept_equal_duplicates_and_svn_boundaries_across_comids() {
+        let mut comids = Vec::new();
+        for (hash, svn) in [(hash(0xAA), 0), (hash(0xBB), u16::MAX)] {
+            for initial in [false, true, true, false] {
+                comids.push(conditional_comid(vec![conditional_triple(
+                    &hash, svn, initial,
+                )]));
+            }
+        }
+        let provider = ServtdCorim::decode(&build_corim(comids), 0).unwrap();
+        assert_eq!(
+            provider.lookup_by_tdinfo_hash(&hash(0xAA)).unwrap().isvsvn,
+            0
+        );
+        assert_eq!(
+            provider.lookup_by_tdinfo_hash(&hash(0xBB)).unwrap().isvsvn,
+            u16::MAX
+        );
+    }
+
+    #[test]
+    fn conditional_endorsements_require_identical_phase_coverage_and_svns() {
+        for triples in [
+            vec![conditional_triple(&hash(0xAA), 5, true)],
+            vec![conditional_triple(&hash(0xAA), 5, false)],
+            vec![
+                conditional_triple(&hash(0xAA), 5, true),
+                conditional_triple(&hash(0xBB), 5, false),
+            ],
+            vec![
+                conditional_triple(&hash(0xAA), 5, true),
+                conditional_triple(&hash(0xAA), 7, false),
+            ],
+        ] {
+            for reverse in [false, true] {
+                let mut triples = triples.clone();
+                if reverse {
+                    triples.reverse();
+                }
+                assert!(matches!(
+                    ServtdCorim::decode(&build_corim(vec![conditional_comid(triples)]), 0),
+                    Err(PolicyError::InvalidServtdTcbMapping)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_endorsements_reject_same_phase_conflicts_across_comids_in_either_order() {
+        for initial in [true, false] {
+            for svn in [5, 7] {
+                let comids = vec![
+                    conditional_comid(conditional_pair(&hash(0xAA), svn)),
+                    conditional_comid(vec![conditional_triple(&hash(0xAA), 12 - svn, initial)]),
+                ];
+                assert!(matches!(
+                    ServtdCorim::decode(&build_corim(comids), 0),
+                    Err(PolicyError::InvalidServtdTcbMapping)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_endorsements_and_legacy_ces_share_conflict_checks() {
+        for (hash, svn, accepted) in [
+            (hash(0xAA), 5, true),
+            (hash(0xAA), 7, false),
+            (hash(0xBB), 7, true),
+        ] {
+            for reverse in [false, true] {
+                let legacy = ComidBuilder::new(TagIdChoice::Text("legacy".into()))
+                    .add_reference_triple(ref_triple(&hash))
+                    .add_conditional_endorsement_series(ces_triple(&hash, svn))
+                    .build()
+                    .unwrap();
+                let mut comids = vec![legacy, conditional_comid(conditional_pair(&[0xAA; 48], 5))];
+                if reverse {
+                    comids.reverse();
+                }
+                assert_eq!(
+                    ServtdCorim::decode(&build_corim(comids), 0).is_ok(),
+                    accepted
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_ces_cannot_supply_a_missing_conditional_phase() {
+        for initial in [true, false] {
+            let mut comid = conditional_comid(vec![conditional_triple(&hash(0xAA), 5, initial)]);
+            comid.triples.reference_triples = Some(vec![ref_triple(&hash(0xAA))]);
+            comid.triples.conditional_endorsement_series = Some(vec![ces_triple(&hash(0xAA), 5)]);
+            assert!(matches!(
+                ServtdCorim::decode(&build_corim(vec![comid]), 0),
+                Err(PolicyError::InvalidServtdTcbMapping)
+            ));
+        }
+    }
+
+    #[test]
+    fn conditional_endorsements_reject_unsupported_shapes_and_constraints() {
+        type Mutation = (&'static str, fn(&mut ConditionalEndorsementTriple));
+        let mutations: &[Mutation] = &[
+            ("no conditions", |t| t.0.clear()),
+            ("extra condition", |t| t.0.push(t.0[0].clone())),
+            ("no endorsements", |t| t.1.clear()),
+            ("extra endorsement", |t| t.1.push(t.1[0].clone())),
+            ("no hash measurement", |t| t.0[0].1.clear()),
+            ("extra hash measurement", |t| {
+                let measurement = t.0[0].1[0].clone();
+                t.0[0].1.push(measurement);
+            }),
+            ("no SVN measurement", |t| t.1[0].1.clear()),
+            ("extra SVN measurement", |t| {
+                let measurement = t.1[0].1[0].clone();
+                t.1[0].1.push(measurement);
+            }),
+            ("missing class", |t| t.0[0].0.class = None),
+            ("wrong vendor", |t| {
+                t.0[0].0.class.as_mut().unwrap().vendor = Some("AMD".into())
+            }),
+            ("wrong model", |t| {
+                t.0[0].0.class.as_mut().unwrap().model = Some("SGX".into())
+            }),
+            ("class ID", |t| {
+                t.0[0].0.class.as_mut().unwrap().class_id = Some(ClassIdChoice::Uuid([0; 16]))
+            }),
+            ("class index", |t| {
+                t.0[0].0.class.as_mut().unwrap().index = Some(1)
+            }),
+            ("class layer", |t| {
+                t.0[0].0.class.as_mut().unwrap().layer = Some(1)
+            }),
+            ("instance", |t| {
+                t.0[0].0.instance = migration_td_env().instance
+            }),
+            ("group", |t| {
+                t.0[0].0.group = Some(GroupIdChoice::Uuid([0; 16]))
+            }),
+            ("endorsement environment", |t| t.1[0].0 = migration_td_env()),
+            ("missing hash key", |t| t.0[0].1[0].mkey = None),
+            ("non-text hash key", |t| {
+                t.0[0].1[0].mkey = Some(MeasuredElement::Uint(0))
+            }),
+            ("unknown hash key", |t| {
+                t.0[0].1[0].mkey = Some(MeasuredElement::Text("other".into()))
+            }),
+            ("missing SVN key", |t| t.1[0].1[0].mkey = None),
+            ("unknown SVN key", |t| {
+                t.1[0].1[0].mkey = Some(MeasuredElement::Text("other".into()))
+            }),
+            ("non-text SVN key", |t| {
+                t.1[0].1[0].mkey = Some(MeasuredElement::Uint(0))
+            }),
+            ("cross-phase SVN key", |t| {
+                let key = match &t.1[0].1[0].mkey {
+                    Some(MeasuredElement::Text(key)) if key == INIT_SVN_KEY => CURRENT_SVN_KEY,
+                    _ => INIT_SVN_KEY,
+                };
+                t.1[0].1[0].mkey = Some(MeasuredElement::Text(key.into()));
+            }),
+            ("missing digest", |t| t.0[0].1[0].mval.digests = None),
+            ("empty digests", |t| t.0[0].1[0].mval.digests = Some(vec![])),
+            ("multiple digests", |t| {
+                t.0[0].1[0]
+                    .mval
+                    .digests
+                    .as_mut()
+                    .unwrap()
+                    .push(Digest::new(SHA384_ALG, hash(0xAA)))
+            }),
+            ("wrong algorithm", |t| {
+                t.0[0].1[0].mval.digests = Some(vec![Digest::new(SHA256_ALG, hash(0xAA))])
+            }),
+            ("text algorithm", |t| {
+                t.0[0].1[0].mval.digests = Some(vec![Digest::new_text("sha-384", hash(0xAA))])
+            }),
+            ("short hash", |t| {
+                t.0[0].1[0].mval.digests = Some(vec![Digest::new(SHA384_ALG, vec![0; 47])])
+            }),
+            ("long hash", |t| {
+                t.0[0].1[0].mval.digests = Some(vec![Digest::new(SHA384_ALG, vec![0; 49])])
+            }),
+            ("missing SVN", |t| t.1[0].1[0].mval.svn = None),
+            ("minimum SVN", |t| {
+                t.1[0].1[0].mval.svn = Some(SvnChoice::MinValue(5))
+            }),
+            ("overflow SVN", |t| {
+                t.1[0].1[0].mval.svn = Some(SvnChoice::ExactValue(65536))
+            }),
+            ("extra condition value", |t| {
+                t.0[0].1[0].mval.svn = Some(SvnChoice::ExactValue(5))
+            }),
+            ("extra endorsement value", |t| {
+                t.1[0].1[0].mval.name = Some("constraint".into())
+            }),
+            ("extension condition", |t| {
+                t.0[0].1[0]
+                    .mval
+                    .extra_entries
+                    .insert(-1, corim::cbor::value::Value::Integer(1));
+            }),
+            ("hash authorization", |t| {
+                t.0[0].1[0].authorized_by = Some(vec![])
+            }),
+            ("SVN authorization", |t| {
+                t.1[0].1[0].authorized_by = Some(vec![])
+            }),
+        ];
+        for (name, mutate) in mutations {
+            for phase in 0..2 {
+                let mut triples = conditional_pair(&hash(0xAA), 5);
+                mutate(&mut triples[phase]);
+                let comid = conditional_comid(triples);
+                assert!(
+                    matches!(
+                        validated_svn_mappings(core::slice::from_ref(&comid)),
+                        Err(PolicyError::InvalidServtdTcbMapping)
+                    ),
+                    "accepted {} in phase {}",
+                    name,
+                    phase
+                );
+                // Empty environment/value maps cannot be serialized by corim.
+                // Exercise public decoding for all representable mutations too.
+                if let Ok(builder) =
+                    CorimBuilder::new(CorimId::Text("malformed".into())).add_comid_tag(comid)
+                {
+                    assert!(
+                        matches!(
+                            ServtdCorim::decode(&builder.build_bytes().unwrap(), 0),
+                            Err(PolicyError::InvalidServtdTcbMapping)
+                        ),
+                        "decoded {} in phase {}",
+                        name,
+                        phase
+                    );
+                }
+            }
+        }
     }
 
     #[test]
