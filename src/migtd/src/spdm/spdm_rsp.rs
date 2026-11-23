@@ -116,6 +116,7 @@ pub fn spdm_responder<'a, T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'sta
             None,
             None,
             Some(SecuredMessageVersion::try_from(0x12u8).unwrap()),
+            None,
         ],
         ..Default::default()
     };
@@ -352,14 +353,14 @@ pub fn handle_exchange_pub_key_req(
     // Provision the public keys to spdm context
     let mut my_pub_key_prov = SpdmCertChainData {
         data_size: my_pub_key.len() as u32,
-        data: [0u8; config::MAX_SPDM_CERT_CHAIN_DATA_SIZE],
+        ..Default::default()
     };
     my_pub_key_prov.data[..my_pub_key.len()].copy_from_slice(&my_pub_key);
     spdm_responder.common.provision_info.my_pub_key = Some(my_pub_key_prov);
 
     let mut peer_pub_key_prov = SpdmCertChainData {
         data_size: peer_pub_key_element.length as u32,
-        data: [0u8; config::MAX_SPDM_CERT_CHAIN_DATA_SIZE],
+        ..Default::default()
     };
     peer_pub_key_prov.data[..peer_pub_key_element.length as usize].copy_from_slice(peer_pub_key);
     spdm_responder.common.provision_info.peer_pub_key = Some(peer_pub_key_prov);
